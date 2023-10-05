@@ -1,6 +1,6 @@
 # HexMarksTheSpot: Advanced Hex File Analysis and Annotation
 
-![](images\DALL-E Logo.png)
+![](images/DALL-E%20Logo.png)
 
 
 
