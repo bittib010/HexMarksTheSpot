@@ -1,5 +1,9 @@
 # HexMarksTheSpot: Advanced Hex File Analysis and Annotation
 
+![](images\DALL-E Logo.png)
+
+
+
 ## Overview
 
 HexMarksTheSpot is a Python-based application engineered to offer an intuitive yet sophisticated environment for hex-level file analysis and annotation. The platform is designed for both novice and experienced users, serving as a facilitative tool for manual file validation and educational exploration.
