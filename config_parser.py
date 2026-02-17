@@ -249,10 +249,10 @@ class ConfigBasedParser(FileParser):
         
         return DynamicConfigParser
     
-    def get_next_color(self, size: int = 5) -> str:
-        """Generate the next color for highlighting."""
-        self.current_color = [(c + size) % 256 for c in self.current_color]
-        return f"#{self.current_color[0]:02x}{self.current_color[1]:02x}{self.current_color[2]:02x}"
+    def get_next_color(self) -> str:
+        """Generate the next default color via ColorGenerator."""
+        from common import ColorGenerator
+        return ColorGenerator.get_next_color()
     
     def resolve_reference(self, ref: str) -> Any:
         """
@@ -607,18 +607,22 @@ class ConfigBasedParser(FileParser):
         if expected_values is not None:
             self._validate_expected_value(name, table_value, expected_values, offset, data)
         
-        # Create node - determine color
-        node_color = color if color else self.get_next_color()
+        # Create node - determine color based on category
+        from common import ColorGenerator
         
-        # Handle forensic value highlighting
         if forensic_value:
-            from common import ColorGenerator
+            # Forensic takes highest precedence
             if isinstance(forensic_value, str):
-                # Use specific forensic category color
                 node_color = ColorGenerator.get_forensic_color(forensic_value)
             else:
-                # Use default forensic color (bright red)
-                node_color = ColorGenerator.get_forensic_color("default")
+                node_color = ColorGenerator.get_forensic_color()
+        elif field_dict.get("informational"):
+            # Informational fields get green/teal
+            node_color = ColorGenerator.get_informational_color()
+        elif color:
+            node_color = color
+        else:
+            node_color = ColorGenerator.get_next_color()
         
         # Format value for display
         display_value = table_value

@@ -1,4 +1,4 @@
-from common import Node, FileParser
+from common import Node, FileParser, ColorGenerator
 import os
 # https://www.sciencedirect.com/science/article/pii/S1742287618300471
 # https://digitalforensicforest.com/2015/07/27/sqlite-data-carving-a-way-to-trace/
@@ -102,10 +102,9 @@ class SQLiteFileParser(FileParser):
             return current_offset - page_start_offset
         return (current_offset - page_start_offset) - page_num + 1 - self.page_size
 
-    def get_next_color(self, size):
-        # Increase the color value for each channel
-        self.current_color = [(c + size) % 256 for c in self.current_color]
-        return f"#{self.current_color[0]:02x}{self.current_color[1]:02x}{self.current_color[2]:02x}"
+    def get_next_color(self, size=5):
+        """Generate the next color via ColorGenerator."""
+        return ColorGenerator.get_next_color()
     
     def parse_unknown_data(self, interval, details=None, name="Unparsed data"):
         unknown_data = self.file.read(interval)

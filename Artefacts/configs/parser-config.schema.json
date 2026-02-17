@@ -135,6 +135,11 @@
                     "description": "Mark as forensically important. Use true for default red, or a category: 'critical' (red), 'important' (amber), 'timestamp' (purple), 'identifier' (pink for GUIDs/MACs/serials), 'path' (cyan for file paths), 'network' (deep orange for network data)",
                     "default": false
                 },
+                "informational": {
+                    "type": "boolean",
+                    "description": "Mark field as informational (green/teal highlighting). For descriptive metadata fields that provide context but are not forensically critical. Forensic_value takes precedence if both are set.",
+                    "default": false
+                },
                 "value_map": {
                     "type": "object",
                     "description": "Map integer values to descriptions",

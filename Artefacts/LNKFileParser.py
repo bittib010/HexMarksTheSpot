@@ -1,4 +1,4 @@
-from common import Node, FileParser
+from common import Node, FileParser, ColorGenerator
 import os
 from datetime import datetime, timedelta
 import tkinter as tk
@@ -73,10 +73,9 @@ class LNKFileParser(FileParser):
         self.current_color = [0x33, 0x33, 0x33]  # Initialize as a list of integers
         self.parsed_fields = {}  # Dictionary to store parsed fields from dictionary way of coding
 
-    def get_next_color(self, size):
-        # Increase the color value for each channel
-        self.current_color = [(c + size) % 256 for c in self.current_color]
-        return f"#{self.current_color[0]:02x}{self.current_color[1]:02x}{self.current_color[2]:02x}"
+    def get_next_color(self, size=5):
+        """Generate the next color via ColorGenerator."""
+        return ColorGenerator.get_next_color()
     
     def bytes_to_guid(self, guid_bytes):
         # Ensure the byte array contains exactly 16 bytes

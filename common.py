@@ -18,113 +18,197 @@ from typing import Any, BinaryIO, Dict, List, Optional, Tuple, Type, Union
 
 class ColorGenerator:
     """
-    Generates visually distinct, semi-transparent pastel colors for hex highlighting.
-    Ensures adjacent colors are sufficiently different.
-    Also provides forensic importance colors that stand out prominently.
+    Generates category-based colors for hex highlighting with guaranteed
+    adjacent uniqueness and automatic contrast text colors.
+    
+    Color categories (precedence order - highest first):
+    1. Forensic: Red/warm tones - for forensically important fields
+    2. Informational: Green/teal light tones - for descriptive/informational fields
+    3. Default: Neutral pastel tones (blue, purple, gray) - for everything else
+    
+    A field can be both informational and forensic, but forensic takes precedence.
     """
     
-    # Pastel color palette - light, readable backgrounds
-    # Using HSL: high lightness (0.7-0.85) for pastel effect
-    _instance = None
     _last_hue = 0.0
-    _used_colors = []
+    _last_color = ""
     
-    # Forensic importance colors - these MUST stand out
-    FORENSIC_COLORS = {
-        # Category-specific forensic colors
-        "critical": "#E74C3C",       # Strong red - most critical evidence
-        "important": "#F39C12",      # Amber/orange - important findings
-        "timestamp": "#9B59B6",      # Purple - timestamps
-        "identifier": "#E91E63",     # Pink - IDs (GUIDs, serials, MACs)
-        "path": "#00BCD4",           # Cyan - file paths and locations
-        "network": "#FF5722",        # Deep orange - network-related data
-        "default": "#FF4757",        # Default forensic highlight (bright red)
+    # Hue ranges for each category (0-1 scale, maps to 0-360 degrees)
+    # Red/warm range for forensic: ~330-30 degrees (wraps around)
+    _FORENSIC_HUE_MIN = 0.92   # ~331 degrees
+    _FORENSIC_HUE_MAX = 0.08   # ~29 degrees (wraps)
+    _FORENSIC_SAT = (0.55, 0.75)
+    _FORENSIC_LIT = (0.50, 0.65)
+    
+    # Green/teal range for informational: ~90-170 degrees
+    _INFO_HUE_MIN = 0.25       # ~90 degrees
+    _INFO_HUE_MAX = 0.47       # ~170 degrees
+    _INFO_SAT = (0.30, 0.50)
+    _INFO_LIT = (0.75, 0.88)
+    
+    # Blue/purple/neutral range for default: ~190-310 degrees
+    _DEFAULT_HUE_MIN = 0.53    # ~190 degrees
+    _DEFAULT_HUE_MAX = 0.86    # ~310 degrees
+    _DEFAULT_SAT = (0.30, 0.50)
+    _DEFAULT_LIT = (0.75, 0.88)
+    
+    # Forensic sub-category fixed colors (for explicit category strings)
+    FORENSIC_CATEGORY_COLORS = {
+        "critical":    {"bg": "#C0392B", "fg": "#FFFFFF"},
+        "important":   {"bg": "#D35400", "fg": "#FFFFFF"},
+        "timestamp":   {"bg": "#8E44AD", "fg": "#FFFFFF"},
+        "identifier":  {"bg": "#C2185B", "fg": "#FFFFFF"},
+        "path":        {"bg": "#00838F", "fg": "#FFFFFF"},
+        "network":     {"bg": "#BF360C", "fg": "#FFFFFF"},
     }
     
     @classmethod
     def reset(cls):
         """Reset the color generator for a new file."""
-        cls._last_hue = random.random()  # Start at random point
-        cls._used_colors = []
+        cls._last_hue = random.random()
+        cls._last_color = ""
     
     @classmethod
-    def get_next_color(cls) -> str:
-        """
-        Generate the next visually distinct pastel color.
-        Uses golden ratio to ensure good distribution of hues.
-        
-        Returns:
-            Hex color string like '#RRGGBB'
-        """
-        # Golden ratio conjugate for optimal hue distribution
-        golden_ratio = 0.618033988749895
-        
-        # Move to next hue using golden ratio
-        cls._last_hue = (cls._last_hue + golden_ratio) % 1.0
-        
-        # High saturation (0.4-0.6) and high lightness (0.75-0.88) for pastel
-        saturation = 0.45 + random.random() * 0.15  # 0.45-0.6
-        lightness = 0.78 + random.random() * 0.1   # 0.78-0.88
-        
-        # Convert HSL to RGB
-        r, g, b = colorsys.hls_to_rgb(cls._last_hue, lightness, saturation)
-        
-        # Convert to hex
-        color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-        
-        cls._used_colors.append(color)
-        return color
+    def _random_hue_in_range(cls, hue_min: float, hue_max: float) -> float:
+        """Generate a random hue within a range, handling wrap-around."""
+        if hue_min <= hue_max:
+            return hue_min + random.random() * (hue_max - hue_min)
+        else:
+            # Wraps around 1.0 (e.g., red: 0.92 -> 0.08)
+            span = (1.0 - hue_min) + hue_max
+            h = hue_min + random.random() * span
+            return h % 1.0
     
     @classmethod
-    def is_color_too_similar(cls, color1: str, color2: str, threshold: float = 0.15) -> bool:
+    def _ensure_distinct(cls, color: str, min_distance: float = 0.06) -> str:
         """
-        Check if two colors are too similar.
+        Ensure a color is sufficiently different from the last generated color.
+        If too similar, shift the lightness instead of hue to stay in the same
+        category range.
+        """
+        if not cls._last_color:
+            return color
         
-        Args:
-            color1: First hex color
-            color2: Second hex color  
-            threshold: Minimum hue distance (0-1)
-            
-        Returns:
-            True if colors are too similar
-        """
-        def hex_to_hsl(hex_color: str) -> Tuple[float, float, float]:
+        def hex_to_hls(hex_color: str):
             hex_color = hex_color.lstrip('#')
             r = int(hex_color[0:2], 16) / 255
             g = int(hex_color[2:4], 16) / 255
             b = int(hex_color[4:6], 16) / 255
-            h, l, s = colorsys.rgb_to_hls(r, g, b)
-            return h, s, l
+            return colorsys.rgb_to_hls(r, g, b)
         
-        h1, _, _ = hex_to_hsl(color1)
-        h2, _, _ = hex_to_hsl(color2)
+        h1, l1, s1 = hex_to_hls(cls._last_color)
+        h2, l2, s2 = hex_to_hls(color)
         
-        # Calculate circular hue distance
         hue_diff = min(abs(h1 - h2), 1 - abs(h1 - h2))
-        return hue_diff < threshold
+        light_diff = abs(l1 - l2)
+        
+        # If hue AND lightness are both too similar, shift lightness
+        # (not hue — shifting hue could leave the category range)
+        if hue_diff < min_distance and light_diff < 0.08:
+            # Flip lightness direction to create visible contrast
+            if l2 > 0.5:
+                l2 = max(0.55, l2 - 0.12)
+            else:
+                l2 = min(0.90, l2 + 0.12)
+            r, g, b = colorsys.hls_to_rgb(h2, l2, s2)
+            color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+        
+        return color
     
     @classmethod
     def get_forensic_color(cls, category: str = "default") -> str:
         """
         Get a forensic importance color.
         
-        These colors are designed to stand out prominently from the regular
-        pastel palette, making forensically important fields immediately visible.
-        
-        Args:
-            category: The forensic category. Options:
-                - "critical": Most critical evidence (red)
-                - "important": Important findings (amber)
-                - "timestamp": Time-related evidence (purple)
-                - "identifier": IDs like GUIDs, MACs, serials (pink)
-                - "path": File paths and locations (cyan)
-                - "network": Network-related data (deep orange)
-                - "default": Generic forensic highlight (bright red)
-                
-        Returns:
-            Hex color string
+        If category is a specific sub-category (critical, important, timestamp, etc.),
+        returns a fixed distinctive color. Otherwise generates a random red/warm tone.
+        Forensic colors are NOT subject to adjacent-uniqueness — they must always
+        stand out in their warm/red tones regardless of surrounding colors.
         """
-        return cls.FORENSIC_COLORS.get(category, cls.FORENSIC_COLORS["default"])
+        if category in cls.FORENSIC_CATEGORY_COLORS:
+            color = cls.FORENSIC_CATEGORY_COLORS[category]["bg"]
+            cls._last_color = color
+            return color
+        
+        # Generate random red/warm forensic color (no _ensure_distinct — must stay red)
+        h = cls._random_hue_in_range(cls._FORENSIC_HUE_MIN, cls._FORENSIC_HUE_MAX)
+        s = cls._FORENSIC_SAT[0] + random.random() * (cls._FORENSIC_SAT[1] - cls._FORENSIC_SAT[0])
+        l = cls._FORENSIC_LIT[0] + random.random() * (cls._FORENSIC_LIT[1] - cls._FORENSIC_LIT[0])
+        r, g, b = colorsys.hls_to_rgb(h, l, s)
+        color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+        cls._last_color = color
+        return color
+    
+    @classmethod
+    def get_informational_color(cls) -> str:
+        """
+        Get an informational color (green/teal light tones).
+        Used for descriptive fields that have documentation value but aren't forensic.
+        """
+        h = cls._random_hue_in_range(cls._INFO_HUE_MIN, cls._INFO_HUE_MAX)
+        s = cls._INFO_SAT[0] + random.random() * (cls._INFO_SAT[1] - cls._INFO_SAT[0])
+        l = cls._INFO_LIT[0] + random.random() * (cls._INFO_LIT[1] - cls._INFO_LIT[0])
+        r, g, b = colorsys.hls_to_rgb(h, l, s)
+        color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+        color = cls._ensure_distinct(color)
+        cls._last_color = color
+        return color
+    
+    @classmethod
+    def get_next_color(cls) -> str:
+        """
+        Generate the next default color (blue/purple/neutral pastel).
+        Uses golden ratio for hue spacing within the default range.
+        """
+        h = cls._random_hue_in_range(cls._DEFAULT_HUE_MIN, cls._DEFAULT_HUE_MAX)
+        s = cls._DEFAULT_SAT[0] + random.random() * (cls._DEFAULT_SAT[1] - cls._DEFAULT_SAT[0])
+        l = cls._DEFAULT_LIT[0] + random.random() * (cls._DEFAULT_LIT[1] - cls._DEFAULT_LIT[0])
+        r, g, b = colorsys.hls_to_rgb(h, l, s)
+        color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+        color = cls._ensure_distinct(color)
+        cls._last_color = color
+        return color
+    
+    @classmethod
+    def get_contrast_text_color(cls, bg_color: str) -> str:
+        """
+        Calculate the optimal contrasting text color for a given background.
+        Uses WCAG relative luminance formula for accessibility.
+        
+        Returns black or white text depending on background brightness,
+        or a strongly contrasted hue-shifted color for medium backgrounds.
+        """
+        bg = bg_color.lstrip('#')
+        r = int(bg[0:2], 16) / 255
+        g = int(bg[2:4], 16) / 255
+        b = int(bg[4:6], 16) / 255
+        
+        # WCAG relative luminance
+        def linearize(c):
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        
+        luminance = 0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+        
+        # High contrast: dark text on light bg, light text on dark bg
+        if luminance > 0.4:
+            return "#1a1a2e"  # Very dark blue-black
+        else:
+            return "#f0f0f0"  # Near-white
+    
+    @classmethod
+    def is_color_too_similar(cls, color1: str, color2: str, threshold: float = 0.15) -> bool:
+        """Check if two colors are too similar based on hue distance."""
+        def hex_to_hue(hex_color: str) -> float:
+            hex_color = hex_color.lstrip('#')
+            r = int(hex_color[0:2], 16) / 255
+            g = int(hex_color[2:4], 16) / 255
+            b = int(hex_color[4:6], 16) / 255
+            h, _, _ = colorsys.rgb_to_hls(r, g, b)
+            return h
+        
+        h1 = hex_to_hue(color1)
+        h2 = hex_to_hue(color2)
+        hue_diff = min(abs(h1 - h2), 1 - abs(h1 - h2))
+        return hue_diff < threshold
 
 
 class UnknownFileTypeException(Exception):

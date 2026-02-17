@@ -711,24 +711,29 @@ class Main:
             offset = int(item['values'][0])
             tags = item.get('tags', ())
             
+            # Resolve the tag first so we can use display_pos for scrolling
+            tag = None
+            if tags:
+                if isinstance(tags, (list, tuple)) and len(tags) > 0:
+                    tag = tags[0]
+                else:
+                    tag = str(tags)
+            
+            # Use display position (byte_counter at time of insertion) for scroll calc
+            # This correctly maps to where the bytes are in the hex widget
+            display_pos = self.tag_to_display_pos.get(tag, offset) if tag else offset
+            
             # Calculate the corresponding row and column in the Text widget
-            row = offset // 16 + 1  # Adding 1 because Text widget indices start from 1
-            # Every byte in hex view is 3 characters (e.g., "FF ")
-            col_hex = (offset % 16) * 3
-            col_ascii = offset % 16
+            row = display_pos // 16 + 1  # Text widget indices start from 1
+            col_hex = (display_pos % 16) * 3
+            col_ascii = display_pos % 16
             
             # Scroll both views to the selected position
             self.text_widget.textWidget.see(f"{row}.{col_hex}")
             self.text_widget.asciiText.see(f"{row}.{col_ascii}")
             
             # Highlight the corresponding hex bytes
-            if tags:
-                # Handle tags being either list or tuple
-                if isinstance(tags, (list, tuple)) and len(tags) > 0:
-                    tag = tags[0]
-                else:
-                    tag = str(tags)
-                
+            if tag:
                 self._highlight_tag(tag)
                 
                 # Show description in the info panel if we have the child node
@@ -1373,6 +1378,7 @@ class Main:
         self.tag_to_treeview_item = {}
         self.tag_to_child = {}
         self.offset_to_tag = {}
+        self.tag_to_display_pos = {}   # tag -> display byte position in hex widget
         self.current_highlight_tag = None
         
         # Collect all node data first (can be done in background thread)
@@ -1407,7 +1413,8 @@ class Main:
                 'info': child.info,
                 'table_val': table_val,
                 'offset': offset,
-                'child': child
+                'child': child,
+                'display_pos': self.byte_counter,  # position in hex widget
             })
             
             self.byte_counter += len(child.data) if child.data else 0
@@ -1493,15 +1500,19 @@ class Main:
         # Store mappings for click synchronization
         self.tag_to_treeview_item[tag] = item_id
         self.tag_to_child[tag] = child
+        self.tag_to_display_pos[tag] = node_data.get('display_pos', offset)
         if offset not in self.offset_to_tag:
             self.offset_to_tag[offset] = tag
         
-        self.sequence_treeview.tag_configure(tag, background=color)
+        # Compute contrast text color for this background
+        fg_color = ColorGenerator.get_contrast_text_color(color or '#ffffff')
+        
+        self.sequence_treeview.tag_configure(tag, background=color, foreground=fg_color)
         self.sequence_items.append(((offset, node_data['name'], table_val), (tag,)))
         
-        # Configure tags for text widgets
-        self.text_widget.textWidget.tag_configure(tag, background=color)
-        self.text_widget.asciiText.tag_configure(tag, background=color)
+        # Configure tags for text widgets with contrast foreground
+        self.text_widget.textWidget.tag_configure(tag, background=color, foreground=fg_color)
+        self.text_widget.asciiText.tag_configure(tag, background=color, foreground=fg_color)
         
         # Insert hex and ASCII data
         if node_data['data']:
@@ -1622,16 +1633,24 @@ class Main:
         """
         # Remove previous active highlight
         if self.current_highlight_tag:
-            # Restore to original color by reconfiguring the tag
+            # Restore to original color AND remove border
             try:
-                # Find the original color from the collected nodes
                 for node_data in self.collected_nodes:
                     if node_data['tag'] == self.current_highlight_tag:
                         original_color = node_data['color']
+                        fg = ColorGenerator.get_contrast_text_color(original_color or '#ffffff')
                         self.text_widget.textWidget.tag_configure(
-                            self.current_highlight_tag, background=original_color)
+                            self.current_highlight_tag,
+                            background=original_color,
+                            foreground=fg,
+                            borderwidth=0,
+                            relief='flat')
                         self.text_widget.asciiText.tag_configure(
-                            self.current_highlight_tag, background=original_color)
+                            self.current_highlight_tag,
+                            background=original_color,
+                            foreground=fg,
+                            borderwidth=0,
+                            relief='flat')
                         break
             except:
                 pass

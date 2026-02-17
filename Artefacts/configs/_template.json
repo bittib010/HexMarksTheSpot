@@ -27,7 +27,8 @@
             "name": "version",
             "size": 2,
             "type": "uint",
-            "description": "Format version number"
+            "description": "Format version number",
+            "informational": true
         },
         {
             "name": "flags",
