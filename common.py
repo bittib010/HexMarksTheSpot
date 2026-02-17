@@ -12,8 +12,91 @@ from __future__ import annotations
 import random
 import colorsys
 from abc import ABC, abstractmethod
+import re
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple, Type, Union
+
+
+def markdown_to_html(text: str) -> str:
+    """
+    Convert lightweight markdown syntax to HTML for display in tkhtmlview.
+    
+    Supports:
+    - **bold** → <b>bold</b>
+    - *italic* → <i>italic</i>
+    - `code` → <code>code</code>
+    - Newlines (\n\n) → <br/>
+    - Unordered lists (- item) → <ul><li>item</li></ul>
+    - Ordered lists (1. item) → <ol><li>item</li></ol>
+    """
+    if not text:
+        return text
+    
+    # Process block-level elements first (lists)
+    lines = text.split('\n')
+    result_lines = []
+    in_ul = False
+    in_ol = False
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Unordered list item: - item or * item (at start)
+        ul_match = re.match(r'^[-*]\s+(.+)$', stripped)
+        # Ordered list item: 1. item, 2. item, etc.
+        ol_match = re.match(r'^\d+\.\s+(.+)$', stripped)
+        
+        if ul_match:
+            if not in_ul:
+                if in_ol:
+                    result_lines.append('</ol>')
+                    in_ol = False
+                result_lines.append('<ul>')
+                in_ul = True
+            result_lines.append(f'<li>{ul_match.group(1)}</li>')
+        elif ol_match:
+            if not in_ol:
+                if in_ul:
+                    result_lines.append('</ul>')
+                    in_ul = False
+                result_lines.append('<ol>')
+                in_ol = True
+            result_lines.append(f'<li>{ol_match.group(1)}</li>')
+        else:
+            if in_ul:
+                result_lines.append('</ul>')
+                in_ul = False
+            if in_ol:
+                result_lines.append('</ol>')
+                in_ol = False
+            result_lines.append(line)
+    
+    if in_ul:
+        result_lines.append('</ul>')
+    if in_ol:
+        result_lines.append('</ol>')
+    
+    text = '\n'.join(result_lines)
+    
+    # Inline formatting (order matters: bold before italic to avoid conflicts)
+    # Bold: **text**
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    # Italic: *text* (but not inside bold tags)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
+    # Inline code: `text`
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    
+    # Double newlines → paragraph break
+    text = text.replace('\n\n', '<br/><br/>')
+    # Single newlines → line break (within paragraphs)
+    text = text.replace('\n', '<br/>')
+    
+    # Clean up stray <br/> inside list structures
+    for tag in ['<ul>', '</ul>', '<ol>', '</ol>', '<li>', '</li>']:
+        text = text.replace(f'<br/>{tag}', tag)
+        text = text.replace(f'{tag}<br/>', tag)
+    
+    return text
 
 
 class ColorGenerator:

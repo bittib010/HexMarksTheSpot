@@ -47,7 +47,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Union
 
-from common import FileParser, Node
+from common import FileParser, Node, markdown_to_html
 
 logger = logging.getLogger(__name__)
 
@@ -631,10 +631,10 @@ class ConfigBasedParser(FileParser):
         elif value_map and str(table_value) in value_map:
             display_value = f"{table_value} ({value_map[str(table_value)]})"
         
-        # Build HTML description
+        # Build HTML description (convert markdown in descriptions to HTML)
         html_desc = f"<h1>{name}</h1>"
         if description:
-            html_desc += f"<p>{description}</p>"
+            html_desc += f"<p>{markdown_to_html(description)}</p>"
         html_desc += f"<p><b>Value:</b> {display_value}</p>"
         html_desc += f"<p><b>Size:</b> {resolved_size} bytes</p>"
         html_desc += f"<p><b>Offset:</b> 0x{offset:X} ({offset})</p>"
@@ -694,7 +694,7 @@ class ConfigBasedParser(FileParser):
         count_label = "until EOF" if repeat_count == -1 else str(repeat_count)
         container_node = Node(
             data=b'',
-            info=f"<h1>{name}</h1><p>{description}</p><p><b>Repeat:</b> {count_label} iterations</p>",
+            info=f"<h1>{name}</h1><p>{markdown_to_html(description)}</p><p><b>Repeat:</b> {count_label} iterations</p>",
             name=name,
             color=color or self.get_next_color()
         )
@@ -752,7 +752,7 @@ class ConfigBasedParser(FileParser):
         offset = self.file.tell()
         section_node = Node(
             data=b'',
-            info=f"<h1>{name}</h1><p>{description}</p>",
+            info=f"<h1>{name}</h1><p>{markdown_to_html(description)}</p>",
             name=name,
             color=color or self.get_next_color()
         )
@@ -786,7 +786,7 @@ class ConfigBasedParser(FileParser):
         offset = self.file.tell()
         array_node = Node(
             data=b'',
-            info=f"<h1>{name}</h1><p>Array of {resolved_count} items</p><p>{description}</p>",
+            info=f"<h1>{name}</h1><p>Array of {resolved_count} items</p><p>{markdown_to_html(description)}</p>",
             name=name,
             color=color or self.get_next_color()
         )
@@ -829,7 +829,7 @@ class ConfigBasedParser(FileParser):
         offset = self.file.tell()
         switch_node = Node(
             data=b'',
-            info=f"<h1>{name}</h1><p>Switch on {switch_on} = {switch_value}</p><p>{description}</p>",
+            info=f"<h1>{name}</h1><p>Switch on {switch_on} = {switch_value}</p><p>{markdown_to_html(description)}</p>",
             name=name,
             color=color or self.get_next_color()
         )
@@ -861,7 +861,7 @@ class ConfigBasedParser(FileParser):
         offset = self.file.tell()
         loop_node = Node(
             data=b'',
-            info=f"<h1>{name}</h1><p>Loop until terminator</p><p>{description}</p>",
+            info=f"<h1>{name}</h1><p>Loop until terminator</p><p>{markdown_to_html(description)}</p>",
             name=name,
             color=color or self.get_next_color()
         )

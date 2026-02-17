@@ -896,7 +896,8 @@ class Main:
             return
             
         # Create overlay frame that covers the entire window
-        self.overlay = Frame(self.master, bg='#00000080')  # Semi-transparent
+        # Note: Tkinter doesn't support alpha in hex colors, use solid dark
+        self.overlay = Frame(self.master, bg='#2c2c2c')
         self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
         
         # Create modal card in the center
@@ -1616,10 +1617,14 @@ class Main:
         # Select corresponding item in treeview
         if tag in self.tag_to_treeview_item:
             item_id = self.tag_to_treeview_item[tag]
-            # Clear previous selection and select this item
-            self.sequence_treeview.selection_set(item_id)
-            # Scroll treeview to show the selected item
-            self.sequence_treeview.see(item_id)
+            try:
+                # Clear previous selection and select this item
+                self.sequence_treeview.selection_set(item_id)
+                # Scroll treeview to show the selected item
+                self.sequence_treeview.see(item_id)
+            except TclError:
+                # Item may have been removed (e.g., after re-parsing)
+                pass
 
         self.status_bar.config(
             text=f"File: {(self.current_file)}\t\tOffset Decimal: {byte_offset} \tOffset Hexadecimal: 0x{byte_offset:X}")
