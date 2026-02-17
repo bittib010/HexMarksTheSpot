@@ -1,108 +1,534 @@
 {
     "$schema": "./parser-config.schema.json",
     "name": "JPEG",
-    "description": "JPEG/JFIF Image File Format",
+    "description": "JPEG/JFIF Image File Format. JPEG (Joint Photographic Experts Group) is the most common lossy image compression format. Files are structured as a sequence of marker segments, each starting with a 0xFF byte followed by a type byte.",
     "author": "HexMarksTheSpot",
-    "version": "1.0",
+    "version": "2.0",
     "magic_bytes": "FFD8",
     "magic_offset": 0,
     "endianness": "big",
     "references": [
         "https://www.w3.org/Graphics/JPEG/jfif3.pdf",
         "https://www.w3.org/Graphics/JPEG/itu-t81.pdf",
-        "https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format"
+        "https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format",
+        "https://en.wikipedia.org/wiki/Exif",
+        "https://people.cs.umass.edu/~liberato/courses/2017-spring-compsci365/assignments/05-jpeg-and-exif/",
+        "https://asecuritysite.com/forensics/jpeg"
     ],
     "fields": [
         {
-            "name": "StartOfImage",
-            "type": "struct",
-            "description": "Start of Image marker (SOI)",
-            "fields": [
-                {
-                    "name": "SOI_Marker",
-                    "size": 2,
-                    "type": "bytes",
-                    "description": "Start of Image marker - always FF D8"
-                }
-            ]
+            "name": "SOI_Marker",
+            "size": 2,
+            "type": "bytes",
+            "description": "**Start of Image (SOI)**\n\nAlways `FF D8`. This 2-byte marker identifies the beginning of every JPEG file.\n\n*Forensic Value:* Signature verification. A valid JPEG must start with FF D8. Absence or corruption of this marker may indicate file damage or deliberate manipulation.",
+            "expected_values": ["ffd8"],
+            "forensic_value": true
         },
         {
-            "name": "APP0_Segment",
-            "type": "struct",
-            "description": "Application Marker Segment 0 (JFIF)",
+            "name": "Segment",
+            "type": "section",
+            "description": "**JPEG Marker Segments**\n\nJPEG files are composed of a series of marker segments. Each segment begins with a 2-byte marker (FF xx), followed by a 2-byte length field and segment-specific data. The length field includes itself but not the marker.\n\nSegments continue until the Start of Scan (SOS / FF DA) marker is reached, after which the compressed image data follows.",
+            "repeat": "until",
+            "repeat_until": "$SegmentMarker == 65498",
+            "color_gradient": true,
             "fields": [
                 {
-                    "name": "APP0_Marker",
-                    "size": 2,
-                    "type": "bytes",
-                    "description": "APP0 marker - should be FF E0"
-                },
-                {
-                    "name": "APP0_Length",
+                    "name": "SegmentMarker",
                     "size": 2,
                     "type": "uint",
-                    "description": "Length of APP0 segment (including this field)"
-                },
-                {
-                    "name": "Identifier",
-                    "size": 5,
-                    "type": "string",
-                    "description": "JFIF identifier - 'JFIF' with null terminator. JFIF = JPEG File Interchange Format"
-                },
-                {
-                    "name": "Version_Major",
-                    "size": 1,
-                    "type": "uint",
-                    "description": "Major version number"
-                },
-                {
-                    "name": "Version_Minor",
-                    "size": 1,
-                    "type": "uint",
-                    "description": "Minor version number (e.g., 01 02 = version 1.02)"
-                },
-                {
-                    "name": "DensityUnits",
-                    "size": 1,
-                    "type": "uint",
-                    "description": "Units for pixel density",
+                    "description": "**Segment Marker**\n\nA 2-byte marker identifying the segment type. All markers start with `0xFF` followed by a type byte.\n\nCommon markers:\n- `FF E0` (APP0) — JFIF header\n- `FF E1` (APP1) — Exif / XMP metadata\n- `FF DB` (DQT) — Quantization tables\n- `FF C0` (SOF0) — Baseline DCT frame\n- `FF C4` (DHT) — Huffman tables\n- `FF DA` (SOS) — Start of Scan (compressed data follows)\n- `FF FE` (COM) — Comment\n- `FF DD` (DRI) — Define Restart Interval",
+                    "forensic_value": "identifier",
                     "value_map": {
-                        "0": "No units (aspect ratio only)",
-                        "1": "Pixels per inch",
-                        "2": "Pixels per centimeter"
+                        "65472": "SOF0 - Start of Frame (Baseline DCT)",
+                        "65473": "SOF1 - Start of Frame (Extended Sequential DCT)",
+                        "65474": "SOF2 - Start of Frame (Progressive DCT)",
+                        "65475": "SOF3 - Start of Frame (Lossless)",
+                        "65476": "DHT - Define Huffman Table",
+                        "65477": "SOF5 - Differential Sequential DCT",
+                        "65478": "SOF6 - Differential Progressive DCT",
+                        "65479": "SOF7 - Differential Lossless",
+                        "65480": "JPG - JPEG Extensions",
+                        "65481": "SOF9 - Extended Sequential DCT (Arithmetic)",
+                        "65482": "SOF10 - Progressive DCT (Arithmetic)",
+                        "65483": "SOF11 - Lossless (Arithmetic)",
+                        "65484": "DAC - Define Arithmetic Coding",
+                        "65497": "EOI - End of Image",
+                        "65498": "SOS - Start of Scan",
+                        "65499": "DQT - Define Quantization Table",
+                        "65500": "DNL - Define Number of Lines",
+                        "65501": "DRI - Define Restart Interval",
+                        "65502": "DHP - Define Hierarchical Progression",
+                        "65503": "EXP - Expand Reference Components",
+                        "65504": "APP0 - JFIF Header",
+                        "65505": "APP1 - Exif / XMP Metadata",
+                        "65506": "APP2 - ICC Color Profile / FlashPix",
+                        "65507": "APP3 - JPS Stereoscopic JPEG",
+                        "65508": "APP4 - Application-specific",
+                        "65509": "APP5 - Application-specific",
+                        "65510": "APP6 - Application-specific",
+                        "65511": "APP7 - Application-specific",
+                        "65512": "APP8 - Application-specific",
+                        "65513": "APP9 - Application-specific",
+                        "65514": "APP10 - Application-specific",
+                        "65515": "APP11 - Application-specific",
+                        "65516": "APP12 - PictureInfo / Ducky",
+                        "65517": "APP13 - Photoshop IRB / IPTC",
+                        "65518": "APP14 - Adobe DCT Filter",
+                        "65519": "APP15 - Application-specific",
+                        "65534": "COM - Comment"
                     }
                 },
                 {
-                    "name": "Xdensity",
+                    "name": "SegmentLength",
                     "size": 2,
                     "type": "uint",
-                    "description": "Horizontal pixel density (must not be zero)"
+                    "description": "**Segment Length**\n\nLength of this segment in bytes, including this 2-byte length field but excluding the 2-byte marker.\n\nTo get the data-only length, subtract 2.",
+                    "informational": true
                 },
                 {
-                    "name": "Ydensity",
-                    "size": 2,
-                    "type": "uint",
-                    "description": "Vertical pixel density (must not be zero)"
+                    "_comment": "===== APP0 / JFIF segment (marker 0xFFE0 = 65504) =====",
+                    "name": "JFIF_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65504",
+                    "description": "**APP0 — JFIF Header**\n\nThe JFIF (JPEG File Interchange Format) segment provides basic image metadata including version, pixel density, and optional thumbnail. This is the standard first segment after SOI for JFIF-compliant files.",
+                    "fields": [
+                        {
+                            "name": "JFIF_Identifier",
+                            "size": 5,
+                            "type": "string",
+                            "description": "**JFIF Identifier**\n\nASCII string `JFIF` followed by a null byte (`4A 46 49 46 00`). Identifies this APP0 segment as a JFIF header.",
+                            "expected_values": ["JFIF"],
+                            "informational": true
+                        },
+                        {
+                            "name": "JFIF_VersionMajor",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**JFIF Major Version**\n\nMajor version number of the JFIF specification. Typically `1`.",
+                            "informational": true
+                        },
+                        {
+                            "name": "JFIF_VersionMinor",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**JFIF Minor Version**\n\nMinor version number (e.g., `02` for version 1.02).\n\nKnown versions: 1.00, 1.01, 1.02.",
+                            "informational": true
+                        },
+                        {
+                            "name": "DensityUnits",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Pixel Density Units**\n\nSpecifies the unit of measurement for Xdensity and Ydensity.\n\n*Forensic Value:* Discrepancies in density settings may indicate image editing or manipulation.",
+                            "value_map": {
+                                "0": "No units (aspect ratio only)",
+                                "1": "Pixels per inch (DPI)",
+                                "2": "Pixels per centimeter"
+                            }
+                        },
+                        {
+                            "name": "Xdensity",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Horizontal Pixel Density**\n\nHorizontal pixel density. Must not be zero.\n\nCommon values: 72 or 96 DPI for screen, 150-600 DPI for print.",
+                            "expected_values": {"min": 1}
+                        },
+                        {
+                            "name": "Ydensity",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Vertical Pixel Density**\n\nVertical pixel density. Must not be zero.",
+                            "expected_values": {"min": 1}
+                        },
+                        {
+                            "name": "Xthumbnail",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Thumbnail Width**\n\nWidth of the optional embedded thumbnail in pixels. Zero means no thumbnail."
+                        },
+                        {
+                            "name": "Ythumbnail",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Thumbnail Height**\n\nHeight of the optional embedded thumbnail in pixels. Zero means no thumbnail."
+                        },
+                        {
+                            "name": "JFIF_ThumbnailData",
+                            "size": "$SegmentLength - 16",
+                            "type": "bytes",
+                            "condition": "$SegmentLength > 16",
+                            "description": "**Thumbnail Image Data**\n\nUncompressed 24-bit RGB raster data for the thumbnail. Size = 3 x Xthumbnail x Ythumbnail bytes.\n\n*Forensic Value:* The embedded thumbnail may retain the original image content even if the main image was edited (thumbnail not updated).",
+                            "forensic_value": true
+                        }
+                    ]
                 },
                 {
-                    "name": "Xthumbnail",
-                    "size": 1,
-                    "type": "uint",
-                    "description": "Thumbnail horizontal pixel count (may be zero)"
+                    "_comment": "===== APP1 / Exif segment (marker 0xFFE1 = 65505) =====",
+                    "name": "Exif_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65505",
+                    "description": "**APP1 — Exif / XMP Metadata**\n\nContains Exchangeable Image File Format (Exif) metadata or XMP (Extensible Metadata Platform) data.\n\n*Forensic Value:* **Extremely valuable.** Exif data often contains:\n- Camera make, model, serial number\n- GPS coordinates (latitude/longitude)\n- Original creation timestamp\n- Software used for editing\n- Thumbnail of the original image\n- Lens information, exposure settings\n- Unique image identifiers\n\nExif data persists through many image operations and can reveal editing history, device identification, and geographic location.",
+                    "fields": [
+                        {
+                            "name": "Exif_Identifier",
+                            "size": 6,
+                            "type": "string",
+                            "description": "**Exif Identifier**\n\nASCII string `Exif` followed by two null bytes (`45 78 69 66 00 00`), or `http:` for XMP data.\n\n*Forensic Value:* Identifies whether this is Exif or XMP metadata.",
+                            "forensic_value": "identifier"
+                        },
+                        {
+                            "name": "Exif_Payload",
+                            "size": "$SegmentLength - 8",
+                            "type": "bytes",
+                            "condition": "$SegmentLength > 8",
+                            "description": "**Exif / XMP Payload**\n\nThe raw Exif TIFF structure or XMP XML data.\n\n**Exif TIFF Structure:**\n- Byte order mark: `49 49` (Intel/little-endian) or `4D 4D` (Motorola/big-endian)\n- TIFF magic: `00 2A`\n- IFD0 offset (4 bytes)\n- IFD entries containing tags for camera info, timestamps, GPS, etc.\n\n**Key Exif Tags (forensically significant):**\n- 0x010F: Camera Make\n- 0x0110: Camera Model\n- 0x0132: DateTime (last modified)\n- 0x9003: DateTimeOriginal (when photo was taken)\n- 0x9004: DateTimeDigitized\n- 0x8769: Exif IFD pointer\n- 0x8825: GPS IFD pointer\n- GPS tags: Latitude, Longitude, Altitude, Timestamp, Map datum\n- 0xA431: Serial Number (body)\n- 0xA432: Lens Info\n- 0xA434: Lens Model\n\n*Forensic Value:* **Critical.** Contains device identification, timestamps, and possibly GPS coordinates.",
+                            "forensic_value": true
+                        }
+                    ]
                 },
                 {
-                    "name": "Ythumbnail",
-                    "size": 1,
-                    "type": "uint",
-                    "description": "Thumbnail vertical pixel count (may be zero)"
+                    "_comment": "===== APP2 / ICC Profile (marker 0xFFE2 = 65506) =====",
+                    "name": "APP2_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65506",
+                    "description": "**APP2 — ICC Color Profile**\n\nContains ICC color management data or FlashPix extensions.",
+                    "fields": [
+                        {
+                            "name": "APP2_Payload",
+                            "size": "$SegmentLength - 2",
+                            "type": "string",
+                            "description": "**ICC Profile Data**\n\nColor profile data for accurate color reproduction. Often starts with `ICC_PROFILE` identifier.\n\n*Forensic Value:* May reveal the software or device that created the color profile."
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== APP12 / PictureInfo (marker 0xFFEC = 65516) =====",
+                    "name": "APP12_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65516",
+                    "description": "**APP12 — PictureInfo / Ducky**\n\nContains PictureInfo or Ducky quality/comment data, often inserted by Adobe Photoshop.",
+                    "fields": [
+                        {
+                            "name": "APP12_Payload",
+                            "size": "$SegmentLength - 2",
+                            "type": "string",
+                            "description": "**PictureInfo / Ducky Data**\n\nApplication-specific metadata. Adobe Photoshop uses this for \"Save for Web\" quality settings.\n\n*Forensic Value:* Reveals Adobe software usage and editing workflow.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== APP13 / Photoshop / IPTC (marker 0xFFED = 65517) =====",
+                    "name": "APP13_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65517",
+                    "description": "**APP13 — Photoshop IRB / IPTC**\n\nContains Photoshop Image Resource Blocks and IPTC (International Press Telecommunications Council) metadata.\n\n*Forensic Value:* IPTC data includes author, copyright, captions, keywords, and creation date. Photoshop IRBs reveal detailed editing history.",
+                    "fields": [
+                        {
+                            "name": "APP13_Identifier",
+                            "size": 14,
+                            "type": "string",
+                            "description": "**Photoshop Identifier**\n\nTypically `Photoshop 3.0` followed by a null byte.",
+                            "forensic_value": "identifier"
+                        },
+                        {
+                            "name": "APP13_Payload",
+                            "size": "$SegmentLength - 16",
+                            "type": "bytes",
+                            "condition": "$SegmentLength > 16",
+                            "description": "**Photoshop IRB / IPTC Payload**\n\nImage Resource Blocks containing IPTC-NAA records, resolution info, print flags, etc.\n\n*Forensic Value:* May contain author name, copyright info, captions, keyword tags, and editing software details.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== APP14 / Adobe (marker 0xFFEE = 65518) =====",
+                    "name": "APP14_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65518",
+                    "description": "**APP14 — Adobe DCT Filter**\n\nAdobe-specific segment for color transform information.",
+                    "fields": [
+                        {
+                            "name": "Adobe_Identifier",
+                            "size": 5,
+                            "type": "string",
+                            "description": "**Adobe Identifier**\n\nASCII string `Adobe`.",
+                            "forensic_value": "identifier"
+                        },
+                        {
+                            "name": "Adobe_Version",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Adobe DCT Version**\n\nVersion of Adobe DCT filter."
+                        },
+                        {
+                            "name": "Adobe_Flags0",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Flags 0**"
+                        },
+                        {
+                            "name": "Adobe_Flags1",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Flags 1**"
+                        },
+                        {
+                            "name": "Adobe_ColorTransform",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Color Transform**\n\nSpecifies the color encoding used.",
+                            "value_map": {
+                                "0": "Unknown (RGB or CMYK)",
+                                "1": "YCbCr",
+                                "2": "YCCK"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== COM / Comment segment (marker 0xFFFE = 65534) =====",
+                    "name": "Comment_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65534",
+                    "description": "**COM — Comment**\n\nA free-text comment embedded in the JPEG file.\n\n*Forensic Value:* Comments may contain author information, software identifiers, timestamps, or hidden messages. Some steganography tools embed data here.",
+                    "fields": [
+                        {
+                            "name": "Comment_Text",
+                            "size": "$SegmentLength - 2",
+                            "type": "string",
+                            "description": "**Comment Text**\n\nFree-form ASCII text. May contain:\n- Software name and version (e.g., image editors)\n- Author or copyright information\n- Creation tool identifier\n- Hidden data (steganography)\n\n*Forensic Value:* Can identify the tool used to create or edit the image.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== DQT / Quantization Table (marker 0xFFDB = 65499) =====",
+                    "name": "DQT_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65499",
+                    "description": "**DQT — Define Quantization Table**\n\nDefines one or more quantization tables used in JPEG compression. These tables control the trade-off between image quality and file size.\n\n*Forensic Value:* Quantization tables are characteristic of specific cameras and software. They can be used to fingerprint the encoding application or identify recompression.",
+                    "fields": [
+                        {
+                            "name": "QT_Data",
+                            "size": "$SegmentLength - 2",
+                            "type": "bytes",
+                            "description": "**Quantization Table Data**\n\nOne or more quantization tables. Each table:\n- 1 byte: precision (high nibble: 0=8-bit, 1=16-bit) and table ID (low nibble: 0-3)\n- 64 or 128 values (8-bit or 16-bit) in zig-zag order\n\n*Forensic Value:* **Important.** Quantization tables act as a fingerprint:\n- Identical tables across images suggest the same camera/software\n- Modified tables indicate recompression or editing\n- Standard tables can identify specific applications (Photoshop, ImageMagick, etc.)",
+                            "forensic_value": "identifier"
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== SOF0 / Start of Frame Baseline (marker 0xFFC0 = 65472) =====",
+                    "name": "SOF0_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65472",
+                    "description": "**SOF0 — Start of Frame (Baseline DCT)**\n\nDefines the image dimensions, color depth, and component configuration for baseline JPEG compression.",
+                    "fields": [
+                        {
+                            "name": "SOF_Precision",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Sample Precision**\n\nBits per sample (typically 8). Specifies the precision of the image components.",
+                            "expected_values": [8, 12],
+                            "informational": true
+                        },
+                        {
+                            "name": "SOF_ImageHeight",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Image Height**\n\nHeight of the image in pixels.\n\n*Forensic Value:* Compare with file metadata and actual rendered dimensions to detect manipulation.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "SOF_ImageWidth",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Image Width**\n\nWidth of the image in pixels.\n\n*Forensic Value:* Compare with file metadata and actual rendered dimensions to detect manipulation.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "SOF_NumComponents",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Number of Components**\n\nNumber of color components in the image.",
+                            "value_map": {
+                                "1": "Grayscale",
+                                "3": "YCbCr (color)",
+                                "4": "CMYK"
+                            },
+                            "informational": true
+                        },
+                        {
+                            "name": "SOF_ComponentData",
+                            "size": "$SegmentLength - 8",
+                            "type": "bytes",
+                            "condition": "$SegmentLength > 8",
+                            "description": "**Component Specifications**\n\nFor each component (3 bytes each):\n- Component ID (1 byte): 1=Y, 2=Cb, 3=Cr\n- Sampling factors (1 byte): high nibble=horizontal, low nibble=vertical\n- Quantization table ID (1 byte): which DQT table to use\n\n*Forensic Value:* Chroma subsampling ratios (e.g., 4:2:0 vs 4:4:4) can indicate camera vs. software encoding."
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== SOF2 / Progressive DCT (marker 0xFFC2 = 65474) =====",
+                    "name": "SOF2_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65474",
+                    "description": "**SOF2 — Start of Frame (Progressive DCT)**\n\nSame structure as SOF0 but indicates progressive JPEG encoding (image loads in multiple passes).",
+                    "fields": [
+                        {
+                            "name": "SOF2_Precision",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Sample Precision**\n\nBits per sample.",
+                            "informational": true
+                        },
+                        {
+                            "name": "SOF2_ImageHeight",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Image Height** (pixels)",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "SOF2_ImageWidth",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Image Width** (pixels)",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "SOF2_NumComponents",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Number of Components**",
+                            "value_map": {
+                                "1": "Grayscale",
+                                "3": "YCbCr (color)",
+                                "4": "CMYK"
+                            }
+                        },
+                        {
+                            "name": "SOF2_ComponentData",
+                            "size": "$SegmentLength - 8",
+                            "type": "bytes",
+                            "condition": "$SegmentLength > 8",
+                            "description": "**Component Specifications**\n\nSame format as SOF0 component data."
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== DHT / Huffman Table (marker 0xFFC4 = 65476) =====",
+                    "name": "DHT_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65476",
+                    "description": "**DHT — Define Huffman Table**\n\nDefines Huffman coding tables for entropy encoding of the DCT coefficients.",
+                    "fields": [
+                        {
+                            "name": "HuffmanTable",
+                            "size": "$SegmentLength - 2",
+                            "type": "bytes",
+                            "description": "**Huffman Table Data**\n\nOne or more Huffman tables:\n- 1 byte header: class (high nibble: 0=DC, 1=AC) and table ID (low nibble: 0-3)\n- 16 bytes: number of codes of each length (1-16 bits)\n- Variable: the Huffman values\n\n*Forensic Value:* Like quantization tables, Huffman tables can fingerprint the encoding software."
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== DRI / Define Restart Interval (marker 0xFFDD = 65501) =====",
+                    "name": "DRI_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65501",
+                    "description": "**DRI — Define Restart Interval**\n\nSpecifies the number of MCUs (Minimum Coded Units) between restart markers in the compressed data.",
+                    "fields": [
+                        {
+                            "name": "RestartInterval",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**Restart Interval**\n\nNumber of MCUs between RST markers. A value of 0 disables restart markers.",
+                            "informational": true
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== SOS / Start of Scan (marker 0xFFDA = 65498) =====",
+                    "name": "SOS_Data",
+                    "type": "section",
+                    "condition": "$SegmentMarker == 65498",
+                    "description": "**SOS — Start of Scan**\n\nMarks the beginning of the compressed image data. The scan header specifies which components are included.\n\nAfter this header, the entropy-coded (compressed) image data follows until the End of Image (EOI / FF D9) marker.",
+                    "fields": [
+                        {
+                            "name": "SOS_NumComponents",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Number of Components in Scan**\n\nNumber of image components in this scan. Typically 1 (grayscale) or 3 (color).",
+                            "value_map": {
+                                "1": "Single component (grayscale or progressive pass)",
+                                "3": "All color components (Y, Cb, Cr)",
+                                "4": "CMYK components"
+                            }
+                        },
+                        {
+                            "name": "SOS_ComponentSpec",
+                            "size": "$SOS_NumComponents * 2",
+                            "type": "bytes",
+                            "description": "**Scan Component Specifications**\n\nFor each component (2 bytes each):\n- Component selector (1 byte): matches the component ID from SOF\n- Huffman table selectors (1 byte): high nibble = DC table, low nibble = AC table"
+                        },
+                        {
+                            "name": "SOS_SpectralStart",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Spectral Selection Start**\n\nStart of spectral selection (0 for baseline, 0-63 for progressive)."
+                        },
+                        {
+                            "name": "SOS_SpectralEnd",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Spectral Selection End**\n\nEnd of spectral selection (63 for baseline)."
+                        },
+                        {
+                            "name": "SOS_ApproxBitPos",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Successive Approximation Bit Position**\n\nHigh nibble = successive approximation high bit, low nibble = low bit. Both 0 for baseline."
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== Generic APP segment fallback (APP3-APP11, APP15) =====",
+                    "name": "GenericAPP_Data",
+                    "type": "section",
+                    "condition": "65507 <= $SegmentMarker <= 65515 or $SegmentMarker == 65519 or $SegmentMarker == 65508",
+                    "description": "**Application-Specific Segment**\n\nContains application-specific data not covered by the known APP segment handlers.\n\n*Forensic Value:* May contain proprietary metadata from cameras, editing software, or steganography tools.",
+                    "fields": [
+                        {
+                            "name": "APP_Payload",
+                            "size": "$SegmentLength - 2",
+                            "type": "string",
+                            "description": "**Application Data**\n\nApplication-specific payload. Displayed as ASCII text; non-printable characters indicate binary data.\n\n*Forensic Value:* May contain hidden data, proprietary metadata, or software identifiers.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "_comment": "===== Fallback for any unhandled segment =====",
+                    "name": "UnknownSegment_Data",
+                    "type": "section",
+                    "condition": "not ($SegmentMarker == 65504 or $SegmentMarker == 65505 or $SegmentMarker == 65506 or $SegmentMarker == 65516 or $SegmentMarker == 65517 or $SegmentMarker == 65518 or $SegmentMarker == 65534 or $SegmentMarker == 65499 or $SegmentMarker == 65472 or $SegmentMarker == 65474 or $SegmentMarker == 65476 or $SegmentMarker == 65501 or $SegmentMarker == 65498 or (65507 <= $SegmentMarker <= 65515) or $SegmentMarker == 65519 or $SegmentMarker == 65508)",
+                    "description": "**Unknown / Unhandled Segment**\n\nA JPEG marker segment not specifically parsed by this configuration.",
+                    "fields": [
+                        {
+                            "name": "UnknownPayload",
+                            "size": "$SegmentLength - 2",
+                            "type": "bytes",
+                            "description": "**Segment Payload**\n\nRaw data of this segment."
+                        }
+                    ]
                 }
             ]
         },
         {
-            "name": "RemainingData",
+            "name": "CompressedImageData",
             "size": 0,
             "type": "remaining",
-            "description": "Remaining JPEG data (compressed image data, other segments, and End of Image marker)"
+            "description": "**Compressed Image Data & EOI**\n\nThe entropy-coded (Huffman or arithmetic) compressed image data, followed by the End of Image marker (`FF D9`).\n\nThis data contains the actual visual content of the JPEG. It cannot be meaningfully parsed without decompression.\n\n*Forensic Value:* Presence and integrity of the EOI marker at the end indicates the image data is complete. Missing EOI suggests truncation or corruption. Hidden data may be appended after the EOI marker (steganography, appended ZIP files, etc.).",
+            "forensic_value": true
         }
     ]
 }

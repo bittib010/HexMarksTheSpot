@@ -9,7 +9,7 @@ HexMarksTheSpot is a Python-based application engineered to offer an intuitive y
 **Now with JSON-based parser configuration!** Forensicators can create new artifact parsers without writing Python code.
 
 Example screenshot:
-![](images/20231004230655.png)
+![](images/2026Updatespng.png)
 
 ---
 
@@ -311,11 +311,11 @@ HexMarksTheSpot/
 ├── requirements.txt       # Dependencies
 ├── requirements-dev.txt   # Development dependencies
 ├── Artefacts/
-│   ├── SQLiteFileParser.py
-│   ├── JPEGFileParser.py
-│   ├── MFTFileParser.py
-│   ├── LNKFileParser.py
 │   └── configs/           # JSON parser definitions
+│       ├── jpeg.json
+│       ├── lnk_shell_link.json
+│       ├── sqlite.json
+│       ├── ntfs_boot.json
 │       ├── png.json
 │       ├── prefetch.json
 │       ├── pe_exe.json
