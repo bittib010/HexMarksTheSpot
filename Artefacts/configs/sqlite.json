@@ -1,189 +1,1069 @@
 {
     "$schema": "./parser-config.schema.json",
     "name": "SQLite",
-    "description": "SQLite Database File Format",
+    "description": "SQLite Database File Format - Complete Forensic Analysis",
     "author": "HexMarksTheSpot",
-    "version": "1.0",
+    "version": "2.0",
     "magic_bytes": "53514C69746520666F726D6174203300",
     "magic_offset": 0,
     "endianness": "big",
     "references": [
         "https://www.sqlite.org/fileformat.html",
-        "https://www.sciencedirect.com/science/article/pii/S1742287618300471"
+        "https://www.sqlite.org/wal.html",
+        "https://www.sqlite.org/tempfiles.html",
+        "https://www.sciencedirect.com/science/article/pii/S1742287618300471",
+        "https://dfir.science/2017/04/Forensic-Analysis-of-SQLite-Databases.html",
+        "https://www.sans.org/white-papers/33784/"
     ],
     "fields": [
         {
             "name": "DatabaseHeader",
             "type": "struct",
-            "description": "SQLite Database Header (first 100 bytes)",
+            "description": "SQLite Database Header (first 100 bytes) - Critical forensic artifact containing database metadata",
+            "forensic_value": true,
             "fields": [
                 {
                     "name": "HeaderString",
                     "size": 16,
                     "type": "string",
-                    "description": "SQLite format signature: 'SQLite format 3\\0'"
+                    "description": "SQLite format signature: 'SQLite format 3\\0'. Corruption or modification indicates tampering.",
+                    "forensic_value": true
                 },
                 {
                     "name": "PageSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Database page size in bytes (power of 2, 512-65536). 1 means 65536."
+                    "description": "Database page size in bytes (power of 2, 512-65536). 1 means 65536. Critical for page boundary calculations.",
+                    "forensic_value": true
                 },
                 {
                     "name": "WriteVersion",
                     "size": 1,
                     "type": "uint",
-                    "description": "File format write version",
+                    "description": "File format write version. Indicates journal mode - check for associated -wal and -journal files.",
+                    "forensic_value": true,
                     "value_map": {
-                        "1": "Legacy (rollback journal)",
-                        "2": "WAL mode"
+                        "1": "Legacy (rollback journal) - look for .db-journal file",
+                        "2": "WAL mode - look for .db-wal and .db-shm files"
                     }
                 },
                 {
                     "name": "ReadVersion",
                     "size": 1,
                     "type": "uint",
-                    "description": "File format read version",
+                    "description": "File format read version. Must match WriteVersion for proper operation.",
+                    "forensic_value": true,
                     "value_map": {
                         "1": "Legacy (rollback journal)",
                         "2": "WAL mode"
                     }
                 },
                 {
-                    "name": "ReservedSpace",
+                    "name": "ReservedSpacePerPage",
                     "size": 1,
                     "type": "uint",
-                    "description": "Bytes of unused space at end of each page"
+                    "description": "Bytes of unused space at end of each page. Non-zero may indicate encryption (SQLCipher uses this).",
+                    "forensic_value": true
                 },
                 {
                     "name": "MaxPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Maximum embedded payload fraction (must be 64)"
+                    "description": "Maximum embedded payload fraction (must be 64). Non-64 value indicates corruption or non-standard database."
                 },
                 {
                     "name": "MinPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Minimum embedded payload fraction (must be 32)"
+                    "description": "Minimum embedded payload fraction (must be 32). Non-32 value indicates corruption or non-standard database."
                 },
                 {
                     "name": "LeafPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Leaf payload fraction (must be 32)"
+                    "description": "Leaf payload fraction (must be 32). Non-32 value indicates corruption or non-standard database."
                 },
                 {
                     "name": "FileChangeCounter",
                     "size": 4,
                     "type": "uint",
-                    "description": "File change counter - incremented on each transaction",
+                    "description": "File change counter - incremented on each transaction commit. Compare with VersionValidFor to detect incomplete transactions.",
                     "forensic_value": true
                 },
                 {
-                    "name": "DatabaseSizePages",
+                    "name": "DatabaseSizeInPages",
                     "size": 4,
                     "type": "uint",
-                    "description": "Size of database file in pages"
+                    "description": "Size of database file in pages. Compare with actual file size to detect truncation or appended data.",
+                    "forensic_value": true
                 },
                 {
-                    "name": "FirstFreelistPage",
+                    "name": "FirstFreelistTrunkPage",
                     "size": 4,
                     "type": "uint",
-                    "description": "Page number of first freelist trunk page",
+                    "description": "Page number of first freelist trunk page. Non-zero indicates deleted data may be recoverable in freelist pages.",
                     "forensic_value": true
                 },
                 {
                     "name": "TotalFreelistPages",
                     "size": 4,
                     "type": "uint",
-                    "description": "Total number of freelist pages",
+                    "description": "Total number of freelist pages. Higher count suggests more deleted/recoverable data.",
                     "forensic_value": true
                 },
                 {
                     "name": "SchemaCookie",
                     "size": 4,
                     "type": "uint",
-                    "description": "Schema cookie - incremented when schema changes"
+                    "description": "Schema cookie - incremented when schema changes (CREATE/DROP/ALTER TABLE). Indicates schema modification history.",
+                    "forensic_value": true
                 },
                 {
-                    "name": "SchemaFormat",
+                    "name": "SchemaFormatNumber",
                     "size": 4,
                     "type": "uint",
-                    "description": "Schema format number",
+                    "description": "Schema format number - indicates minimum SQLite version compatibility.",
+                    "forensic_value": true,
                     "value_map": {
-                        "1": "SQLite 3.0.0",
-                        "2": "SQLite 3.1.3",
-                        "3": "SQLite 3.1.4",
-                        "4": "SQLite 3.3.0"
+                        "1": "SQLite 3.0.0 (2004-06-18)",
+                        "2": "SQLite 3.1.3 (2005-02-20) - added DESC index",
+                        "3": "SQLite 3.1.4 (2005-03-11) - added boolean affinity",
+                        "4": "SQLite 3.3.0 (2006-01-10) - current format"
                     }
                 },
                 {
                     "name": "DefaultPageCacheSize",
                     "size": 4,
                     "type": "uint",
-                    "description": "Suggested cache size in pages"
+                    "description": "Suggested cache size in pages. Application-specific setting."
                 },
                 {
-                    "name": "LargestRootBTree",
+                    "name": "LargestRootBTreePage",
                     "size": 4,
                     "type": "uint",
-                    "description": "Page number of largest root b-tree page (auto-vacuum mode)"
+                    "description": "Page number of largest root b-tree page in auto-vacuum/incremental-vacuum mode. Zero in non-auto-vacuum databases.",
+                    "forensic_value": true
                 },
                 {
                     "name": "TextEncoding",
                     "size": 4,
                     "type": "uint",
-                    "description": "Database text encoding",
+                    "description": "Database text encoding. Critical for proper string interpretation.",
+                    "forensic_value": true,
                     "value_map": {
                         "1": "UTF-8",
-                        "2": "UTF-16le",
-                        "3": "UTF-16be"
+                        "2": "UTF-16le (little-endian)",
+                        "3": "UTF-16be (big-endian)"
                     }
                 },
                 {
                     "name": "UserVersion",
                     "size": 4,
                     "type": "uint",
-                    "description": "User version number (application-defined)"
+                    "description": "User version number - application-defined value set via PRAGMA user_version. Can identify application or schema version.",
+                    "forensic_value": true
                 },
                 {
                     "name": "IncrementalVacuumMode",
                     "size": 4,
                     "type": "uint",
-                    "description": "Incremental vacuum mode flag (0=false, non-zero=true)"
+                    "description": "Incremental vacuum mode flag. Non-zero enables incremental vacuum which affects how deleted space is handled.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "0": "Disabled - freelist pages retain deleted data",
+                        "1": "Enabled - freelist pages may be reused incrementally"
+                    }
                 },
                 {
                     "name": "ApplicationID",
                     "size": 4,
                     "type": "uint",
-                    "description": "Application ID set by PRAGMA application_id"
+                    "description": "Application ID - identifies the application that created/uses this database. Set via PRAGMA application_id.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "0": "Unspecified/Generic SQLite",
+                        "1196444487": "SQLite Archive (SQLAR)",
+                        "1195787623": "Fossil VCS",
+                        "1129337684": "Thumbs.db (Windows)",
+                        "1380206675": "Safari History (macOS/iOS)",
+                        "1146045006": "iMessage (iOS)",
+                        "1263879379": "AddressBook (iOS)",
+                        "1145261651": "Calendar (iOS)",
+                        "1312903010": "Reminders (iOS)",
+                        "1095188551": "WhatsApp (Android)",
+                        "1128616549": "Signal (Android)",
+                        "1413566807": "Chrome History",
+                        "1179929157": "Firefox Places"
+                    }
                 },
                 {
-                    "name": "Reserved",
+                    "name": "ReservedForExpansion",
                     "size": 20,
-                    "type": "skip",
-                    "description": "Reserved for expansion (must be zero)"
+                    "type": "bytes",
+                    "description": "Reserved space for future expansion. Should be all zeros. Non-zero bytes may indicate proprietary extensions or tampering.",
+                    "forensic_value": true
                 },
                 {
                     "name": "VersionValidFor",
                     "size": 4,
                     "type": "uint",
-                    "description": "Version-valid-for number"
+                    "description": "Version-valid-for number. Should equal FileChangeCounter. Mismatch indicates database was modified by older SQLite or incomplete transaction.",
+                    "forensic_value": true
                 },
                 {
                     "name": "SQLiteVersionNumber",
                     "size": 4,
                     "type": "uint",
-                    "description": "SQLite version number that wrote the database"
+                    "description": "SQLite library version that last wrote to this database. Format: major*1000000 + minor*1000 + patch (e.g., 3039004 = 3.39.4)",
+                    "forensic_value": true
                 }
             ]
         },
         {
-            "name": "RemainingData",
-            "size": 0,
-            "type": "remaining",
-            "description": "Database pages (B-tree pages, freelist pages, overflow pages)"
+            "name": "FirstPageBTreeHeader",
+            "type": "struct",
+            "description": "B-tree page header for page 1 (starts at offset 100). Page 1 always contains the sqlite_master/sqlite_schema table.",
+            "forensic_value": true,
+            "fields": [
+                {
+                    "name": "PageType",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "B-tree page type. Page 1 should be 0x0D (table leaf) or 0x05 (table interior).",
+                    "forensic_value": true,
+                    "value_map": {
+                        "2": "Interior index b-tree page (0x02)",
+                        "5": "Interior table b-tree page (0x05)",
+                        "10": "Leaf index b-tree page (0x0A)",
+                        "13": "Leaf table b-tree page (0x0D)"
+                    }
+                },
+                {
+                    "name": "FirstFreeblockOffset",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Offset to first freeblock in page, or 0 if none. Non-zero indicates deleted records in page.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "CellCount",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Number of cells in this page. For page 1, this is the number of schema objects.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "CellContentAreaStart",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Offset to start of cell content area. 0 means 65536. Gap between header and content may contain deleted data.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "FragmentedFreeBytes",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Number of fragmented free bytes in cell content area. Higher values indicate more deleted/modified records.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "RightMostPointer",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Right-most child page number (interior pages only, not present in leaf pages). 0 or omitted for leaf pages.",
+                    "forensic_value": true,
+                    "condition": "$PageType == 5 or $PageType == 2"
+                }
+            ]
+        },
+        {
+            "name": "WALHeader",
+            "type": "struct",
+            "description": "Write-Ahead Log (WAL) file header - present in .db-wal files. Critical for recovering uncommitted transactions.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "WALMagicNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "WAL magic number. Determines endianness and identifies valid WAL file.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "931071618": "Big-endian WAL (0x377F0682)",
+                        "931071619": "Little-endian WAL (0x377F0683)"
+                    }
+                },
+                {
+                    "name": "WALFormatVersion",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "WAL format version number. Should be 3007000 for current format.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALPageSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Database page size. Must match main database page size.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALCheckpointSequence",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Checkpoint sequence number. Incremented on each checkpoint operation.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALSalt1",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Random salt value 1. Changes on each checkpoint, used in frame checksums.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALSalt2",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Random salt value 2. Changes on each checkpoint, used in frame checksums.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALHeaderChecksum1",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Checksum of first 24 bytes of WAL header (part 1).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALHeaderChecksum2",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Checksum of first 24 bytes of WAL header (part 2).",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "WALFrameHeader",
+            "type": "struct",
+            "description": "WAL frame header - precedes each page copy in WAL file. Each frame is 24 bytes + page_size.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "WALFramePageNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Database page number this frame represents.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALFramePagesAfterCommit",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "For commit frames: database size in pages after commit. Zero for non-commit frames.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALFrameSalt1",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Salt value 1 copy. Must match WAL header salt for valid frame.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALFrameSalt2",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Salt value 2 copy. Must match WAL header salt for valid frame.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALFrameChecksum1",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Cumulative checksum including this frame (part 1).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WALFrameChecksum2",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Cumulative checksum including this frame (part 2).",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "JournalHeader",
+            "type": "struct",
+            "description": "Rollback Journal header - present in .db-journal files. Contains pre-transaction page images for rollback.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "JournalMagicNumber",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "Journal magic: 0xD9D505F920A163D7. Identifies valid journal file.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "JournalPageCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Number of pages in this journal segment. -1 (0xFFFFFFFF) means compute from file size.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "JournalRandomNonce",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Random nonce for journal file identification.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "JournalInitialPageCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Initial database page count before transaction.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "JournalSectorSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Disk sector size assumed by the writer.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "JournalPageSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Database page size. Must match main database.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "JournalReserved",
+                    "size": 4,
+                    "type": "bytes",
+                    "description": "Reserved/unused bytes.",
+                    "forensic_value": false
+                }
+            ]
+        },
+        {
+            "name": "FreelistTrunkPage",
+            "type": "struct",
+            "description": "Freelist trunk page structure. Contains pointers to deleted pages - critical for data recovery.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "NextTrunkPageNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Page number of next freelist trunk page, or 0 if this is the last trunk page.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "LeafPageCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Number of leaf page numbers stored on this trunk page.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "LeafPageNumbers",
+                    "size": 0,
+                    "type": "remaining",
+                    "description": "Array of 4-byte uint page numbers (count = LeafPageCount) pointing to freelist leaf pages. Each leaf page contains deleted data.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "PointerMapPage",
+            "type": "struct",
+            "description": "Pointer Map (ptrmap) page structure - only present in auto-vacuum/incremental-vacuum databases. First ptrmap is page 2. Contains back-pointers from child to parent for all pages.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "PtrmapEntry1",
+                    "size": 5,
+                    "type": "bytes",
+                    "description": "First 5-byte ptrmap entry: 1 byte page type + 4 byte parent page number. Describes page (ptrmap_page + 1).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "RemainingEntries",
+                    "size": 0,
+                    "type": "remaining",
+                    "description": "Additional 5-byte entries. Entry at index i describes page (ptrmap_page + 1 + i). Continues up to usable page size.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "PointerMapEntry",
+            "type": "struct",
+            "description": "Individual 5-byte pointer map entry. Each entry provides back-link for one database page.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "PageType",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Type of page this entry describes.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "1": "B-tree root page (parent should be 0)",
+                        "2": "Freelist page (parent should be 0)",
+                        "3": "First page of overflow chain (parent is b-tree page with overflowing cell)",
+                        "4": "Non-first overflow page (parent is prior overflow page)",
+                        "5": "Non-root b-tree page (parent is parent b-tree page)"
+                    }
+                },
+                {
+                    "name": "ParentPageNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Page number of parent page. Zero for root pages and freelist pages.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "JournalPageRecord",
+            "type": "struct",
+            "description": "Rollback journal page record - stores original page content before modification. Critical for recovering pre-transaction state.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "PageNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Database page number this record represents.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "OriginalPageContent",
+                    "size": 0,
+                    "type": "bytes",
+                    "description": "Original content of the page (size = database page size from journal header). Contains pre-transaction data.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "Checksum",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Page checksum: start with journal nonce, then add byte at offset (N-200), (N-400), etc. Invalid checksum indicates incomplete write.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "VarintDecoding",
+            "type": "struct",
+            "description": "SQLite variable-length integer (varint) encoding reference. Used throughout record format for sizes, rowids, and serial types.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "VarintGuide",
+                    "size": 1,
+                    "type": "skip",
+                    "description": "Varint encoding: 1-9 bytes. Bytes 1-8: MSB=1 means continue, lower 7 bits contribute to value. Byte 9 (if present): all 8 bits used. Big-endian: earlier bytes are more significant. Max value: 2^64-1. Examples: 0x00=0, 0x7F=127, 0x8100=128, 0x81807F=2113663."
+                }
+            ]
+        },
+        {
+            "name": "PayloadOverflowCalculation",
+            "type": "struct",
+            "description": "Reference for calculating when payload spills to overflow pages. Critical for parsing large records.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "OverflowThresholds",
+                    "size": 1,
+                    "type": "skip",
+                    "description": "Let U=usable page size (page_size - reserved_space). Table leaf: X=U-35, M=((U-12)*32/255)-23. Index pages: X=((U-12)*64/255)-23, M=((U-12)*32/255)-23. If payload P<=X, all on page. If P>X, store K=M+((P-M)%(U-4)) bytes on page if K<=X, else M bytes. First 4 bytes of overflow page is next overflow page number."
+                }
+            ]
+        },
+        {
+            "name": "BTreePageHeader",
+            "type": "struct",
+            "description": "B-tree page header structure (for all pages after page 1). B-tree pages contain the actual database records.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "PageType",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "B-tree page type. Determines cell format and structure.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "0": "Invalid/Corrupted page",
+                        "2": "Interior index b-tree page (0x02) - index nodes",
+                        "5": "Interior table b-tree page (0x05) - table nodes with child pointers",
+                        "10": "Leaf index b-tree page (0x0A) - index entries",
+                        "13": "Leaf table b-tree page (0x0D) - actual data records"
+                    }
+                },
+                {
+                    "name": "FirstFreeblockOffset",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Start of first freeblock on page (0 if none). Freeblocks contain deleted record fragments.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "CellCount",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Number of cells (records) on this page.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "CellContentStart",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Byte offset to start of cell content area. Area between cell pointers and content may have deleted data.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "FragmentedBytes",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Total fragmented free bytes. Accumulated from delete/update operations.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "RightChildPointer",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Right-most child page for interior pages only.",
+                    "forensic_value": true,
+                    "condition": "$PageType == 5 or $PageType == 2"
+                }
+            ]
+        },
+        {
+            "name": "CellPointerArray",
+            "type": "struct",
+            "description": "Array of 2-byte cell pointers following b-tree page header. Points to cells in descending order.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "CellPointers",
+                    "size": 0,
+                    "type": "remaining",
+                    "description": "Array of 2-byte uint offsets (count = CellCount from page header) pointing to cell content. Gap between last pointer and first cell may contain deleted data.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "TableLeafCell",
+            "type": "struct",
+            "description": "Table leaf cell structure - contains actual database records with rowid.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "PayloadSize",
+                    "size": 9,
+                    "type": "bytes",
+                    "description": "Total payload size (varint, 1-9 bytes). MSB=1 means continue to next byte. Final value = concatenated 7-bit values.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "RowID",
+                    "size": 9,
+                    "type": "bytes",
+                    "description": "Row ID / primary key (varint, 1-9 bytes). Monotonically increasing unless explicitly set.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "RecordHeaderSize",
+                    "size": 9,
+                    "type": "bytes",
+                    "description": "Size of record header in bytes (varint). Includes this size field itself.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ColumnTypesAndData",
+                    "size": 0,
+                    "type": "remaining",
+                    "description": "Column serial types (varints) followed by column data. Serial type determines data size: 0=NULL(0), 1=int8(1), 2=int16(2), 3=int24(3), 4=int32(4), 5=int48(6), 6=int64(8), 7=float64(8), 8-9=const 0/1(0), N>=12 even=BLOB((N-12)/2), N>=13 odd=string((N-13)/2).",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "TableInteriorCell",
+            "type": "struct",
+            "description": "Table interior cell structure - contains child page pointers for tree navigation.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "LeftChildPage",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Page number of left child.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "RowID",
+                    "size": 9,
+                    "type": "bytes",
+                    "description": "Integer key as varint (1-9 bytes). Keys <= this value are in left child.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "IndexLeafCell",
+            "type": "struct",
+            "description": "Index leaf cell structure - contains index key values.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "PayloadSize",
+                    "size": 9,
+                    "type": "bytes",
+                    "description": "Total payload size as varint (1-9 bytes).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "IndexRecord",
+                    "size": 0,
+                    "type": "remaining",
+                    "description": "Index key record in standard record format (header + values).",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "IndexInteriorCell",
+            "type": "struct",
+            "description": "Index interior cell structure - contains child pointers and key values for index trees.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "LeftChildPage",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Page number of left child.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "PayloadSize",
+                    "size": 9,
+                    "type": "bytes",
+                    "description": "Total payload size as varint (1-9 bytes).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "IndexRecord",
+                    "size": 0,
+                    "type": "remaining",
+                    "description": "Index key record for tree navigation.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "OverflowPage",
+            "type": "struct",
+            "description": "Overflow page structure - contains payload that exceeds cell capacity.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "NextOverflowPage",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Next overflow page number, or 0 if this is the last page.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "OverflowContent",
+                    "size": 0,
+                    "type": "bytes",
+                    "description": "Overflow payload data (page_size - 4 bytes). May contain large BLOBs or text.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "Freeblock",
+            "type": "struct",
+            "description": "Freeblock structure within a page - contains deleted record fragments.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "NextFreeblockOffset",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Offset to next freeblock on page, or 0 if last.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "FreeblockSize",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Size of this freeblock in bytes (minimum 4).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "FreeblockContent",
+                    "size": 0,
+                    "type": "bytes",
+                    "description": "Freeblock content - may contain remnants of deleted records.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "SerialTypeTable",
+            "type": "struct",
+            "description": "Reference table for SQLite serial type codes used in record headers.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "SerialTypes",
+                    "size": 1,
+                    "type": "skip",
+                    "description": "Reference table - Serial type codes: 0=NULL(0 bytes), 1=int8(1), 2=int16BE(2), 3=int24BE(3), 4=int32BE(4), 5=int48BE(6), 6=int64BE(8), 7=float64(8), 8=const 0(0), 9=const 1(0), 10-11=reserved, N>=12 even=BLOB((N-12)/2 bytes), N>=13 odd=String((N-13)/2 bytes)."
+                }
+            ]
+        },
+        {
+            "name": "SharedMemoryHeader",
+            "type": "struct",
+            "description": "WAL-index shared memory header (.db-shm file). Contains WAL state information.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "ShmVersion",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Shared memory format version.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmUnused",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Unused padding."
+                },
+                {
+                    "name": "ShmChangeCounter",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Change counter incremented on header modification.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmInitialized",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Non-zero if properly initialized.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmBigEndianChecksum",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Non-zero for big-endian checksums.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmPageSize",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Database page size stored in header.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmMaxFrame",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Maximum valid WAL frame number.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmDatabaseSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Database size in pages.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmFrameChecksum",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "Checksum of last frame in WAL (2x4 bytes).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmSalt",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "Salt values copied from WAL header (2x4 bytes).",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ShmChecksum",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "Checksum of this header (2x4 bytes).",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "LockByteInfo",
+            "type": "struct",
+            "description": "Lock byte page at offset 0x40000000 (1073741824). Only exists in databases > 1GB. Forensically relevant for detecting database access patterns.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "PendingByteLock",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Offset 0x40000000 - Pending byte lock.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ReservedByteLock",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Offset 0x40000001 - Reserved byte lock.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "SharedByteLocks",
+                    "size": 510,
+                    "type": "bytes",
+                    "description": "Offsets 0x40000002-0x400001FF - Shared byte range for reader locks.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "KnownDatabaseSignatures",
+            "type": "struct",
+            "description": "Common SQLite database types identifiable by Application ID or schema patterns.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "CommonDatabases",
+                    "size": 1,
+                    "type": "skip",
+                    "description": "Reference: Common forensic databases - Chrome: History/places.sqlite, Cookies, 'Web Data', 'Login Data' | Firefox: places.sqlite, cookies.sqlite, signons.sqlite | Safari: History.db | iOS: sms.db, AddressBook.sqlitedb, call_history.db | Android: mmssms.db, contacts2.db | Messaging: msgstore.db(WhatsApp), cache4.db(Telegram), signal.db | Windows: thumbs.db, thumbcache_*.db"
+                }
+            ]
+        },
+        {
+            "name": "ForensicRecoveryZones",
+            "type": "struct",
+            "description": "Areas within SQLite database where deleted data can be recovered.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "RecoveryLocations",
+                    "size": 1,
+                    "type": "skip",
+                    "description": "Forensic recovery zones: 1)Freelist pages-complete deleted records via trunk pointers 2)Freeblocks-deleted fragments in active pages 3)Unallocated-gap between cell pointers and content 4)Fragmented bytes-<4 byte gaps 5)WAL frames-pre-checkpoint pages 6)Journal-pre-transaction pages 7)Overflow pages in freelist 8)Auto-vacuum pointer maps 9)File slack beyond header-declared size"
+                }
+            ]
+        },
+        {
+            "name": "TimestampFormats",
+            "type": "struct",
+            "description": "Common timestamp formats found in SQLite databases from various applications.",
+            "forensic_value": true,
+            "enabled": false,
+            "fields": [
+                {
+                    "name": "TimestampTypes",
+                    "size": 1,
+                    "type": "skip",
+                    "description": "Timestamp formats: Unix seconds(10 digits, epoch 1970) | Unix ms(13 digits, Chrome/Android) | Unix us(16 digits, Firefox) | WebKit(us since 1601, subtract 11644473600000000) | Mac Absolute(seconds since 2001, Cocoa) | Mac HFS(since 1904) | Julian Day(since -4713-11-24) | ISO8601(YYYY-MM-DD HH:MM:SS.SSS) | FILETIME(100ns since 1601, 8 bytes LE)"
+                }
+            ]
+        },
+        {
+            "name": "DatabasePages",
+            "type": "struct",
+            "description": "Remaining database pages (pages 2 through N). Each page is PageSize bytes and begins with a B-tree page header. Contains actual table/index data, freelist pages, overflow pages, and pointer-map pages.",
+            "forensic_value": true,
+            "repeat": "$DatabaseSizeInPages - 1",
+            "repeat_step": "$PageSize",
+            "fields": [
+                {
+                    "name": "PageType",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "B-tree page type flag. Determines the structure of cells on this page. Value 0x00 indicates a freelist leaf, overflow, or pointer-map page.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "0": "Not a b-tree page (freelist leaf / overflow / ptrmap)",
+                        "2": "Interior index b-tree page (0x02)",
+                        "5": "Interior table b-tree page (0x05)",
+                        "10": "Leaf index b-tree page (0x0A)",
+                        "13": "Leaf table b-tree page (0x0D)"
+                    }
+                },
+                {
+                    "name": "FirstFreeblockOffset",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Offset to first freeblock on this page, or 0 if none. Freeblocks contain fragments of deleted records - forensically valuable for data recovery.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "CellCount",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Number of cells (records) on this page.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "CellContentAreaStart",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Byte offset to start of cell content area (0 means 65536). Gap between cell pointers and content area may contain remnants of deleted records.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "FragmentedFreeBytes",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Total fragmented free bytes on this page. Fragments are free spaces too small to form a freeblock (<4 bytes). High values suggest heavy record churn.",
+                    "forensic_value": true
+                }
+            ]
         }
     ]
 }

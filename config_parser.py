@@ -39,6 +39,7 @@ Example JSON config structure:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -47,6 +48,8 @@ from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Optional, Union
 
 from common import FileParser, Node
+
+logger = logging.getLogger(__name__)
 
 
 class ParsedBitfield:
@@ -398,6 +401,78 @@ class ConfigBasedParser(FileParser):
         except Exception as e:
             return f"Invalid timestamp: {e}"
     
+    def _validate_expected_value(self, field_name: str, parsed_value: Any, 
+                                  expected: Any, offset: int, raw_data: bytes) -> None:
+        """
+        Validate a parsed value against expected_values constraints.
+        
+        Logs a warning when the value doesn't match expectations, including
+        the field location, raw hex, and what was expected vs found.
+        
+        Args:
+            field_name: Name of the field being validated
+            parsed_value: The parsed/interpreted value
+            expected: Either a list of valid values or a dict with min/max range
+            offset: File offset where the field was read
+            raw_data: Raw bytes of the field
+        """
+        # Normalize parsed_value for comparison
+        compare_value = parsed_value
+        if isinstance(parsed_value, ParsedBitfield):
+            compare_value = parsed_value.value
+        
+        matched = False
+        expected_desc = ""
+        
+        if isinstance(expected, list):
+            # List of allowed values - check membership
+            # Compare as same type: try int comparison for numeric values
+            for ev in expected:
+                if isinstance(ev, int) and isinstance(compare_value, int):
+                    if compare_value == ev:
+                        matched = True
+                        break
+                elif isinstance(ev, str) and isinstance(compare_value, str):
+                    if compare_value == ev:
+                        matched = True
+                        break
+                else:
+                    # Cross-type: try string comparison
+                    if str(compare_value) == str(ev):
+                        matched = True
+                        break
+            expected_desc = f"one of {expected}"
+            
+        elif isinstance(expected, dict):
+            # Range constraint with min/max
+            min_val = expected.get("min")
+            max_val = expected.get("max")
+            if isinstance(compare_value, (int, float)):
+                above_min = min_val is None or compare_value >= min_val
+                below_max = max_val is None or compare_value <= max_val
+                matched = above_min and below_max
+            else:
+                matched = False  # Can't range-check non-numeric
+            
+            parts = []
+            if min_val is not None:
+                parts.append(f">= {min_val}")
+            if max_val is not None:
+                parts.append(f"<= {max_val}")
+            expected_desc = f"value {' and '.join(parts)}" if parts else "any value"
+        else:
+            return  # Unknown constraint format, skip
+        
+        if not matched:
+            raw_hex = raw_data.hex() if raw_data else "N/A"
+            logger.warning(
+                f"UNEXPECTED VALUE at offset 0x{offset:X} ({offset}): "
+                f"Field '{field_name}' has value {compare_value} (raw: 0x{raw_hex}), "
+                f"expected {expected_desc}. "
+                f"This may indicate file corruption, tampering, a format update, or "
+                f"an unknown variant."
+            )
+    
     def format_bitfield(self, value: int, bit_flags: Optional[Dict[int, str]]) -> str:
         """Format a bitfield value with flag names."""
         if not bit_flags:
@@ -424,6 +499,11 @@ class ConfigBasedParser(FileParser):
         bit_flags = field_dict.get("bit_flags")
         value_map = field_dict.get("value_map")
         forensic_value = field_dict.get("forensic_value", False)
+        
+        # Check enabled flag - skip disabled fields entirely
+        enabled = field_dict.get("enabled", True)
+        if not enabled:
+            return None
         
         # Check condition first
         if condition and not self.evaluate_condition(condition):
@@ -522,6 +602,11 @@ class ConfigBasedParser(FileParser):
         # Store parsed value for references
         self.parsed_values[name] = table_value
         
+        # Validate against expected_values if defined
+        expected_values = field_dict.get("expected_values")
+        if expected_values is not None:
+            self._validate_expected_value(name, table_value, expected_values, offset, data)
+        
         # Create node - determine color
         node_color = color if color else self.get_next_color()
         
@@ -539,6 +624,8 @@ class ConfigBasedParser(FileParser):
         display_value = table_value
         if isinstance(table_value, ParsedBitfield):
             display_value = f"0x{table_value.value:08x}"
+        elif value_map and str(table_value) in value_map:
+            display_value = f"{table_value} ({value_map[str(table_value)]})"
         
         # Build HTML description
         html_desc = f"<h1>{name}</h1>"
@@ -560,15 +647,104 @@ class ConfigBasedParser(FileParser):
         return node
     
     def parse_section(self, field_dict: Dict[str, Any], parent_node: Node) -> Optional[Node]:
-        """Parse a section or struct - a group of nested fields."""
+        """Parse a section or struct - a group of nested fields.
+        
+        Supports optional repeat properties for looping:
+        - repeat: number, "$field_ref", expression, or "eof" for repeating until end of file
+        - repeat_step: fixed byte size per iteration (e.g., page size) - ensures each
+          iteration advances exactly this many bytes regardless of inner field parsing
+        """
         name = field_dict.get("name", "section")
         description = field_dict.get("description", "")
         color = field_dict.get("color")
         nested_fields = field_dict.get("fields", [])
+        repeat = field_dict.get("repeat")
+        repeat_step = field_dict.get("repeat_step")
         
         if not nested_fields:
             return None
         
+        # Resolve repeat count
+        if repeat is None:
+            # No repeat - parse once as before
+            return self._parse_section_once(name, description, color, nested_fields, parent_node)
+        
+        # Has repeat - resolve the count
+        if isinstance(repeat, str) and repeat.lower() == "eof":
+            repeat_count = -1  # Sentinel for "until EOF"
+        elif isinstance(repeat, str):
+            repeat_count = self.resolve_size(repeat)
+        else:
+            repeat_count = int(repeat)
+        
+        if repeat_count == 0:
+            return None
+        
+        # Resolve repeat_step if present
+        resolved_step = None
+        if repeat_step is not None:
+            resolved_step = self.resolve_size(repeat_step) if isinstance(repeat_step, str) else int(repeat_step)
+        
+        # Create container node for all iterations
+        offset = self.file.tell()
+        count_label = "until EOF" if repeat_count == -1 else str(repeat_count)
+        container_node = Node(
+            data=b'',
+            info=f"<h1>{name}</h1><p>{description}</p><p><b>Repeat:</b> {count_label} iterations</p>",
+            name=name,
+            color=color or self.get_next_color()
+        )
+        
+        iteration = 0
+        max_iterations = repeat_count if repeat_count > 0 else 100000  # Safety limit for EOF mode
+        
+        while iteration < max_iterations:
+            iter_start = self.file.tell()
+            
+            # Check for EOF - applies to all modes to prevent reading past file end
+            peek = self.file.read(1)
+            if not peek:
+                break  # Reached EOF
+            self.file.seek(iter_start)
+            
+            # If repeat_step is set, check we have enough bytes for a full step
+            if resolved_step:
+                self.file.seek(0, 2)
+                file_size = self.file.tell()
+                self.file.seek(iter_start)
+                if iter_start + resolved_step > file_size:
+                    break
+            
+            # Create node for this iteration
+            iter_name = f"{name}[{iteration}]"
+            iter_node = self._parse_section_once(
+                iter_name, f"{description} (iteration {iteration})", 
+                color, nested_fields, container_node
+            )
+            
+            if iter_node is None:
+                break
+            
+            # If repeat_step is set, advance to exact position for next iteration
+            if resolved_step:
+                next_pos = iter_start + resolved_step
+                current_pos = self.file.tell()
+                if next_pos > current_pos:
+                    # Skip remaining bytes in this step
+                    self.file.seek(next_pos)
+                elif next_pos < current_pos:
+                    # Inner fields read past the step boundary - something is wrong
+                    # but continue from current position to avoid data loss
+                    pass
+            
+            iteration += 1
+        
+        parent_node.add_child(offset, container_node)
+        return container_node
+    
+    def _parse_section_once(self, name: str, description: str, color: Optional[str],
+                            nested_fields: List[Dict[str, Any]], parent_node: Node) -> Optional[Node]:
+        """Parse a single instance of a section/struct."""
         offset = self.file.tell()
         section_node = Node(
             data=b'',
@@ -583,13 +759,9 @@ class ConfigBasedParser(FileParser):
         for child_field_dict in nested_fields:
             self.parse_field(child_field_dict, section_node)
         
-        # Update section data with all bytes read
-        end_offset = self.file.tell()
-        if end_offset > start_offset:
-            self.file.seek(start_offset)
-            section_data = self.file.read(end_offset - start_offset)
-            section_node.data = section_data
-            self.file.seek(end_offset)
+        # Don't set section_node.data - children already hold the bytes.
+        # Setting data on the container would cause double-counting in hex display
+        # and shift all offsets by the container's size.
         
         parent_node.add_child(start_offset, section_node)
         return section_node
@@ -622,11 +794,7 @@ class ConfigBasedParser(FileParser):
             item_def['name'] = f"{name}[{i}]"
             self.parse_field(item_def, array_node)
         
-        end_offset = self.file.tell()
-        if end_offset > start_offset:
-            self.file.seek(start_offset)
-            array_node.data = self.file.read(end_offset - start_offset)
-            self.file.seek(end_offset)
+        # Don't set array_node.data - children already hold the bytes
         
         parent_node.add_child(start_offset, array_node)
         return array_node
@@ -667,11 +835,7 @@ class ConfigBasedParser(FileParser):
         for child_field_dict in case_fields:
             self.parse_field(child_field_dict, switch_node)
         
-        end_offset = self.file.tell()
-        if end_offset > start_offset:
-            self.file.seek(start_offset)
-            switch_node.data = self.file.read(end_offset - start_offset)
-            self.file.seek(end_offset)
+        # Don't set switch_node.data - children already hold the bytes
         
         parent_node.add_child(start_offset, switch_node)
         return switch_node
@@ -725,11 +889,7 @@ class ConfigBasedParser(FileParser):
             
             iterations += 1
         
-        end_offset = self.file.tell()
-        if end_offset > start_offset:
-            self.file.seek(start_offset)
-            loop_node.data = self.file.read(end_offset - start_offset)
-            self.file.seek(end_offset)
+        # Don't set loop_node.data - children already hold the bytes
         
         parent_node.add_child(start_offset, loop_node)
         return loop_node

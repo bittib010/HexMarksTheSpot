@@ -254,21 +254,21 @@
                     "size": 8,
                     "type": "filetime",
                     "description": "**Creation Time (FILETIME)**\n\nThe creation timestamp of the **target file** stored as a Windows FILETIME value.\n\n*Format:* 64-bit value representing 100-nanosecond intervals since January 1, 1601 (UTC).\n\n*Forensic Value:* **Critical** - When the target file was originally created. Compare with target's current timestamps to detect modifications.\n\n*Note:* Value of 0 means timestamp was not recorded.",
-                    "forensic_value": true
+                    "forensic_value": "timestamp"
                 },
                 {
                     "name": "AccessTime",
                     "size": 8,
                     "type": "filetime",
                     "description": "**Access Time (FILETIME)**\n\nThe last access timestamp of the **target file**.\n\n*Forensic Value:* Shows when the target was last accessed at the time the shortcut was created/updated. Note that Windows may disable last access time updates for performance (NtfsDisableLastAccessUpdate).\n\n*Note:* Value of 0 means timestamp was not recorded.",
-                    "forensic_value": true
+                    "forensic_value": "timestamp"
                 },
                 {
                     "name": "WriteTime",
                     "size": 8,
                     "type": "filetime",
                     "description": "**Write Time (FILETIME)**\n\nThe last modification timestamp of the **target file**.\n\n*Forensic Value:* **Critical** - Shows when the target's content was last modified. This timestamp is generally more reliable than access time.\n\n*Note:* Value of 0 means timestamp was not recorded.",
-                    "forensic_value": true
+                    "forensic_value": "timestamp"
                 },
                 {
                     "name": "FileSize",
@@ -459,7 +459,7 @@
                             "size": 4,
                             "type": "uint",
                             "description": "**Drive Serial Number**\n\n**CRITICAL FORENSIC VALUE!**\n\nThe volume serial number assigned when the volume was formatted. This number is:\n\n- Unique per format operation (changes if reformatted)\n- Consistent across mounts of the same volume\n- Can identify specific USB drives, external disks\n- Used for correlation across multiple systems\n\n*Format:* 32-bit unsigned integer, often displayed as XXXX-XXXX\n*Example:* 0x1234ABCD displays as 1234-ABCD\n\n*Forensic Use Cases:*\n- Match USB drive to shortcuts on multiple computers\n- Identify file movement between systems\n- Correlate with USB device logs",
-                            "forensic_value": true
+                            "forensic_value": "identifier"
                         },
                         {
                             "name": "VolumeLabelOffset",
@@ -817,21 +817,21 @@
                             "size": 16,
                             "type": "string",
                             "description": "**Machine ID (NetBIOS Name)**\n\n**FORENSICALLY CRITICAL!**\n\nThe NetBIOS computer name of the machine where the target file was located when the link was last updated.\n\n*Format:* Null-padded ASCII string (max 15 chars + null)\n\n*Forensic Use Cases:*\n- Identify the computer that created/accessed the file\n- Track file movement between machines\n- Correlate with network logs\n- Identify the user's workstation",
-                            "forensic_value": true
+                            "forensic_value": "network"
                         },
                         {
                             "name": "Droid_VolumeID",
                             "size": 16,
                             "type": "guid",
                             "description": "**Droid Volume ID (GUID)**\n\nThe current volume identifier (NTFS Object ID) where the target resides.\n\n*Format:* Standard GUID format\n\n*Note:* This is different from the drive serial number - it's an NTFS-level identifier.",
-                            "forensic_value": true
+                            "forensic_value": "identifier"
                         },
                         {
                             "name": "Droid_ObjectID",
                             "size": 16,
                             "type": "guid",
                             "description": "**Droid Object ID (GUID containing MAC address!)**\n\n**CRITICAL FORENSIC VALUE!**\n\nThe current object identifier for the target file. This GUID was generated using the MAC address of the network adapter!\n\n*MAC Address Extraction:*\nThe last 6 bytes (12 hex characters) of this GUID contain the MAC address!\n\n*Format:* XXXXXXXX-XXXX-XXXX-XXXX-**AABBCCDDEEFF**\nMAC = AA:BB:CC:DD:EE:FF\n\n*Note:* Byte order may need reversal depending on GUID representation.\n\n*Forensic Use Cases:*\n- Identify the specific network adapter (and thus machine) that created the file\n- Track across hardware changes (MAC is hardware-dependent)\n- Correlate with DHCP logs, network captures\n- Prove file provenance",
-                            "forensic_value": true
+                            "forensic_value": "critical"
                         },
                         {
                             "name": "DroidBirth_VolumeID",
@@ -845,7 +845,7 @@
                             "size": 16,
                             "type": "guid",
                             "description": "**Droid Birth Object ID (Original MAC address!)**\n\n**CRITICAL FORENSIC VALUE!**\n\nThe original object identifier assigned when the target file was first created.\n\n*Forensic Value:* Contains the MAC address of the machine that originally created the file, even if the file was later moved!\n\n*If file was moved:* This reveals the ORIGINAL creation machine, while Droid_ObjectID shows the current/last known location.\n\n*MAC Extraction:* Same format as Droid_ObjectID - last 6 bytes = MAC address.",
-                            "forensic_value": true
+                            "forensic_value": "critical"
                         }
                     ]
                 },

@@ -79,6 +79,51 @@
             "condition": "$flags & 0x01"
         },
         {
+            "name": "record_count",
+            "size": 4,
+            "type": "uint",
+            "description": "Number of records that follow"
+        },
+        {
+            "_comment": "Repeat example: parse a struct N times based on a parsed field value",
+            "name": "Records",
+            "type": "struct",
+            "description": "Repeated record structure",
+            "repeat": "$record_count",
+            "fields": [
+                {
+                    "name": "record_id",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Record identifier"
+                },
+                {
+                    "name": "record_data",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "Record payload"
+                }
+            ]
+        },
+        {
+            "_comment": "Repeat with fixed step: parse page-aligned blocks (use repeat_step for alignment)",
+            "_comment2": "repeat can be a number, '$field_ref', an expression like '$field - 1', or 'eof'",
+            "name": "Pages",
+            "type": "struct",
+            "description": "Fixed-size page structure (disabled example)",
+            "enabled": false,
+            "repeat": "eof",
+            "repeat_step": 512,
+            "fields": [
+                {
+                    "name": "page_header",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "Page header"
+                }
+            ]
+        },
+        {
             "name": "remaining_data",
             "size": 0,
             "type": "remaining",

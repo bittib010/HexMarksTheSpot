@@ -160,13 +160,18 @@ def setup_modern_style():
         thickness=6
     )
     
-    # Configure Scrollbar
+    # Configure Scrollbar - wider and more visible
     style.configure(
         "Modern.Vertical.TScrollbar",
-        background=ModernTheme.BG_SECONDARY,
-        troughcolor=ModernTheme.BG_PRIMARY,
+        background=ModernTheme.TEXT_SECONDARY,
+        troughcolor=ModernTheme.BG_SECONDARY,
         borderwidth=0,
-        arrowsize=0
+        arrowsize=14,
+        width=16
+    )
+    style.map(
+        "Modern.Vertical.TScrollbar",
+        background=[('active', ModernTheme.ACCENT_PRIMARY), ('pressed', ModernTheme.ACCENT_PRIMARY)]
     )
     
     return style
@@ -568,6 +573,18 @@ class Main:
         )
         self.progress_bar.grid(row=0, column=0, sticky=E+W)
         
+        # Progress percentage label (shown during loading)
+        self.progress_percent_var = StringVar()
+        self.progress_percent_label = Label(
+            status_frame,
+            textvariable=self.progress_percent_var,
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.ACCENT_PRIMARY,
+            font=('Segoe UI', 9, 'bold'),
+            padx=10
+        )
+        # Will be shown during loading
+        
         self.progress_message = StringVar()
         self.status_bar = Label(
             status_frame,
@@ -580,6 +597,10 @@ class Main:
             pady=8
         )
         self.status_bar.grid(row=1, column=0, sticky=E+W)
+        
+        # Progress tracking variables
+        self.last_progress_milestone = 0
+        self.loading_start_time = None
 
         self.last_clicked = None
         
@@ -702,7 +723,12 @@ class Main:
             
             # Highlight the corresponding hex bytes
             if tags:
-                tag = tags[0] if isinstance(tags, tuple) else tags
+                # Handle tags being either list or tuple
+                if isinstance(tags, (list, tuple)) and len(tags) > 0:
+                    tag = tags[0]
+                else:
+                    tag = str(tags)
+                
                 self._highlight_tag(tag)
                 
                 # Show description in the info panel if we have the child node
@@ -996,6 +1022,114 @@ class Main:
             self.master.unbind('<Escape>')
             self.overlay.destroy()
             self.overlay = None
+    
+    def _show_loading_overlay(self, message="Loading..."):
+        """
+        Initialize loading state with progress tracking.
+        Uses non-blocking progress updates in the status bar.
+        
+        :param message: The message to display
+        """
+        import time as time_module
+        self.loading_start_time = time_module.time()
+        self.last_progress_milestone = 0
+        self.last_progress_update_time = self.loading_start_time
+        
+        # Show progress percentage label
+        self.progress_percent_var.set("0%")
+        self.progress_percent_label.grid(row=0, column=1, sticky=E, padx=(0, 10))
+        
+        # Update status message
+        self.progress_message.set(message)
+        
+        # Store message for updates
+        self._loading_base_message = message
+    
+    def _animate_spinner(self):
+        """Not used in non-blocking mode - kept for compatibility."""
+        pass
+    
+    def _update_loading_message(self, message, detail=""):
+        """
+        Update the loading progress message.
+        
+        :param message: Main message to display
+        :param detail: Detail text (e.g., progress info)
+        """
+        if detail:
+            self.progress_message.set(f"{message} - {detail}")
+        else:
+            self.progress_message.set(message)
+    
+    def _update_progress_with_milestones(self, current, total):
+        """
+        Update progress with milestone notifications.
+        Shows updates at every 10% and time estimates for long operations.
+        
+        :param current: Current progress count
+        :param total: Total items to process
+        """
+        import time as time_module
+        
+        if total == 0:
+            return
+            
+        progress = (current / total) * 100
+        current_milestone = int(progress // 10) * 10
+        
+        # Update progress bar
+        self.progress_var.set(progress)
+        self.progress_percent_var.set(f"{progress:.0f}%")
+        
+        # Calculate elapsed and estimated time
+        elapsed = time_module.time() - self.loading_start_time
+        
+        # Update at every 10% milestone or every 5 seconds for long operations
+        should_update = (
+            current_milestone > self.last_progress_milestone or
+            (elapsed - (time_module.time() - self.last_progress_update_time) > 5)
+        )
+        
+        if should_update or current == total:
+            self.last_progress_milestone = current_milestone
+            self.last_progress_update_time = time_module.time()
+            
+            # Build status message with time info
+            if elapsed > 2:  # Only show time for operations > 2 seconds
+                if progress > 0:
+                    estimated_total = elapsed / (progress / 100)
+                    remaining = estimated_total - elapsed
+                    if remaining > 60:
+                        time_str = f"~{remaining/60:.0f}m remaining"
+                    elif remaining > 0:
+                        time_str = f"~{remaining:.0f}s remaining"
+                    else:
+                        time_str = "Almost done..."
+                else:
+                    time_str = "Calculating..."
+                
+                detail = f"{current}/{total} fields ({progress:.0f}%) - {time_str}"
+            else:
+                detail = f"{current}/{total} fields ({progress:.0f}%)"
+            
+            self._update_loading_message("Processing", detail)
+    
+    def _hide_loading_overlay(self):
+        """Complete loading state and hide progress indicators."""
+        import time as time_module
+        
+        # Calculate final elapsed time
+        if self.loading_start_time:
+            elapsed = time_module.time() - self.loading_start_time
+            if elapsed > 1:
+                self.progress_message.set(f"Completed in {elapsed:.1f}s")
+        
+        # Hide progress percentage label
+        self.progress_percent_label.grid_forget()
+        
+        # Reset tracking
+        self.loading_start_time = None
+        self.last_progress_milestone = 0
 
 
     def open_file(self):
@@ -1022,6 +1156,15 @@ class Main:
             self.progress_bar.grid(
                 row=3, column=0, columnspan=5, sticky=W+E+S, pady=(5, 0))
             self.progress_message.set("Loading...")
+            
+            # Show loading overlay for better UX
+            file_size = os.path.getsize(filename)
+            self._show_loading_overlay(f"Loading {os.path.basename(filename)}...")
+            self._update_loading_message(
+                f"Loading {os.path.basename(filename)}...",
+                f"Size: {self._format_file_size(file_size)}"
+            )
+            
             threading.Thread(target=self.parse_file, args=(filename,)).start()
 
     def parse_file(self, filename):
@@ -1039,20 +1182,33 @@ class Main:
         ColorGenerator.reset()
         
         try:
+            # Update loading message
+            self.master.after(0, lambda: self._update_loading_message(
+                "Parsing file structure...",
+                "Analyzing binary data"
+            ))
+            
             with open(filename, "rb") as file:
                 parser = get_file_parser(file)
                 self.root = parser.parse()  # Store the root node
                 self.total_nodes = self.count_nodes(self.root)
                 self.processed_nodes = 0
+                
+                # Update loading message with node count
+                self.master.after(0, lambda: self._update_loading_message(
+                    "Rendering hex view...",
+                    f"Processing {self.total_nodes} fields"
+                ))
+                
                 self.show_parsed_data(self.root)
                 # Write parsed content to log file
                 self.write_parse_log(filename, self.root)
             if self.stop_parsing:
                 self.update_status(f"Parsing of {filename} stopped.")
-            else:
-                self.update_status(f"{filename} completed successfully.")
         except Exception as e:
             self.update_status(f"Could not parse file: {e}")
+            # Hide loading on error
+            self.master.after(0, self._hide_loading_overlay)
 
         # Schedule a callback to clear the status after 10 seconds
         self.master.after(10000, self.clear_status)
@@ -1237,8 +1393,9 @@ class Main:
             if self.stop_parsing:
                 return
             
-            offset = self.byte_counter
-            tag = f"color{offset}_{idx}"
+            # Use actual file offset (key) for display, byte_counter for hex positioning
+            offset = key if key is not None else self.byte_counter
+            tag = f"color{self.byte_counter}_{idx}"
             table_val = child.table_value or ''
             
             # Store all data needed for GUI update
@@ -1260,12 +1417,23 @@ class Main:
         """
         Update GUI in batches to prevent freezing.
         Runs on main thread via after().
+        Dynamically adjusts batch size based on performance.
         """
         if self.stop_parsing:
+            self._hide_loading_overlay()
             return
+        
+        # Dynamic batch sizing for better responsiveness
+        # Start with smaller batches for large files, increase as we go
+        total_nodes = len(self.collected_nodes)
+        if total_nodes > 1000:
+            BATCH_SIZE = 30  # Smaller batches for large files
+        elif total_nodes > 500:
+            BATCH_SIZE = 50
+        else:
+            BATCH_SIZE = 100  # Larger batches for smaller files
             
-        BATCH_SIZE = 50  # Process 50 nodes at a time
-        end_idx = min(start_idx + BATCH_SIZE, len(self.collected_nodes))
+        end_idx = min(start_idx + BATCH_SIZE, total_nodes)
         
         # First batch: initialize widgets
         if start_idx == 0:
@@ -1292,17 +1460,20 @@ class Main:
             self._display_node(node_data)
             self.processed_nodes += 1
         
-        # Update progress
-        progress = (end_idx / len(self.collected_nodes)) * 100 if self.collected_nodes else 100
-        self.update_progress(progress)
+        # Update progress with milestones (every 10% or time-based)
+        self._update_progress_with_milestones(end_idx, total_nodes)
         
         # Schedule next batch or finalize
-        if end_idx < len(self.collected_nodes):
+        if end_idx < total_nodes:
+            # Use after_idle for smoother UI updates during rendering
             self.master.after(1, self._update_gui_batch, end_idx)
         else:
             # Finalize
             self.text_widget.textWidget.configure(state='disabled')
             self.text_widget.asciiText.configure(state='disabled')
+            
+            # Hide loading overlay
+            self._hide_loading_overlay()
     
     def _display_node(self, node_data):
         """
@@ -1387,9 +1558,9 @@ class Main:
             target_widget.tag_configure(
                 "mirror_highlight", background="#c3c3c3")
 
-        except TclError as e:
-            # This exception is raised when there's no selection.
-            print(e)
+        except TclError:
+            # Expected when clicking without dragging a selection - suppress
+            pass
 
     def clear_mirror_highlight(self):
         for widget in [self.text_widget.textWidget, self.text_widget.asciiText]:

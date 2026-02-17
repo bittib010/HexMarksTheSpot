@@ -169,7 +169,63 @@
                 },
                 "condition": {
                     "type": "string",
-                    "description": "Conditional expression (e.g., '$flags & 0x01')"
+                    "description": "Conditional expression using Python syntax (e.g., '$flags & 0x01', '$value == 5 or $value == 2')"
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Set to false to skip this field during parsing. Useful for structures that exist in separate files (e.g., WAL, journal) or are not yet needed.",
+                    "default": true
+                },
+                "repeat": {
+                    "oneOf": [
+                        {
+                            "type": "integer",
+                            "minimum": 0,
+                            "description": "Fixed number of repetitions"
+                        },
+                        {
+                            "type": "string",
+                            "description": "Dynamic count reference (e.g., '$DatabaseSizeInPages', '$PageCount - 1') or 'eof' to repeat until end of file"
+                        }
+                    ],
+                    "description": "Repeat a struct/section N times, by field reference, or until EOF. Only valid on struct/section types. Each iteration is named Name[0], Name[1], etc."
+                },
+                "repeat_step": {
+                    "oneOf": [
+                        {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Fixed byte size per iteration"
+                        },
+                        {
+                            "type": "string",
+                            "description": "Dynamic step size reference (e.g., '$PageSize')"
+                        }
+                    ],
+                    "description": "Fixed byte stride per repeat iteration. Ensures each iteration starts exactly this many bytes after the previous, regardless of how many bytes inner fields consume. Useful for page-aligned structures."
+                },
+                "expected_values": {
+                    "oneOf": [
+                        {
+                            "type": "array",
+                            "description": "List of valid values. Parser logs a warning if parsed value is not in this list.",
+                            "items": {
+                                "oneOf": [
+                                    { "type": "integer" },
+                                    { "type": "string" }
+                                ]
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "description": "Range constraint with optional min/max",
+                            "properties": {
+                                "min": { "type": "integer", "description": "Minimum allowed value (inclusive)" },
+                                "max": { "type": "integer", "description": "Maximum allowed value (inclusive)" }
+                            }
+                        }
+                    ],
+                    "description": "Expected value constraint. If an array: parsed value must be one of the listed values. If an object with min/max: parsed value must be within range. Mismatches are logged as warnings with offset and raw hex for forensic triage."
                 }
             }
         }
