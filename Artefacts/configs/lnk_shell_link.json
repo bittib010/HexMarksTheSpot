@@ -1,67 +1,151 @@
 {
     "$schema": "./parser-config.schema.json",
     "name": "ShellLink",
-    "description": "Windows Shell Link (LNK) file format - demonstrates nested/conditional JSON parsing",
+    "description": "Windows Shell Link (.LNK) file format - Comprehensive forensic parser based on MS-SHLLINK v9.0 specification with detailed field documentation",
     "author": "HexMarksTheSpot",
-    "version": "1.0",
+    "version": "2.2",
     "magic_bytes": "4C000000",
     "magic_offset": 0,
     "endianness": "little",
     "references": [
         "https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-shllink",
-        "https://github.com/libyal/liblnk/blob/main/documentation/Windows%20Shortcut%20File%20(LNK)%20format.asciidoc"
+        "[MS-SHLLINK]: Shell Link (.LNK) Binary File Format - Microsoft Open Specifications",
+        "https://github.com/libyal/liblnk - LibLNK Documentation",
+        "https://winprotocoldoc.blob.core.windows.net/productionwindowsarchives/MS-SHLLINK/%5BMS-SHLLINK%5D.pdf"
     ],
+    "forensic_notes": "**LNK File Forensic Analysis Guide**\n\n**Why LNK Files Matter:**\n- Persist even after target deletion - evidence survives file removal\n- Created automatically when files are opened (Recent Items)\n- Contain rich metadata: timestamps, volume serials, MAC addresses, paths\n- Reveal user activity patterns, file access history\n- Can expose network resources and removed drives\n\n**Key Forensic Evidence:**\n1. **Volume Serial Numbers** - Identify specific drives (USB correlation)\n2. **MAC Addresses** - In TrackerDataBlock, identifies creation machine\n3. **Machine Names** - NetBIOS name in TrackerDataBlock\n4. **All Three Timestamps** - Target file creation, access, modification times\n5. **Network Paths** - UNC paths reveal server/share access\n6. **Environment Variables** - Original paths with %USERPROFILE%, etc.\n\n**Common Locations:**\n- `%APPDATA%\\Microsoft\\Windows\\Recent\\` - Recent Items\n- `%APPDATA%\\Microsoft\\Windows\\Recent\\AutomaticDestinations\\` - Jump Lists\n- `%APPDATA%\\Microsoft\\Windows\\Recent\\CustomDestinations\\` - Custom Jump Lists\n- `%USERPROFILE%\\Desktop\\` - Desktop shortcuts\n- `%PROGRAMDATA%\\Microsoft\\Windows\\Start Menu\\` - System Start Menu\n- `%APPDATA%\\Microsoft\\Windows\\Start Menu\\` - User Start Menu\n- `%APPDATA%\\Microsoft\\Internet Explorer\\Quick Launch\\` - Quick Launch\n\n**Suspicious Indicators:**\n- SW_SHOWMINNOACTIVE (7) in ShowCommand - hides window on launch\n- HotKey set on non-standard shortcuts - potential persistence\n- Arguments containing encoded/obfuscated content\n- Target paths in unusual locations (%TEMP%, %APPDATA%)\n- Mismatched timestamps (potential timestomping)\n- Reserved bytes containing non-zero data\n- Invalid but parseable structures (exploitation attempts)\n\n**Anti-Forensics Detection:**\n- Zero timestamps (intentionally cleared)\n- Missing TrackerDataBlock when expected\n- Manipulated Volume Serial Numbers\n- Inconsistent header values\n- Non-standard CLSID values\n\n**Cross-Reference Points:**\n- Volume Serial → USB device logs, other LNK files\n- MAC Address → DHCP logs, network captures, other systems\n- MFT Entry Number (in Shell Items) → $MFT analysis\n- Target Path → File system timeline\n- Machine Name → Domain controllers, network logs",
     "fields": [
         {
-            "name": "ShellLinkHeader",
+            "name": "SHELL_LINK_HEADER",
             "type": "struct",
-            "description": "Required header structure (76 bytes)",
+            "description": "**Shell Link Header (76 bytes)**\n\nThe mandatory header structure present at the start of every LNK file. Contains identification, flags controlling which optional sections exist, target file attributes, timestamps, and display preferences.\n\n*Forensic Value:* Timestamps here reflect the **target file's** metadata at the time the shortcut was created/updated, not the LNK file itself.",
             "fields": [
                 {
                     "name": "HeaderSize",
                     "size": 4,
                     "type": "uint",
-                    "description": "Always 0x0000004C (76 bytes)"
+                    "description": "**Header Size**\n\nMust always be `0x0000004C` (76 in decimal). Any other value indicates a malformed or potentially tampered file.\n\n*Validation:* If this value differs from 76, the file is not a valid Shell Link."
                 },
                 {
                     "name": "LinkCLSID",
                     "size": 16,
                     "type": "guid",
-                    "description": "Shell Link GUID: 00021401-0000-0000-C000-000000000046"
+                    "description": "**Link Class Identifier (CLSID)**\n\nMust be `00021401-0000-0000-C000-000000000046` - the unique identifier for Shell Link objects.\n\n*Technical:* CLSID is a COM (Component Object Model) class identifier. This specific GUID tells Windows to use the Shell Link handler to process this file.\n\n*Forensic Value:* Non-standard CLSIDs may indicate file manipulation or exploitation attempts."
                 },
                 {
                     "name": "LinkFlags",
                     "size": 4,
                     "type": "bitfield",
-                    "description": "Flags indicating which optional sections are present",
+                    "description": "**Link Flags (LinkFlags)**\n\nA 32-bit field where each bit indicates whether specific optional structures are present in the file and how certain data should be interpreted.\n\n*Critical for parsing:* These flags determine which optional sections follow the header.\n\n*Forensic Value:* Unusual flag combinations may indicate file manipulation. The presence of certain flags (like `HasLinkInfo`, `HasRelativePath`) reveals what metadata was captured.",
                     "bit_flags": {
-                        "0": "HasLinkTargetIDList",
-                        "1": "HasLinkInfo",
-                        "2": "HasName",
-                        "3": "HasRelativePath",
-                        "4": "HasWorkingDir",
-                        "5": "HasArguments",
-                        "6": "HasIconLocation",
-                        "7": "IsUnicode",
-                        "8": "ForceNoLinkInfo",
-                        "9": "HasExpString",
-                        "10": "RunInSeparateProcess",
-                        "11": "Unused1",
-                        "12": "HasDarwinID",
-                        "13": "RunAsUser",
-                        "14": "HasExpIcon",
-                        "15": "NoPidlAlias",
-                        "16": "Unused2",
-                        "17": "RunWithShimLayer",
-                        "18": "ForceNoLinkTrack",
-                        "19": "EnableTargetMetadata",
-                        "20": "DisableLinkPathTracking",
-                        "21": "DisableKnownFolderTracking",
-                        "22": "DisableKnownFolderAlias",
-                        "23": "AllowLinkToLink",
-                        "24": "UnaliasOnSave",
-                        "25": "PreferEnvironmentPath",
-                        "26": "KeepLocalIDListForUNCTarget"
+                        "0": {
+                            "name": "HasLinkTargetIDList",
+                            "description": "**Bit 0 - HasLinkTargetIDList (A)**\n\nWhen set, a `LinkTargetIDList` structure follows the header. This structure contains a shell item ID list describing the target in a hierarchical format.\n\n*Forensic Value:* Contains the full shell item path, which can include volume GUIDs, folder names, and file details even when human-readable paths are unavailable."
+                        },
+                        "1": {
+                            "name": "HasLinkInfo",
+                            "description": "**Bit 1 - HasLinkInfo (B)**\n\nWhen set, a `LinkInfo` structure is present. Contains information about the volume and local or network path of the target.\n\n*Forensic Value:* **Extremely valuable** - may contain volume serial numbers, drive types, UNC paths, and network share information."
+                        },
+                        "2": {
+                            "name": "HasName",
+                            "description": "**Bit 2 - HasName (C)**\n\nWhen set, a `NAME_STRING` structure is present in StringData. This is a user-defined description of the shortcut.\n\n*Forensic Value:* May contain user-entered descriptions or application-set metadata."
+                        },
+                        "3": {
+                            "name": "HasRelativePath",
+                            "description": "**Bit 3 - HasRelativePath (D)**\n\nWhen set, a `RELATIVE_PATH` string is present. Contains the relative path from the LNK file location to the target.\n\n*Forensic Value:* Reveals the original relative location relationship between the shortcut and target."
+                        },
+                        "4": {
+                            "name": "HasWorkingDir",
+                            "description": "**Bit 4 - HasWorkingDir (E)**\n\nWhen set, a `WORKING_DIR` string is present. Specifies the working directory used when the target is launched.\n\n*Forensic Value:* May reveal application execution context or user file organization patterns."
+                        },
+                        "5": {
+                            "name": "HasArguments",
+                            "description": "**Bit 5 - HasArguments (F)**\n\nWhen set, a `COMMAND_LINE_ARGUMENTS` string is present.\n\n*Forensic Value:* **Critical** - contains command-line arguments passed to the target. May reveal executed commands, file paths, or sensitive parameters."
+                        },
+                        "6": {
+                            "name": "HasIconLocation",
+                            "description": "**Bit 6 - HasIconLocation (G)**\n\nWhen set, an `ICON_LOCATION` string specifies a custom icon path.\n\n*Forensic Value:* May point to external files or resources used for icon display."
+                        },
+                        "7": {
+                            "name": "IsUnicode",
+                            "description": "**Bit 7 - IsUnicode (H)**\n\nWhen set, all strings in the StringData section are stored as Unicode (UTF-16LE). When clear, strings are stored in the system default code page (ANSI).\n\n*Technical:* Unicode strings are prefixed with a 2-byte length (character count), followed by UTF-16LE data."
+                        },
+                        "8": {
+                            "name": "ForceNoLinkInfo",
+                            "description": "**Bit 8 - ForceNoLinkInfo (I)**\n\nWhen set, the `LinkInfo` structure (if present) should be ignored.\n\n*Technical:* Takes precedence over the HasLinkInfo flag. Used when LinkInfo exists but should not be used for resolution."
+                        },
+                        "9": {
+                            "name": "HasExpString",
+                            "description": "**Bit 9 - HasExpString (J)**\n\nWhen set, an `EnvironmentVariableDataBlock` is present in ExtraData.\n\n*Forensic Value:* Contains paths with unexpanded environment variables (e.g., `%USERPROFILE%\\Documents`), revealing the original path format."
+                        },
+                        "10": {
+                            "name": "RunInSeparateProcess",
+                            "description": "**Bit 10 - RunInSeparateProcess (K)**\n\nWhen set, 16-bit applications should run in a separate Virtual DOS Machine (VDM).\n\n*Technical:* Legacy flag for Windows 16-bit application compatibility."
+                        },
+                        "11": {
+                            "name": "Unused1",
+                            "description": "**Bit 11 - Unused1**\n\nReserved bit. Should be zero but may contain data in malformed files."
+                        },
+                        "12": {
+                            "name": "HasDarwinID",
+                            "description": "**Bit 12 - HasDarwinID (L)**\n\nWhen set, a `DarwinDataBlock` is present. Contains a Windows Installer (MSI) application identifier.\n\n*Forensic Value:* Indicates the shortcut was created by Windows Installer. The Darwin ID can identify the installed application and its components."
+                        },
+                        "13": {
+                            "name": "RunAsUser",
+                            "description": "**Bit 13 - RunAsUser (M)**\n\nWhen set, the application should run as a different user.\n\n*Forensic Value:* Indicates privilege escalation intent or multi-user environment usage."
+                        },
+                        "14": {
+                            "name": "HasExpIcon",
+                            "description": "**Bit 14 - HasExpIcon (N)**\n\nWhen set, an `IconEnvironmentDataBlock` is present. Contains an icon path with environment variables.\n\n*Forensic Value:* Like HasExpString, reveals unexpanded environment variable paths for icons."
+                        },
+                        "15": {
+                            "name": "NoPidlAlias",
+                            "description": "**Bit 15 - NoPidlAlias (O)**\n\nWhen set, the shortcut should not use the PIDL (Pointer to Item ID List) alias when resolving.\n\n*Technical:* Affects how Windows resolves the target when the original path is unavailable."
+                        },
+                        "16": {
+                            "name": "Unused2",
+                            "description": "**Bit 16 - Unused2**\n\nReserved bit. Should be zero."
+                        },
+                        "17": {
+                            "name": "RunWithShimLayer",
+                            "description": "**Bit 17 - RunWithShimLayer (P)**\n\nWhen set, a `ShimDataBlock` is present. Contains application compatibility shim data.\n\n*Forensic Value:* Indicates application compatibility fixes are applied, suggesting the target application may have compatibility issues or specific runtime requirements."
+                        },
+                        "18": {
+                            "name": "ForceNoLinkTrack",
+                            "description": "**Bit 18 - ForceNoLinkTrack (Q)**\n\nWhen set, the `TrackerDataBlock` should be ignored.\n\n*Technical:* Disables distributed link tracking even if TrackerDataBlock exists."
+                        },
+                        "19": {
+                            "name": "EnableTargetMetadata",
+                            "description": "**Bit 19 - EnableTargetMetadata (R)**\n\nWhen set, the `PropertyStoreDataBlock` is present and contains target metadata.\n\n*Forensic Value:* Contains serialized property stores with extended file metadata."
+                        },
+                        "20": {
+                            "name": "DisableLinkPathTracking",
+                            "description": "**Bit 20 - DisableLinkPathTracking (S)**\n\nWhen set, disables link path tracking for this shortcut.\n\n*Technical:* Prevents Windows from tracking the shortcut file itself in the distributed tracking system."
+                        },
+                        "21": {
+                            "name": "DisableKnownFolderTracking",
+                            "description": "**Bit 21 - DisableKnownFolderTracking (T)**\n\nWhen set, known folder (special folder) tracking is disabled.\n\n*Technical:* Prevents updates when known folders (Desktop, Documents, etc.) are redirected."
+                        },
+                        "22": {
+                            "name": "DisableKnownFolderAlias",
+                            "description": "**Bit 22 - DisableKnownFolderAlias (U)**\n\nWhen set, known folder aliases are not used in IDList.\n\n*Technical:* Forces full path resolution instead of using known folder GUIDs."
+                        },
+                        "23": {
+                            "name": "AllowLinkToLink",
+                            "description": "**Bit 23 - AllowLinkToLink (V)**\n\nWhen set, allows creating a shortcut to another shortcut file.\n\n*Forensic Value:* Indicates a shortcut chain - the target is itself a LNK file."
+                        },
+                        "24": {
+                            "name": "UnaliasOnSave",
+                            "description": "**Bit 24 - UnaliasOnSave (W)**\n\nWhen set, the shortcut is saved with unaliased paths (without known folder GUIDs).\n\n*Technical:* Affects how paths are stored when the shortcut is modified."
+                        },
+                        "25": {
+                            "name": "PreferEnvironmentPath",
+                            "description": "**Bit 25 - PreferEnvironmentPath (X)**\n\nWhen set, environment variable paths are preferred over absolute paths for resolution.\n\n*Technical:* Makes shortcuts more portable across systems with different drive configurations."
+                        },
+                        "26": {
+                            "name": "KeepLocalIDListForUNCTarget",
+                            "description": "**Bit 26 - KeepLocalIDListForUNCTarget (Y)**\n\nWhen set and the target is a UNC path, the local IDList information is preserved.\n\n*Technical:* Maintains local path hints even when target is accessed via network path."
+                        }
                     },
                     "forensic_value": true
                 },
@@ -69,109 +153,189 @@
                     "name": "FileAttributes",
                     "size": 4,
                     "type": "bitfield",
-                    "description": "Target file attributes",
+                    "description": "**File Attributes (FileAttributesFlags)**\n\nStandard Windows file attributes of the **target file** at the time the shortcut was created or last updated.\n\n*Important:* These are NOT the attributes of the LNK file itself.\n\n*Forensic Value:* Can reveal if target was hidden, system, encrypted, compressed, etc. Mismatches with current target attributes may indicate file changes after shortcut creation.",
                     "bit_flags": {
-                        "0": "FILE_ATTRIBUTE_READONLY",
-                        "1": "FILE_ATTRIBUTE_HIDDEN",
-                        "2": "FILE_ATTRIBUTE_SYSTEM",
-                        "3": "Reserved1",
-                        "4": "FILE_ATTRIBUTE_DIRECTORY",
-                        "5": "FILE_ATTRIBUTE_ARCHIVE",
-                        "6": "Reserved2",
-                        "7": "FILE_ATTRIBUTE_NORMAL",
-                        "8": "FILE_ATTRIBUTE_TEMPORARY",
-                        "9": "FILE_ATTRIBUTE_SPARSE_FILE",
-                        "10": "FILE_ATTRIBUTE_REPARSE_POINT",
-                        "11": "FILE_ATTRIBUTE_COMPRESSED",
-                        "12": "FILE_ATTRIBUTE_OFFLINE",
-                        "13": "FILE_ATTRIBUTE_NOT_CONTENT_INDEXED",
-                        "14": "FILE_ATTRIBUTE_ENCRYPTED"
+                        "0": {
+                            "name": "FILE_ATTRIBUTE_READONLY",
+                            "description": "**Bit 0 - Read-Only**\n\nThe target file is read-only. Modifications require removing this attribute first."
+                        },
+                        "1": {
+                            "name": "FILE_ATTRIBUTE_HIDDEN",
+                            "description": "**Bit 1 - Hidden**\n\nThe target file is hidden. Not shown in normal directory listings.\n\n*Forensic Value:* Hidden files may indicate intentional concealment."
+                        },
+                        "2": {
+                            "name": "FILE_ATTRIBUTE_SYSTEM",
+                            "description": "**Bit 2 - System**\n\nThe target is a system file. Operating system uses this file and it typically should not be modified.\n\n*Forensic Value:* Shortcuts to system files may indicate system-level access or malware targeting system components."
+                        },
+                        "3": {
+                            "name": "Reserved1_VolumeLabel",
+                            "description": "**Bit 3 - Reserved (Volume Label)**\n\nReserved for volume labels. Should be zero for files."
+                        },
+                        "4": {
+                            "name": "FILE_ATTRIBUTE_DIRECTORY",
+                            "description": "**Bit 4 - Directory**\n\nThe target is a directory (folder), not a file.\n\n*Parsing Note:* When set, the target path points to a folder."
+                        },
+                        "5": {
+                            "name": "FILE_ATTRIBUTE_ARCHIVE",
+                            "description": "**Bit 5 - Archive**\n\nThe file has been modified since last backup. Backup software typically clears this flag after backup.\n\n*Forensic Value:* Can indicate recent modifications."
+                        },
+                        "6": {
+                            "name": "Reserved2_Device",
+                            "description": "**Bit 6 - Reserved (Device)**\n\nReserved for device files. Should be zero for standard files."
+                        },
+                        "7": {
+                            "name": "FILE_ATTRIBUTE_NORMAL",
+                            "description": "**Bit 7 - Normal**\n\nThe file has no other attributes set. This attribute is only valid when used alone (value = 0x80).\n\n*Technical:* If any other attribute is set, this bit should be clear."
+                        },
+                        "8": {
+                            "name": "FILE_ATTRIBUTE_TEMPORARY",
+                            "description": "**Bit 8 - Temporary**\n\nThe file is temporary. File system may keep data in memory for faster access.\n\n*Forensic Value:* Shortcuts to temporary files are unusual and may indicate suspicious activity."
+                        },
+                        "9": {
+                            "name": "FILE_ATTRIBUTE_SPARSE_FILE",
+                            "description": "**Bit 9 - Sparse File**\n\nThe file is sparse - large regions of zeros are not physically stored.\n\n*Technical:* Common for database files, virtual disk images, and log files."
+                        },
+                        "10": {
+                            "name": "FILE_ATTRIBUTE_REPARSE_POINT",
+                            "description": "**Bit 10 - Reparse Point**\n\nThe file or directory has an associated reparse point (symbolic link, junction point, etc.).\n\n*Forensic Value:* May indicate target indirection through junction points or symbolic links."
+                        },
+                        "11": {
+                            "name": "FILE_ATTRIBUTE_COMPRESSED",
+                            "description": "**Bit 11 - Compressed**\n\nThe file or directory is compressed using NTFS compression.\n\n*Technical:* Transparent compression - file contents are automatically decompressed when read."
+                        },
+                        "12": {
+                            "name": "FILE_ATTRIBUTE_OFFLINE",
+                            "description": "**Bit 12 - Offline**\n\nThe file data is not immediately available (data is physically moved to offline storage).\n\n*Technical:* Used by Hierarchical Storage Management (HSM) systems."
+                        },
+                        "13": {
+                            "name": "FILE_ATTRIBUTE_NOT_CONTENT_INDEXED",
+                            "description": "**Bit 13 - Not Content Indexed**\n\nThe content of this file should not be indexed by the Windows Search indexing service.\n\n*Forensic Value:* May indicate intentional exclusion from search results."
+                        },
+                        "14": {
+                            "name": "FILE_ATTRIBUTE_ENCRYPTED",
+                            "description": "**Bit 14 - Encrypted**\n\nThe file or directory is encrypted using EFS (Encrypting File System).\n\n*Forensic Value:* **Important** - indicates the target file was encrypted. May require specific credentials to access."
+                        },
+                        "15": {
+                            "name": "FILE_ATTRIBUTE_INTEGRITY_STREAM",
+                            "description": "**Bit 15 - Integrity Stream (0x8000)**\n\nThe directory or user data stream is configured with integrity (ReFS only).\n\n*Windows 8+:* Used by ReFS file system for data integrity verification."
+                        },
+                        "16": {
+                            "name": "FILE_ATTRIBUTE_VIRTUAL",
+                            "description": "**Bit 16 - Virtual (0x10000)**\n\nReserved for system use. The file is a virtual file.\n\n*Technical:* Used internally by Windows - should not appear in standard files."
+                        },
+                        "17": {
+                            "name": "FILE_ATTRIBUTE_NO_SCRUB_DATA",
+                            "description": "**Bit 17 - No Scrub Data (0x20000)**\n\nThe user data stream should not be read by the background data integrity scanner.\n\n*Windows 8+:* Excludes file from integrity scanning on ReFS volumes."
+                        },
+                        "18": {
+                            "name": "FILE_ATTRIBUTE_EA",
+                            "description": "**Bit 18 - Extended Attributes (0x40000)**\n\nThe file or directory has extended attributes.\n\n*Forensic Value:* Extended attributes (EAs) can contain additional metadata or hidden data streams."
+                        },
+                        "19": {
+                            "name": "FILE_ATTRIBUTE_PINNED",
+                            "description": "**Bit 19 - Pinned (0x80000)**\n\nThis attribute indicates user intent that the file or directory should be kept fully present locally even when not being actively accessed.\n\n*Windows 10+:* Used with cloud storage providers like OneDrive."
+                        },
+                        "20": {
+                            "name": "FILE_ATTRIBUTE_UNPINNED",
+                            "description": "**Bit 20 - Unpinned (0x100000)**\n\nThis attribute indicates the file or directory should be kept only online and not local.\n\n*Windows 10+:* OneDrive files marked as 'online-only'."
+                        },
+                        "21": {
+                            "name": "FILE_ATTRIBUTE_RECALL_ON_OPEN",
+                            "description": "**Bit 21 - Recall On Open (0x40000)**\n\nWhen this file is opened, it will be fully recalled from tiered storage.\n\n*Technical:* Used by HSM and cloud storage providers."
+                        },
+                        "22": {
+                            "name": "FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS",
+                            "description": "**Bit 22 - Recall On Data Access (0x400000)**\n\nWhen the data of this file is accessed, it should be recalled from tiered storage.\n\n*Windows 10+:* Files marked as 'available when online' that need to download when accessed."
+                        }
                     }
                 },
                 {
                     "name": "CreationTime",
                     "size": 8,
                     "type": "filetime",
-                    "description": "Target file creation time",
+                    "description": "**Creation Time (FILETIME)**\n\nThe creation timestamp of the **target file** stored as a Windows FILETIME value.\n\n*Format:* 64-bit value representing 100-nanosecond intervals since January 1, 1601 (UTC).\n\n*Forensic Value:* **Critical** - When the target file was originally created. Compare with target's current timestamps to detect modifications.\n\n*Note:* Value of 0 means timestamp was not recorded.",
                     "forensic_value": true
                 },
                 {
                     "name": "AccessTime",
                     "size": 8,
                     "type": "filetime",
-                    "description": "Target file last access time",
+                    "description": "**Access Time (FILETIME)**\n\nThe last access timestamp of the **target file**.\n\n*Forensic Value:* Shows when the target was last accessed at the time the shortcut was created/updated. Note that Windows may disable last access time updates for performance (NtfsDisableLastAccessUpdate).\n\n*Note:* Value of 0 means timestamp was not recorded.",
                     "forensic_value": true
                 },
                 {
                     "name": "WriteTime",
                     "size": 8,
                     "type": "filetime",
-                    "description": "Target file last write time",
+                    "description": "**Write Time (FILETIME)**\n\nThe last modification timestamp of the **target file**.\n\n*Forensic Value:* **Critical** - Shows when the target's content was last modified. This timestamp is generally more reliable than access time.\n\n*Note:* Value of 0 means timestamp was not recorded.",
                     "forensic_value": true
                 },
                 {
                     "name": "FileSize",
                     "size": 4,
                     "type": "uint",
-                    "description": "Target file size (lower 32 bits)"
+                    "description": "**File Size (32-bit)**\n\nThe size of the **target file** in bytes (lower 32 bits only).\n\n*Limitation:* For files larger than 4GB (0xFFFFFFFF bytes), only the lower 32 bits are stored here.\n\n*Forensic Value:* Compare with current target file size to detect modifications after shortcut creation."
                 },
                 {
                     "name": "IconIndex",
                     "size": 4,
                     "type": "int",
-                    "description": "Icon index within the icon location"
+                    "description": "**Icon Index (signed 32-bit)**\n\nThe index of the icon within the icon location file.\n\n*Technical:* When IconLocation string is specified, this index selects which icon from that resource file to display.\n\n*Values:*\n- 0: First icon in resource\n- Positive: Icon index (0-based)\n- Negative: Resource ID (negated)"
                 },
                 {
                     "name": "ShowCommand",
                     "size": 4,
                     "type": "uint",
-                    "description": "Expected window state",
+                    "description": "**Show Command (ShowWindow constant)**\n\nSpecifies the expected window state when the target application is launched.\n\n*Forensic Value:* SW_SHOWMINNOACTIVE (minimized) could indicate attempts to hide application launch.",
                     "value_map": {
-                        "1": "SW_SHOWNORMAL",
-                        "3": "SW_SHOWMAXIMIZED",
-                        "7": "SW_SHOWMINNOACTIVE"
+                        "1": "SW_SHOWNORMAL - Normal window (default size and position)",
+                        "3": "SW_SHOWMAXIMIZED - Maximized window (fills screen)",
+                        "7": "SW_SHOWMINNOACTIVE - Minimized window (does not activate)"
                     }
                 },
                 {
                     "name": "HotKey",
                     "size": 2,
                     "type": "uint",
-                    "description": "Keyboard shortcut"
+                    "description": "**Hot Key (HotKeyFlags)**\n\nKeyboard shortcut to activate this shortcut.\n\n*Structure:* 2 bytes total\n- **Low byte (byte 0):** Virtual key code\n- **High byte (byte 1):** Modifier flags\n\n**Virtual Key Codes (Low Byte):**\n- 0x00: No key assigned\n- 0x30-0x39: Keys '0'-'9'\n- 0x41-0x5A: Keys 'A'-'Z'\n- 0x70-0x7B: F1-F12\n- 0x7C-0x87: F13-F24\n- 0x90: VK_NUMLOCK (Num Lock)\n- 0x91: VK_SCROLL (Scroll Lock)\n\n**Modifier Flags (High Byte):**\n- 0x00: No modifier\n- 0x01: HOTKEYF_SHIFT (SHIFT held)\n- 0x02: HOTKEYF_CONTROL (CTRL held)\n- 0x04: HOTKEYF_ALT (ALT held)\n- Flags can be combined (e.g., 0x03 = SHIFT+CTRL)\n\n*Example:* 0x0241 = Ctrl+A (0x02=CTRL modifier, 0x41='A' key)\n*Example:* 0x0570 = Ctrl+Alt+F1 (0x05=CTRL|ALT, 0x70=F1)\n\n*Forensic Value:* Hotkeys on suspicious shortcuts may indicate persistence mechanisms, quick-launch malware, or attempts to override system shortcuts."
                 },
                 {
                     "name": "Reserved1",
                     "size": 2,
-                    "type": "skip"
+                    "type": "bytes",
+                    "description": "**Reserved1**\n\nMust be zero. Non-zero values may indicate file manipulation or corruption."
                 },
                 {
                     "name": "Reserved2",
                     "size": 4,
-                    "type": "skip"
+                    "type": "bytes",
+                    "description": "**Reserved2**\n\nMust be zero. Non-zero values may indicate file manipulation or corruption."
                 },
                 {
                     "name": "Reserved3",
                     "size": 4,
-                    "type": "skip"
+                    "type": "bytes",
+                    "description": "**Reserved3**\n\nMust be zero. Non-zero values may indicate file manipulation or corruption."
                 }
             ]
         },
         {
             "name": "LinkTargetIDList",
             "type": "section",
-            "description": "Target path as Shell Item ID List - only present if HasLinkTargetIDList flag is set",
+            "description": "**Link Target ID List (Optional)**\n\nPresent only when `HasLinkTargetIDList` flag (bit 0) is set in LinkFlags.\n\nContains an IDList structure - a sequence of ItemID structures that describe the target path in the Shell namespace.\n\n*Forensic Value:* **Extremely valuable** - Contains detailed shell item information including:\n- Volume GUIDs and serial numbers\n- Full path components\n- File metadata embedded in shell items\n- Alternate data interpretation of the target path",
             "condition": "$LinkFlags.0",
             "fields": [
                 {
                     "name": "IDListSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Size of the IDList in bytes"
+                    "description": "**IDList Size**\n\nTotal size in bytes of the IDList structure that follows (not including this 2-byte size field).\n\n*Parsing:* Read exactly this many bytes for the complete IDList."
                 },
                 {
-                    "name": "IDListData",
+                    "name": "IDList",
                     "size": "$IDListSize",
                     "type": "bytes",
-                    "description": "Shell Item ID List data (contains path information)",
+                    "description": "**Item ID List (ItemIDList / PIDL)**\n\n*Structure:* Sequence of ItemID structures, each consisting of:\n- ItemIDSize (2 bytes): Size of this ItemID including size field\n- Data (variable): Shell-item specific data\n\n*Terminator:* The list ends with a 2-byte zero (0x0000).\n\n**Shell Item Types and Forensic Significance:**\n\n**1. Root Folder Item (Type 0x1F)**\nContains a GUID identifying the shell namespace root:\n- `{20D04FE0-3AEA-1069-A2D8-08002B30309D}` = My Computer\n- `{450D8FBA-AD25-11D0-98A8-0800361B1103}` = My Documents\n- `{208D2C60-3AEA-1069-A2D7-08002B30309D}` = Network Neighborhood\n- `{645FF040-5081-101B-9F08-00AA002F954E}` = Recycle Bin\n- `{21EC2020-3AEA-1069-A2DD-08002B30309D}` = Control Panel\n*Forensic Value:* Confirms target is relative to a known shell location.\n\n**2. Volume Item (Type 0x2F)**\nContains drive letter or volume information:\n- Drive letter (e.g., 'C:\\\\')\n- Volume GUID path (`\\\\?\\\\Volume{...}`)\n*Forensic Value:* Identifies the specific volume/drive.\n\n**3. File Entry Item (Type 0x30-0x3F)**\nFile system entry (file or folder) with rich metadata:\n- FileSize (4 bytes)\n- ModificationDate (DOS format, 4 bytes)\n- FileAttributes (2 bytes)\n- Primary Name (short/long name)\n\n**Extension Block (Signature 0xBEEF0004)** - Present in most File Entry items:\n- CreationDate (4 bytes, DOS format)\n- LastAccessDate (4 bytes, DOS format)\n- Identifier (2 bytes)\n- NTFS File Reference (8 bytes) - **Contains MFT entry number!**\n- Unknown (8 bytes)\n- Long name (Unicode)\n- Localized name (if different)\n\n*Forensic Value:* **Critical!**\n- MFT entry number can correlate with $MFT analysis\n- Timestamps independent of file system (preserved even if file deleted)\n- May contain both 8.3 and long filename\n\n**4. Network Location Item (Type 0x40-0x4F)**\nNetwork share information:\n- UNC path (\\\\\\\\server\\\\share)\n- Network provider description\n- Comments/descriptions\n*Forensic Value:* Reveals network resources accessed by user.\n\n**5. Compressed Folder Item (Type 0x52)**\nEntry from inside a ZIP/compressed folder.\n*Forensic Value:* Target was inside a compressed archive.\n\n**6. URI Item**\nURL or web location (HTTP, FTP, etc.)\n*Forensic Value:* Reveals web resources accessed.\n\n**7. Control Panel Item (Type 0x71)**\nControl Panel applet reference.\n*Forensic Value:* Shows which system settings were accessed.\n\n**8. Users Property View (Type 0x00)**\nUser profile property storage.\n\n**Extension Block Signatures (within File Entry Items):**\n- `0xBEEF0004`: Primary extension block with timestamps and names\n- `0xBEEF0003`: Extension block version 3\n- `0xBEEF0005`: Extension block version 5 (Vista+)\n- `0xBEEF0006`: Extension block version 6 (Win7+)\n- `0xBEEF0009`: Extension block version 9 (Win8+)\n- `0xBEEF000A`: Extension block version 10 (Win10+)\n\n*Forensic Analysis Tips:*\n1. Each shell item contains type-specific data. Parse based on type byte.\n2. File Entry items often contain multiple timestamps (modified, created, accessed).\n3. The NTFS file reference can be used to locate entries in the $MFT.\n4. Shell items preserve data even when target files are deleted.",
                     "forensic_value": true
                 }
             ]
@@ -179,161 +343,519 @@
         {
             "name": "LinkInfo",
             "type": "section",
-            "description": "Information about the link target location - only present if HasLinkInfo flag is set",
+            "description": "**Link Info (Optional)**\n\nPresent only when `HasLinkInfo` flag (bit 1) is set AND `ForceNoLinkInfo` (bit 8) is NOT set.\n\nContains information necessary to resolve the link target, including volume information and local/network paths.\n\n*Forensic Value:* **Critical evidence** - Contains volume serial numbers, drive types, network paths, and MAC addresses (in some cases).",
             "condition": "$LinkFlags.1",
             "fields": [
                 {
                     "name": "LinkInfoSize",
                     "size": 4,
                     "type": "uint",
-                    "description": "Total size of LinkInfo structure"
+                    "description": "**LinkInfo Size**\n\nTotal size of the LinkInfo structure in bytes, including all fields and optional data.\n\n*Parsing:* Use this to determine the end of the LinkInfo section."
                 },
                 {
                     "name": "LinkInfoHeaderSize",
                     "size": 4,
                     "type": "uint",
-                    "description": "Size of the LinkInfo header"
+                    "description": "**LinkInfo Header Size**\n\nSize of the fixed-length header portion.\n\n*Values:*\n- 0x0000001C (28): Original format without Unicode fields\n- 0x00000024 (36) or greater: Extended format with Unicode offset fields\n\n*Forensic Value:* Header size indicates which version of the structure is present."
                 },
                 {
                     "name": "LinkInfoFlags",
                     "size": 4,
                     "type": "bitfield",
-                    "description": "Flags indicating which optional fields are present",
+                    "description": "**LinkInfo Flags**\n\nIndicates which optional fields are present in the LinkInfo structure.",
                     "bit_flags": {
-                        "0": "VolumeIDAndLocalBasePath",
-                        "1": "CommonNetworkRelativeLinkAndPathSuffix"
+                        "0": {
+                            "name": "VolumeIDAndLocalBasePath",
+                            "description": "**Bit 0 - VolumeIDAndLocalBasePath (A)**\n\nWhen set, `VolumeID` and `LocalBasePath` fields are present.\n\n*Forensic Value:* Indicates the target was on a local volume. Contains volume serial number and drive information."
+                        },
+                        "1": {
+                            "name": "CommonNetworkRelativeLinkAndPathSuffix",
+                            "description": "**Bit 1 - CommonNetworkRelativeLinkAndPathSuffix (B)**\n\nWhen set, `CommonNetworkRelativeLink` and `CommonPathSuffix` fields are present.\n\n*Forensic Value:* Indicates the target was accessed via network share. Contains UNC path and network provider information."
+                        }
                     }
                 },
                 {
                     "name": "VolumeIDOffset",
                     "size": 4,
-                    "type": "uint"
+                    "type": "uint",
+                    "description": "**VolumeID Offset**\n\nOffset (from start of LinkInfo) to the VolumeID structure.\n\n*Note:* Only valid if VolumeIDAndLocalBasePath flag is set."
                 },
                 {
                     "name": "LocalBasePathOffset",
                     "size": 4,
-                    "type": "uint"
+                    "type": "uint",
+                    "description": "**LocalBasePath Offset**\n\nOffset (from start of LinkInfo) to the LocalBasePath string.\n\n*Note:* Only valid if VolumeIDAndLocalBasePath flag is set.\n\n*Forensic Value:* Points to the local path portion (e.g., 'C:\\Users\\...')."
                 },
                 {
                     "name": "CommonNetworkRelativeLinkOffset",
                     "size": 4,
-                    "type": "uint"
+                    "type": "uint",
+                    "description": "**CommonNetworkRelativeLink Offset**\n\nOffset (from start of LinkInfo) to the CommonNetworkRelativeLink structure.\n\n*Note:* Only valid if CommonNetworkRelativeLinkAndPathSuffix flag is set."
                 },
                 {
                     "name": "CommonPathSuffixOffset",
                     "size": 4,
-                    "type": "uint"
+                    "type": "uint",
+                    "description": "**CommonPathSuffix Offset**\n\nOffset (from start of LinkInfo) to the CommonPathSuffix string.\n\nContains the path portion common to both local and network paths (typically the filename and immediate parent folder)."
                 },
                 {
-                    "name": "RemainingLinkInfo",
-                    "size": "$LinkInfoSize - 28",
-                    "type": "bytes",
-                    "description": "Remaining LinkInfo data (contains paths)",
-                    "forensic_value": true
+                    "name": "LocalBasePathOffsetUnicode",
+                    "type": "section",
+                    "description": "**LocalBasePath Offset (Unicode)**\n\nOptional Unicode offset field. Present only when LinkInfoHeaderSize >= 0x00000024 (36 bytes).\n\n*Specification:* If LinkInfoHeaderSize == 0x1C (28), this field and CommonPathSuffixOffsetUnicode are NOT present.",
+                    "condition": "$LinkInfoHeaderSize >= 36",
+                    "fields": [
+                        {
+                            "name": "LocalBasePathOffsetUnicodeValue",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Offset to the Unicode version of LocalBasePath string.\n\n*Forensic Value:* May contain the full Unicode path when IsUnicode flag is set."
+                        }
+                    ]
+                },
+                {
+                    "name": "CommonPathSuffixOffsetUnicode",
+                    "type": "section",
+                    "description": "**CommonPathSuffix Offset (Unicode)**\n\nOptional Unicode offset field. Present only when LinkInfoHeaderSize >= 0x00000024 (36 bytes).",
+                    "condition": "$LinkInfoHeaderSize >= 36",
+                    "fields": [
+                        {
+                            "name": "CommonPathSuffixOffsetUnicodeValue",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Offset to the Unicode version of CommonPathSuffix string."
+                        }
+                    ]
+                },
+                {
+                    "name": "VolumeID",
+                    "type": "section",
+                    "description": "**Volume ID Structure**\n\nPresent when VolumeIDAndLocalBasePath flag is set. Contains volume identification information.\n\n*Forensic Value:* **Critical** - DriveSerialNumber can uniquely identify a specific volume installation.",
+                    "condition": "$LinkInfoFlags.0",
+                    "fields": [
+                        {
+                            "name": "VolumeIDSize",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**VolumeID Size**\n\nTotal size of the VolumeID structure in bytes."
+                        },
+                        {
+                            "name": "DriveType",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Drive Type**\n\nThe type of drive the target is stored on.\n\n*Forensic Value:* Helps identify the storage medium (USB drive, network, CD, etc.)",
+                            "value_map": {
+                                "0": "DRIVE_UNKNOWN - The drive type cannot be determined",
+                                "1": "DRIVE_NO_ROOT_DIR - The root path is invalid (no volume mounted)",
+                                "2": "DRIVE_REMOVABLE - Removable media (USB, floppy, etc.) **Forensically significant!**",
+                                "3": "DRIVE_FIXED - Fixed disk (internal HDD/SSD)",
+                                "4": "DRIVE_REMOTE - Remote/network drive **Forensically significant!**",
+                                "5": "DRIVE_CDROM - CD-ROM or DVD drive",
+                                "6": "DRIVE_RAMDISK - RAM disk"
+                            },
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "DriveSerialNumber",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Drive Serial Number**\n\n**CRITICAL FORENSIC VALUE!**\n\nThe volume serial number assigned when the volume was formatted. This number is:\n\n- Unique per format operation (changes if reformatted)\n- Consistent across mounts of the same volume\n- Can identify specific USB drives, external disks\n- Used for correlation across multiple systems\n\n*Format:* 32-bit unsigned integer, often displayed as XXXX-XXXX\n*Example:* 0x1234ABCD displays as 1234-ABCD\n\n*Forensic Use Cases:*\n- Match USB drive to shortcuts on multiple computers\n- Identify file movement between systems\n- Correlate with USB device logs",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "VolumeLabelOffset",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Volume Label Offset (ANSI)**\n\nOffset to the volume label string (ANSI/ASCII).\n\n*Special Value:* If value is 0x00000014, the VolumeLabelOffsetUnicode field is used instead and contains a Unicode volume label."
+                        },
+                        {
+                            "name": "VolumeLabelOffsetUnicode",
+                            "type": "section",
+                            "description": "**Volume Label Offset (Unicode)**\n\nOptional Unicode offset. Present only when VolumeIDSize > 0x10 (16) AND VolumeLabelOffset == 0x00000014.",
+                            "condition": "$VolumeLabelOffset == 20",
+                            "fields": [
+                                {
+                                    "name": "VolumeLabelOffsetUnicodeValue",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "description": "Offset to the Unicode volume label string.\n\n*Forensic Value:* Volume label may contain non-ASCII characters revealing localization or user naming conventions."
+                                }
+                            ]
+                        },
+                        {
+                            "name": "VolumeLabelData",
+                            "size": "$VolumeIDSize - 16",
+                            "type": "string",
+                            "description": "**Volume Label**\n\nThe user-assigned volume label (name) of the drive.\n\n*Examples:* 'System', 'Data', 'KINGSTON', 'My USB'\n\n*Forensic Value:* Volume labels can help identify specific drives, especially removable media with user-assigned names.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "name": "LocalBasePath",
+                    "type": "section",
+                    "description": "**Local Base Path**\n\nThe full local path to the link target.\n\n*Forensic Value:* Complete original path to the target file/folder.",
+                    "condition": "$LinkInfoFlags.0",
+                    "fields": [
+                        {
+                            "name": "LocalBasePathString",
+                            "size": 260,
+                            "type": "string",
+                            "max_size": true,
+                            "description": "**Local Base Path String**\n\nNull-terminated ANSI string containing the local path.\n\n*Example:* `C:\\Users\\JohnDoe\\Documents\\report.docx`\n\n*Forensic Value:* Reveals the original full path including username, folder structure, and filename.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "name": "CommonNetworkRelativeLink",
+                    "type": "section",
+                    "description": "**Common Network Relative Link**\n\nPresent when CommonNetworkRelativeLinkAndPathSuffix flag is set. Contains network share information.\n\n*Forensic Value:* **Critical** - Reveals network resources accessed by the user.",
+                    "condition": "$LinkInfoFlags.1",
+                    "fields": [
+                        {
+                            "name": "CommonNetworkRelativeLinkSize",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Size**\n\nTotal size of the CommonNetworkRelativeLink structure."
+                        },
+                        {
+                            "name": "CommonNetworkRelativeLinkFlags",
+                            "size": 4,
+                            "type": "bitfield",
+                            "description": "**Network Link Flags**\n\nFlags indicating which optional fields are present.",
+                            "bit_flags": {
+                                "0": {
+                                    "name": "ValidDevice",
+                                    "description": "**Bit 0 - ValidDevice**\n\nWhen set, DeviceNameOffset field contains a valid offset to the device name."
+                                },
+                                "1": {
+                                    "name": "ValidNetType",
+                                    "description": "**Bit 1 - ValidNetType**\n\nWhen set, NetworkProviderType field is present and valid."
+                                }
+                            }
+                        },
+                        {
+                            "name": "NetNameOffset",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Net Name Offset**\n\nOffset to the NetName string (UNC server/share path)."
+                        },
+                        {
+                            "name": "DeviceNameOffset",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Device Name Offset**\n\nOffset to the mapped drive letter. Only valid if ValidDevice flag is set."
+                        },
+                        {
+                            "name": "NetworkProviderType",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Network Provider Type (WNNC_NET_*)**\n\nIdentifies the network provider.\n\n*Forensic Value:* Reveals the network protocol/provider used to access the share.",
+                            "value_map": {
+                                "131072": "WNNC_NET_MSNET - Microsoft Network",
+                                "196608": "WNNC_NET_SMB - SMB/CIFS (most common)",
+                                "131088": "WNNC_NET_LANMAN - LAN Manager",
+                                "327680": "WNNC_NET_NETWARE - Novell NetWare",
+                                "393216": "WNNC_NET_VINES - Banyan VINES",
+                                "589824": "WNNC_NET_LOCUS - Locus Computing",
+                                "720896": "WNNC_NET_SUN_PC_NFS - Sun PC NFS",
+                                "917504": "WNNC_NET_LANSTEP - 9Tiles LANstep",
+                                "983040": "WNNC_NET_9TILES - 9Tiles",
+                                "1114112": "WNNC_NET_LANTASTIC - Artisoft LANtastic",
+                                "1179648": "WNNC_NET_AS400 - IBM AS/400",
+                                "1245184": "WNNC_NET_FTP_NFS - FTP NFS Gateway",
+                                "1310720": "WNNC_NET_PATHWORKS - DEC Pathworks",
+                                "1376256": "WNNC_NET_LIFENET - Lifenet",
+                                "1441792": "WNNC_NET_POWERLAN - Performance Technology",
+                                "1507328": "WNNC_NET_BWNFS - Beame & Whiteside NFS",
+                                "1572864": "WNNC_NET_COGENT - Cogent",
+                                "1638400": "WNNC_NET_FARALLON - Farallon",
+                                "1703936": "WNNC_NET_APPLETALK - MacOS AppleTalk",
+                                "1769472": "WNNC_NET_INTERGRAPH - Intergraph",
+                                "2031616": "WNNC_NET_SYMFONET - Symfonet",
+                                "2097152": "WNNC_NET_CLEARCASE - IBM Rational ClearCase",
+                                "2162688": "WNNC_NET_FRONTIER - Frontier Technologies",
+                                "2228224": "WNNC_NET_BMC - BMC Software",
+                                "2293760": "WNNC_NET_DCE - DCE",
+                                "2359296": "WNNC_NET_AVID - Avid Technology",
+                                "2424832": "WNNC_NET_DOCUSPACE - Docuspace",
+                                "2490368": "WNNC_NET_MANGOSOFT - MangoSoft",
+                                "2555904": "WNNC_NET_SERNET - Sernet",
+                                "2621440": "WNNC_NET_RIVERFRONT1 - RiverFront Software",
+                                "2686976": "WNNC_NET_RIVERFRONT2 - RiverFront Software",
+                                "2752512": "WNNC_NET_DECORB - Decorb",
+                                "2818048": "WNNC_NET_PROTSTOR - Protstor",
+                                "2883584": "WNNC_NET_FJ_REDIR - Fujitsu",
+                                "2949120": "WNNC_NET_DISTINCT - Distinct Corporation",
+                                "3014656": "WNNC_NET_TWINS - Twins",
+                                "3080192": "WNNC_NET_RDR2SAMPLE - Microsoft RDR2 Sample",
+                                "3145728": "WNNC_NET_CSC - CSC",
+                                "3211264": "WNNC_NET_3IN1 - 3Com 3in1",
+                                "3342336": "WNNC_NET_EXTENDNET - Extended Systems",
+                                "3407872": "WNNC_NET_STAC - Stac Electronics",
+                                "3473408": "WNNC_NET_FOXBAT - FoxBat",
+                                "3538944": "WNNC_NET_YAHOO - Yahoo!",
+                                "3604480": "WNNC_NET_EXIFS - EXIFS",
+                                "3670016": "WNNC_NET_DAV - WebDAV **Common for cloud storage**",
+                                "3735552": "WNNC_NET_KNOWARE - Knoware",
+                                "3801088": "WNNC_NET_OBJECT_DIRE - Object Directive",
+                                "3866624": "WNNC_NET_MASFAX - Masfax",
+                                "3932160": "WNNC_NET_HOB_NFS - HOB NFS",
+                                "3997696": "WNNC_NET_SHIVA - Shiva",
+                                "4063232": "WNNC_NET_IBMAL - IBM AIX",
+                                "4128768": "WNNC_NET_LOCK - Lock",
+                                "4194304": "WNNC_NET_TERMSRV - Terminal Services",
+                                "4259840": "WNNC_NET_SRT - SRT",
+                                "4325376": "WNNC_NET_QUINCY - Quincy",
+                                "4390912": "WNNC_NET_OPENAFS - OpenAFS",
+                                "4456448": "WNNC_NET_AVID1 - Avid1",
+                                "4521984": "WNNC_NET_DFS - Distributed File System",
+                                "4587520": "WNNC_NET_KWNP - KWNP",
+                                "4653056": "WNNC_NET_ZENWORKS - Novell ZENworks",
+                                "4718592": "WNNC_NET_DRIVEONWEB - DriveOnWeb",
+                                "4784128": "WNNC_NET_VMWARE - VMware",
+                                "4849664": "WNNC_NET_RSFX - RSFX",
+                                "4915200": "WNNC_NET_MFILES - M-Files",
+                                "4980736": "WNNC_NET_MS_NFS - Microsoft NFS",
+                                "5046272": "WNNC_NET_GOOGLE - Google Drive"
+                            },
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "NetNameOffsetUnicode",
+                            "type": "section",
+                            "description": "**Net Name Offset (Unicode)**\n\nOptional Unicode offset field. Present only when NetNameOffset > 0x00000014 (20 bytes).",
+                            "condition": "$NetNameOffset > 20",
+                            "fields": [
+                                {
+                                    "name": "NetNameOffsetUnicodeValue",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "description": "Offset to the Unicode version of NetName string (UNC path)."
+                                }
+                            ]
+                        },
+                        {
+                            "name": "DeviceNameOffsetUnicode",
+                            "type": "section",
+                            "description": "**Device Name Offset (Unicode)**\n\nOptional Unicode offset field. Present only when NetNameOffset > 0x00000014 (20 bytes).",
+                            "condition": "$NetNameOffset > 20",
+                            "fields": [
+                                {
+                                    "name": "DeviceNameOffsetUnicodeValue",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "description": "Offset to the Unicode version of DeviceName string (mapped drive letter)."
+                                }
+                            ]
+                        },
+                        {
+                            "name": "NetworkShareData",
+                            "size": "$CommonNetworkRelativeLinkSize - 20",
+                            "type": "bytes",
+                            "description": "**Network Share Data**\n\nContains:\n- NetName: UNC path to network share (e.g., `\\\\SERVER\\Share`)\n- DeviceName: Mapped drive letter (e.g., `Z:`)\n\n*Forensic Value:* **Critical** - Server names, share paths, and mapped drive letters reveal network activity and file access patterns.\n\n*Parse as null-terminated strings at the offsets specified above.*",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "name": "CommonPathSuffix",
+                    "size": 260,
+                    "type": "string",
+                    "max_size": true,
+                    "description": "**Common Path Suffix**\n\nThe path portion that is common to both local and network references.\n\nTypically contains the relative path from the share root or volume root to the target file.\n\n*Example:* For `\\\\Server\\Share\\folder\\file.txt`, this would be `folder\\file.txt`"
                 }
             ]
         },
         {
-            "name": "StringData_Name",
+            "name": "StringData_NAME_STRING",
             "type": "section",
-            "description": "Description string - only present if HasName flag is set",
+            "description": "**Description String (NAME_STRING)**\n\nPresent only when `HasName` flag (bit 2) is set.\n\nA user-defined description for the shortcut, displayed in file properties.",
             "condition": "$LinkFlags.2",
             "fields": [
                 {
-                    "name": "NameLength",
+                    "name": "NameStringSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Character count of the name string"
+                    "description": "**Character Count**\n\nNumber of characters in the following string (not bytes).\n\n*If IsUnicode flag is set:* String is UTF-16LE, size in bytes = CharCount * 2\n*If IsUnicode flag is clear:* String is ANSI, size in bytes = CharCount"
                 },
                 {
                     "name": "NameString",
-                    "size": "$NameLength * 2",
-                    "type": "utf16le",
-                    "description": "Description/Name string (Unicode)",
+                    "size": "$NameStringSize * 2",
+                    "type": "string",
+                    "encoding": "utf-16-le",
+                    "description": "**Name/Description String**\n\nUser-friendly description of the shortcut.\n\n*Encoding:* UTF-16LE if IsUnicode flag set, otherwise system code page.",
                     "forensic_value": true
                 }
             ]
         },
         {
-            "name": "StringData_RelativePath",
+            "name": "StringData_RELATIVE_PATH",
             "type": "section",
-            "description": "Relative path - only present if HasRelativePath flag is set",
+            "description": "**Relative Path String**\n\nPresent only when `HasRelativePath` flag (bit 3) is set.\n\nContains the relative path from the LNK file's location to the target.\n\n*Forensic Value:* Reveals the spatial relationship between shortcut and target at creation time.",
             "condition": "$LinkFlags.3",
             "fields": [
                 {
-                    "name": "RelativePathLength",
+                    "name": "RelativePathSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Character count of the relative path"
+                    "description": "**Character Count**\n\nNumber of characters in the Relative Path string."
                 },
                 {
-                    "name": "RelativePathString",
-                    "size": "$RelativePathLength * 2",
-                    "type": "utf16le",
-                    "description": "Relative path to target (Unicode)",
+                    "name": "RelativePath",
+                    "size": "$RelativePathSize * 2",
+                    "type": "string",
+                    "encoding": "utf-16-le",
+                    "description": "**Relative Path**\n\nPath relative to the shortcut's location.\n\n*Example:* `..\\..\\Windows\\System32\\cmd.exe`\n\n*Forensic Value:* Shows original folder structure relationship.",
                     "forensic_value": true
                 }
             ]
         },
         {
-            "name": "StringData_WorkingDir",
+            "name": "StringData_WORKING_DIR",
             "type": "section",
-            "description": "Working directory - only present if HasWorkingDir flag is set",
+            "description": "**Working Directory String**\n\nPresent only when `HasWorkingDir` flag (bit 4) is set.\n\nSpecifies the working directory to use when launching the target application.\n\n*Forensic Value:* May reveal expected execution context.",
             "condition": "$LinkFlags.4",
             "fields": [
                 {
-                    "name": "WorkingDirLength",
+                    "name": "WorkingDirSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Character count of the working directory"
+                    "description": "**Character Count**\n\nNumber of characters in the Working Directory string."
                 },
                 {
-                    "name": "WorkingDirString",
-                    "size": "$WorkingDirLength * 2",
-                    "type": "utf16le",
-                    "description": "Working directory path (Unicode)",
+                    "name": "WorkingDir",
+                    "size": "$WorkingDirSize * 2",
+                    "type": "string",
+                    "encoding": "utf-16-le",
+                    "description": "**Working Directory Path**\n\n*Example:* `C:\\Users\\JohnDoe\\Documents`\n\n*Forensic Value:* Shows intended execution context. Applications typically use this as their current directory.",
                     "forensic_value": true
                 }
             ]
         },
         {
-            "name": "StringData_Arguments",
+            "name": "StringData_COMMAND_LINE_ARGUMENTS",
             "type": "section",
-            "description": "Command line arguments - only present if HasArguments flag is set",
+            "description": "**Command Line Arguments String**\n\nPresent only when `HasArguments` flag (bit 5) is set.\n\nContains command-line arguments passed to the target when launched.\n\n*Forensic Value:* **Critical** - May contain sensitive information, file paths, parameters revealing intent, or malicious payloads.",
             "condition": "$LinkFlags.5",
             "fields": [
                 {
-                    "name": "ArgumentsLength",
+                    "name": "ArgumentsSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Character count of the arguments"
+                    "description": "**Character Count**\n\nNumber of characters in the Arguments string."
                 },
                 {
-                    "name": "ArgumentsString",
-                    "size": "$ArgumentsLength * 2",
-                    "type": "utf16le",
-                    "description": "Command line arguments (Unicode)",
+                    "name": "CommandLineArguments",
+                    "size": "$ArgumentsSize * 2",
+                    "type": "string",
+                    "encoding": "utf-16-le",
+                    "description": "**Command Line Arguments**\n\n*Examples:*\n- `/silent /install`\n- `-ExecutionPolicy Bypass -File script.ps1`\n- `http://malicious.example.com/payload`\n\n*Forensic Value:* **Critical evidence** - Review carefully for:\n- Encoded commands (Base64)\n- Downloads or network connections\n- Privilege escalation attempts\n- Paths to other files or scripts",
                     "forensic_value": true
                 }
             ]
         },
         {
-            "name": "StringData_IconLocation",
+            "name": "StringData_ICON_LOCATION",
             "type": "section",
-            "description": "Icon location - only present if HasIconLocation flag is set",
+            "description": "**Icon Location String**\n\nPresent only when `HasIconLocation` flag (bit 6) is set.\n\nSpecifies the path to a file containing the icon for this shortcut.\n\n*Forensic Value:* May reference external resources or reveal file organization.",
             "condition": "$LinkFlags.6",
             "fields": [
                 {
-                    "name": "IconLocationLength",
+                    "name": "IconLocationSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Character count of the icon location"
+                    "description": "**Character Count**\n\nNumber of characters in the Icon Location string."
                 },
                 {
-                    "name": "IconLocationString",
-                    "size": "$IconLocationLength * 2",
-                    "type": "utf16le",
-                    "description": "Icon file path (Unicode)"
+                    "name": "IconLocation",
+                    "size": "$IconLocationSize * 2",
+                    "type": "string",
+                    "encoding": "utf-16-le",
+                    "description": "**Icon Location Path**\n\n*Examples:*\n- `%SystemRoot%\\System32\\shell32.dll`\n- `C:\\Program Files\\MyApp\\app.exe`\n\n*Technical:* Use IconIndex field from header to select icon from multi-icon resources.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "ExtraDataBlocks",
+            "type": "struct",
+            "description": "**Extra Data Section**\n\nFollows StringData and contains zero or more typed data blocks providing additional forensic information.\n\nEach block starts with:\n- Size (4 bytes): Block size including header\n- Signature (4 bytes): Block type identifier\n\n*Terminator:* Block with Size < 4 (typically 0x00000000)",
+            "fields": [
+                {
+                    "name": "ExtraDataBlockHeader",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**First Block Size / Terminator Check**\n\nIf this value is < 4, it's the terminal block and ExtraData ends.\nOtherwise, it indicates the size of the first extra data block."
+                },
+                {
+                    "name": "TrackerDataBlock",
+                    "type": "section",
+                    "description": "**Tracker Data Block (Signature: 0xA0000003)**\n\n**CRITICAL FORENSIC VALUE!**\n\nContains distributed link tracking information used by Windows to locate moved files.\n\nThis block embeds a MAC address from the machine that created the original file!",
+                    "condition": "$ExtraDataBlockHeader == 96",
+                    "fields": [
+                        {
+                            "name": "TrackerBlockSignature",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Block Signature**\n\nMust be 0xA0000003 for TrackerDataBlock."
+                        },
+                        {
+                            "name": "TrackerLength",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Data Length**\n\nShould be 0x00000058 (88 bytes) for TrackerDataBlock."
+                        },
+                        {
+                            "name": "TrackerVersion",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Version**\n\nShould be 0x00000000."
+                        },
+                        {
+                            "name": "MachineID",
+                            "size": 16,
+                            "type": "string",
+                            "description": "**Machine ID (NetBIOS Name)**\n\n**FORENSICALLY CRITICAL!**\n\nThe NetBIOS computer name of the machine where the target file was located when the link was last updated.\n\n*Format:* Null-padded ASCII string (max 15 chars + null)\n\n*Forensic Use Cases:*\n- Identify the computer that created/accessed the file\n- Track file movement between machines\n- Correlate with network logs\n- Identify the user's workstation",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "Droid_VolumeID",
+                            "size": 16,
+                            "type": "guid",
+                            "description": "**Droid Volume ID (GUID)**\n\nThe current volume identifier (NTFS Object ID) where the target resides.\n\n*Format:* Standard GUID format\n\n*Note:* This is different from the drive serial number - it's an NTFS-level identifier.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "Droid_ObjectID",
+                            "size": 16,
+                            "type": "guid",
+                            "description": "**Droid Object ID (GUID containing MAC address!)**\n\n**CRITICAL FORENSIC VALUE!**\n\nThe current object identifier for the target file. This GUID was generated using the MAC address of the network adapter!\n\n*MAC Address Extraction:*\nThe last 6 bytes (12 hex characters) of this GUID contain the MAC address!\n\n*Format:* XXXXXXXX-XXXX-XXXX-XXXX-**AABBCCDDEEFF**\nMAC = AA:BB:CC:DD:EE:FF\n\n*Note:* Byte order may need reversal depending on GUID representation.\n\n*Forensic Use Cases:*\n- Identify the specific network adapter (and thus machine) that created the file\n- Track across hardware changes (MAC is hardware-dependent)\n- Correlate with DHCP logs, network captures\n- Prove file provenance",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "DroidBirth_VolumeID",
+                            "size": 16,
+                            "type": "guid",
+                            "description": "**Droid Birth Volume ID (GUID)**\n\nThe original volume identifier where the target file was first created.\n\n*Forensic Value:* If different from Droid_VolumeID, the file was moved between volumes.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "DroidBirth_ObjectID",
+                            "size": 16,
+                            "type": "guid",
+                            "description": "**Droid Birth Object ID (Original MAC address!)**\n\n**CRITICAL FORENSIC VALUE!**\n\nThe original object identifier assigned when the target file was first created.\n\n*Forensic Value:* Contains the MAC address of the machine that originally created the file, even if the file was later moved!\n\n*If file was moved:* This reveals the ORIGINAL creation machine, while Droid_ObjectID shows the current/last known location.\n\n*MAC Extraction:* Same format as Droid_ObjectID - last 6 bytes = MAC address.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+                {
+                    "name": "RemainingExtraData",
+                    "size": 1024,
+                    "type": "bytes",
+                    "max_size": true,
+                    "description": "**Remaining Extra Data Blocks**\n\nAdditional extra data blocks that may be present:\n\n**ConsoleDataBlock (0xA0000002)** - 204 bytes:\nConsole window configuration for shortcuts to console applications.\n- FillAttributes (2 bytes): Screen buffer colors\n- PopupFillAttributes (2 bytes): Popup window colors\n- ScreenBufferSize (4 bytes): Console buffer dimensions\n- WindowSize (4 bytes): Window size in characters\n- WindowOrigin (4 bytes): Window position\n- Font (4 bytes): Font index\n- InputBufferSize (4 bytes): Input buffer size\n- FontSize (4 bytes): Font dimensions\n- FontFamily (4 bytes): Font family\n- FontWeight (4 bytes): Font weight (400=normal, 700=bold)\n- FaceName (64 bytes): Font name (Unicode)\n- CursorSize (4 bytes): Cursor size percentage\n- FullScreen (4 bytes): Full screen mode flag\n- QuickEdit (4 bytes): Quick edit mode flag\n- InsertMode (4 bytes): Insert mode flag\n- AutoPosition (4 bytes): Auto window position\n- HistoryBufferSize (4 bytes): Command history size\n- NumberOfHistoryBuffers (4 bytes): History buffer count\n- HistoryNoDup (4 bytes): Remove duplicate history\n- ColorTable (64 bytes): 16 COLORREF values\n\n**ConsoleFEDataBlock (0xA0000004)** - 12 bytes:\n- CodePage (4 bytes): Console code page for Far East systems\n\n**DarwinDataBlock (0xA0000006)** - 788 bytes:\n- DarwinDataAnsi (260 bytes): MSI product code (ANSI)\n- DarwinDataUnicode (520 bytes): MSI product code (Unicode)\n*Forensic Value:* Identifies MSI-installed applications\n\n**EnvironmentVariableDataBlock (0xA0000001)** - 788 bytes:\n- TargetAnsi (260 bytes): Path with %VARIABLES%\n- TargetUnicode (520 bytes): Unicode path with %VARIABLES%\n*Forensic Value:* Shows %USERPROFILE%, %SYSTEMROOT%, etc.\n\n**IconEnvironmentDataBlock (0xA0000007)** - 788 bytes:\nSame structure as EnvironmentVariableDataBlock but for icon path.\n\n**KnownFolderDataBlock (0xA000000B)** - 28 bytes:\n- KnownFolderID (16 bytes): GUID identifying known folder\n- Offset (4 bytes): Offset into the folder\n*Common GUIDs:*\n  - {FDD39AD0-238F-46AF-ADB4-6C85480369C7}: Documents\n  - {374DE290-123F-4565-9164-39C4925E467B}: Downloads\n  - {B4BFCC3A-DB2C-424C-B029-7FE99A87C641}: Desktop\n  - {4BD8D571-6D19-48D3-BE97-422220080E43}: Music\n  - {33E28130-4E1E-4676-835A-98395C3BC3BB}: Pictures\n  - {18989B1D-99B5-455B-841C-AB7C74E4DDFC}: Videos\n\n**PropertyStoreDataBlock (0xA0000009)** - Variable:\nSerialized property store containing extended file metadata.\nCan include: Title, Author, Tags, Comments, creation software, etc.\n*Forensic Value:* Rich metadata about the target or shortcut creator.\n\n**ShimDataBlock (0xA0000008)** - Variable:\n- LayerName (Unicode): Application compatibility shim layer\n*Examples:* 'WIN95', 'WIN98', 'WIN2000', etc.\n*Forensic Value:* Indicates compatibility mode for legacy applications.\n\n**SpecialFolderDataBlock (0xA0000005)** - 16 bytes:\n- SpecialFolderID (4 bytes): CSIDL constant\n- Offset (4 bytes): Offset within IDList\n*CSIDL Values:*\n  - 0: Desktop\n  - 5: My Documents\n  - 16: Desktop Directory\n  - 26: Application Data\n  - 36: Windows\n  - 37: System32\n  - 38: Program Files\n  - More at docs.microsoft.com\n\n**VistaAndAboveIDListDataBlock (0xA000000C)** - Variable:\nAlternative IDList format for Windows Vista and later.\nMay contain additional path information not in the main IDList.\n\n**TerminalBlock:**\nThe ExtraData section ends when a block with Size < 4 is encountered (typically 0x00000000).",
+                    "forensic_value": true
                 }
             ]
         }

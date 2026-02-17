@@ -1,3 +1,0 @@
-Artefacts
-TestFiles
-images

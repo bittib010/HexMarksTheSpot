@@ -17,6 +17,7 @@ from tkhtmlview import HTMLText
 
 # Application-specific - use the new dynamic parser loader
 from parser_loader import get_file_parser, discover_all_parsers
+from common import ColorGenerator
 
 # Configure logging
 logging.basicConfig(
@@ -65,6 +66,22 @@ class ModernTheme:
     
     # Status colors
     SELECTION_BG = "#BFDBFE"     # Light blue selection
+    
+    # Forensic importance colors - these stand out prominently
+    FORENSIC_BG = "#FF4757"          # Bright red background
+    FORENSIC_BG_ALT = "#FF6B81"      # Lighter red variant
+    FORENSIC_HIGHLIGHT = "#C0392B"   # Dark red highlight
+    FORENSIC_TEXT = "#FFFFFF"        # White text on forensic fields
+    
+    # Additional forensic palette for variety (manually assignable)
+    FORENSIC_PALETTE = {
+        "critical": "#E74C3C",    # Strong red - most critical evidence
+        "important": "#F39C12",   # Amber/orange - important findings
+        "timestamp": "#9B59B6",   # Purple - timestamps
+        "identifier": "#E91E63",  # Pink - identifiers (GUIDs, serials)
+        "path": "#00BCD4",        # Cyan - paths and locations
+        "network": "#FF5722",     # Deep orange - network-related
+    }
 
 
 def setup_modern_style():
@@ -341,6 +358,7 @@ class Main:
         self.master = master
         self.bookmark_treeview = None
         self.bookmark_window = None
+        self.bookmarks = []  # Store bookmarks as list of (name, offset) tuples
         
         # Set up modern styling
         self.style = setup_modern_style()
@@ -568,6 +586,12 @@ class Main:
         # Store original sequence items for search
         self.sequence_items = []
         
+        # Mappings for click synchronization
+        self.tag_to_treeview_item = {}  # tag -> treeview item id
+        self.tag_to_child = {}           # tag -> child Node
+        self.offset_to_tag = {}          # offset -> tag (first tag at that offset)
+        self.current_highlight_tag = None  # Currently highlighted tag
+        
         # Don't start in fullscreen by default for better usability
         # self.master.attributes("-fullscreen", True)
         
@@ -654,7 +678,8 @@ class Main:
 
     def listbox_item_selected(self, event):
         """
-        Handle the selection event in the sequence treeview, scrolling to the corresponding position.
+        Handle the selection event in the sequence treeview.
+        Scrolls to the corresponding hex position, highlights it, and shows the description.
 
         :param event: Event object containing information about the selection event.
         """
@@ -663,34 +688,95 @@ class Main:
         if selected:
             item = self.sequence_treeview.item(selected)
             offset = int(item['values'][0])
-
+            tags = item.get('tags', ())
+            
             # Calculate the corresponding row and column in the Text widget
             row = offset // 16 + 1  # Adding 1 because Text widget indices start from 1
             # Every byte in hex view is 3 characters (e.g., "FF ")
             col_hex = (offset % 16) * 3
             col_ascii = offset % 16
+            
             # Scroll both views to the selected position
             self.text_widget.textWidget.see(f"{row}.{col_hex}")
             self.text_widget.asciiText.see(f"{row}.{col_ascii}")
+            
+            # Highlight the corresponding hex bytes
+            if tags:
+                tag = tags[0] if isinstance(tags, tuple) else tags
+                self._highlight_tag(tag)
+                
+                # Show description in the info panel if we have the child node
+                if tag in self.tag_to_child:
+                    child = self.tag_to_child[tag]
+                    self.last_clicked = child
+                    self.popItUp(child.info, tag)
+                    
+                    # Update status bar with offset info
+                    if hasattr(self, 'current_file') and self.current_file:
+                        self.status_bar.config(
+                            text=f"File: {self.current_file}\t\tOffset Decimal: {offset} \tOffset Hexadecimal: 0x{offset:X}")
 
     def show_bookmarks(self):
         """
         Display the bookmarks window containing the saved bookmarks.
         """
+        # Create or raise the bookmark window
+        if self.bookmark_window is not None and self.bookmark_window.winfo_exists():
+            self.bookmark_window.lift()
+            return
+            
         self.bookmark_window = Toplevel(self.master)
         self.bookmark_window.title("Bookmarks")
+        self.bookmark_window.geometry("400x300")
+        self.bookmark_window.configure(bg=ModernTheme.BG_PRIMARY)
+        
+        # Header
+        header = Label(
+            self.bookmark_window,
+            text="Saved Bookmarks",
+            font=('Segoe UI', 12, 'bold'),
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_PRIMARY
+        )
+        header.pack(pady=(15, 10))
+        
         self.bookmark_treeview = ttk.Treeview(
-            self.bookmark_window, columns=('Offset', 'Name'))
-        # Heading for the first implicit column
-        self.bookmark_treeview.heading('#0', text='')
+            self.bookmark_window, columns=('Name', 'Offset'), style="Modern.Treeview", show="headings")
         self.bookmark_treeview.heading('Name', text='Name')
         self.bookmark_treeview.heading('Offset', text='Offset')
-        # Hide the first implicit column
-        self.bookmark_treeview.column('#0', stretch=NO, width=0)
-        self.bookmark_treeview.pack(fill=BOTH, expand=True)
+        self.bookmark_treeview.column('Name', width=250)
+        self.bookmark_treeview.column('Offset', width=100)
+        self.bookmark_treeview.pack(fill=BOTH, expand=True, padx=15, pady=(0, 15))
+        
+        # Populate with existing bookmarks
+        for name, offset in self.bookmarks:
+            self.bookmark_treeview.insert('', 'end', values=(name, offset))
+        
         # Bind the selection event
         self.bookmark_treeview.bind(
-            "<<TreeviewSelect>>", self.bookmark_item_selected) 
+            "<<TreeviewSelect>>", self.bookmark_item_selected)
+        
+        # Delete button
+        delete_btn = ttk.Button(
+            self.bookmark_window,
+            text="Delete Selected",
+            command=self.delete_bookmark,
+            style="Secondary.TButton"
+        )
+        delete_btn.pack(pady=(0, 15))
+    
+    def delete_bookmark(self):
+        """Delete the selected bookmark."""
+        if self.bookmark_treeview is None:
+            return
+        selected = self.bookmark_treeview.selection()
+        if selected:
+            item = self.bookmark_treeview.item(selected)
+            name, offset = item['values']
+            # Remove from bookmarks list
+            self.bookmarks = [(n, o) for n, o in self.bookmarks if not (n == name and o == offset)]
+            # Remove from treeview
+            self.bookmark_treeview.delete(selected) 
         
     def jump_to_bookmark(self, event):
         """
@@ -716,17 +802,31 @@ class Main:
         """
         Add a bookmark for the selected item in the sequence treeview.
         """
-        if self.bookmark_treeview is not None:
-            selected = self.sequence_treeview.selection()
-            if selected:
-                item = self.sequence_treeview.item(selected)
-                name, offset, *_ = item['values']
-                # Add to the bookmarks if it doesn't exist already
-                bookmarks = [self.bookmark_treeview.item(
-                    bookmark)['values'] for bookmark in self.bookmark_treeview.get_children()]
-                if (name, offset) not in bookmarks:
-                    self.bookmark_treeview.insert(
-                        '', 'end', values=(name, offset))
+        selected = self.sequence_treeview.selection()
+        if not selected:
+            self.update_status("Select a field to bookmark")
+            return
+            
+        item = self.sequence_treeview.item(selected)
+        values = item['values']
+        if len(values) >= 2:
+            offset = values[0]
+            name = values[1]
+            
+            # Check if already bookmarked
+            if (name, offset) not in self.bookmarks:
+                self.bookmarks.append((name, offset))
+                self.update_status(f"Bookmarked: {name} at offset {offset}")
+                
+                # If bookmark window is open, update it
+                if self.bookmark_treeview is not None and self.bookmark_window is not None:
+                    try:
+                        if self.bookmark_window.winfo_exists():
+                            self.bookmark_treeview.insert('', 'end', values=(name, offset))
+                    except:
+                        pass
+            else:
+                self.update_status(f"Already bookmarked: {name}")
 
     def bookmark_item_selected(self, event):
         """
@@ -738,7 +838,8 @@ class Main:
         selected = self.bookmark_treeview.selection()
         if selected:
             item = self.bookmark_treeview.item(selected)
-            offset = int(item['values'][0])
+            # Columns are (Name, Offset)
+            offset = int(item['values'][1])
 
             # Calculate the corresponding row and column in the Text widget
             row = offset // 16 + 1  # Adding 1 because Text widget indices start from 1
@@ -933,6 +1034,10 @@ class Main:
         self.open_button.config(state="disabled")
         self.stop_button.config(state="normal")
         self.current_file = filename
+        
+        # Reset color generator for new file
+        ColorGenerator.reset()
+        
         try:
             with open(filename, "rb") as file:
                 parser = get_file_parser(file)
@@ -1108,6 +1213,12 @@ class Main:
         self.sequence_items = []  # Initialize the sequence items list
         self.byte_counter = 0  # Global byte counter for hex display
         
+        # Reset click synchronization mappings
+        self.tag_to_treeview_item = {}
+        self.tag_to_child = {}
+        self.offset_to_tag = {}
+        self.current_highlight_tag = None
+        
         # Collect all node data first (can be done in background thread)
         self.collected_nodes = []
         self._collect_nodes(root)
@@ -1208,6 +1319,12 @@ class Main:
         item_id = self.sequence_treeview.insert('', 'end', values=(
             offset, node_data['name'], table_val), tags=(tag,))
         
+        # Store mappings for click synchronization
+        self.tag_to_treeview_item[tag] = item_id
+        self.tag_to_child[tag] = child
+        if offset not in self.offset_to_tag:
+            self.offset_to_tag[offset] = tag
+        
         self.sequence_treeview.tag_configure(tag, background=color)
         self.sequence_items.append(((offset, node_data['name'], table_val), (tag,)))
         
@@ -1290,6 +1407,7 @@ class Main:
     def handle_click(self, event, tag, child):
         """
         Handle a mouse click event in the text widgets, displaying additional information.
+        Also synchronizes selection with the treeview.
 
         :param event: Event object containing information about the click event.
         :param tag: The tag associated with the clicked text.
@@ -1297,6 +1415,9 @@ class Main:
         """
         self.last_clicked = child
         self.popItUp(child.info, tag)
+        
+        # Highlight the clicked tag
+        self._highlight_tag(tag)
 
         # Calculate the exact offset
         if event.widget == self.text_widget.textWidget:
@@ -1309,9 +1430,48 @@ class Main:
                 f"@{event.x},{event.y}")
             row, col = map(int, clicked_index.split('.'))
             byte_offset = (row - 1) * 16 + col
+        
+        # Select corresponding item in treeview
+        if tag in self.tag_to_treeview_item:
+            item_id = self.tag_to_treeview_item[tag]
+            # Clear previous selection and select this item
+            self.sequence_treeview.selection_set(item_id)
+            # Scroll treeview to show the selected item
+            self.sequence_treeview.see(item_id)
 
         self.status_bar.config(
             text=f"File: {(self.current_file)}\t\tOffset Decimal: {byte_offset} \tOffset Hexadecimal: 0x{byte_offset:X}")
+    
+    def _highlight_tag(self, tag):
+        """
+        Highlight a specific tag in the hex and ASCII views.
+        Removes highlighting from previously highlighted tag.
+        
+        :param tag: The tag to highlight
+        """
+        # Remove previous active highlight
+        if self.current_highlight_tag:
+            # Restore to original color by reconfiguring the tag
+            try:
+                # Find the original color from the collected nodes
+                for node_data in self.collected_nodes:
+                    if node_data['tag'] == self.current_highlight_tag:
+                        original_color = node_data['color']
+                        self.text_widget.textWidget.tag_configure(
+                            self.current_highlight_tag, background=original_color)
+                        self.text_widget.asciiText.tag_configure(
+                            self.current_highlight_tag, background=original_color)
+                        break
+            except:
+                pass
+        
+        # Apply new highlight with a distinctive border/outline effect
+        self.text_widget.textWidget.tag_configure(
+            tag, borderwidth=2, relief='solid')
+        self.text_widget.asciiText.tag_configure(
+            tag, borderwidth=2, relief='solid')
+        
+        self.current_highlight_tag = tag
 
 
 def main():

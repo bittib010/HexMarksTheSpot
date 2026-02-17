@@ -10,9 +10,121 @@ This module provides the fundamental building blocks for file parsing:
 from __future__ import annotations
 
 import random
+import colorsys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, BinaryIO, Dict, List, Optional, Tuple, Type, Union
+
+
+class ColorGenerator:
+    """
+    Generates visually distinct, semi-transparent pastel colors for hex highlighting.
+    Ensures adjacent colors are sufficiently different.
+    Also provides forensic importance colors that stand out prominently.
+    """
+    
+    # Pastel color palette - light, readable backgrounds
+    # Using HSL: high lightness (0.7-0.85) for pastel effect
+    _instance = None
+    _last_hue = 0.0
+    _used_colors = []
+    
+    # Forensic importance colors - these MUST stand out
+    FORENSIC_COLORS = {
+        # Category-specific forensic colors
+        "critical": "#E74C3C",       # Strong red - most critical evidence
+        "important": "#F39C12",      # Amber/orange - important findings
+        "timestamp": "#9B59B6",      # Purple - timestamps
+        "identifier": "#E91E63",     # Pink - IDs (GUIDs, serials, MACs)
+        "path": "#00BCD4",           # Cyan - file paths and locations
+        "network": "#FF5722",        # Deep orange - network-related data
+        "default": "#FF4757",        # Default forensic highlight (bright red)
+    }
+    
+    @classmethod
+    def reset(cls):
+        """Reset the color generator for a new file."""
+        cls._last_hue = random.random()  # Start at random point
+        cls._used_colors = []
+    
+    @classmethod
+    def get_next_color(cls) -> str:
+        """
+        Generate the next visually distinct pastel color.
+        Uses golden ratio to ensure good distribution of hues.
+        
+        Returns:
+            Hex color string like '#RRGGBB'
+        """
+        # Golden ratio conjugate for optimal hue distribution
+        golden_ratio = 0.618033988749895
+        
+        # Move to next hue using golden ratio
+        cls._last_hue = (cls._last_hue + golden_ratio) % 1.0
+        
+        # High saturation (0.4-0.6) and high lightness (0.75-0.88) for pastel
+        saturation = 0.45 + random.random() * 0.15  # 0.45-0.6
+        lightness = 0.78 + random.random() * 0.1   # 0.78-0.88
+        
+        # Convert HSL to RGB
+        r, g, b = colorsys.hls_to_rgb(cls._last_hue, lightness, saturation)
+        
+        # Convert to hex
+        color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+        
+        cls._used_colors.append(color)
+        return color
+    
+    @classmethod
+    def is_color_too_similar(cls, color1: str, color2: str, threshold: float = 0.15) -> bool:
+        """
+        Check if two colors are too similar.
+        
+        Args:
+            color1: First hex color
+            color2: Second hex color  
+            threshold: Minimum hue distance (0-1)
+            
+        Returns:
+            True if colors are too similar
+        """
+        def hex_to_hsl(hex_color: str) -> Tuple[float, float, float]:
+            hex_color = hex_color.lstrip('#')
+            r = int(hex_color[0:2], 16) / 255
+            g = int(hex_color[2:4], 16) / 255
+            b = int(hex_color[4:6], 16) / 255
+            h, l, s = colorsys.rgb_to_hls(r, g, b)
+            return h, s, l
+        
+        h1, _, _ = hex_to_hsl(color1)
+        h2, _, _ = hex_to_hsl(color2)
+        
+        # Calculate circular hue distance
+        hue_diff = min(abs(h1 - h2), 1 - abs(h1 - h2))
+        return hue_diff < threshold
+    
+    @classmethod
+    def get_forensic_color(cls, category: str = "default") -> str:
+        """
+        Get a forensic importance color.
+        
+        These colors are designed to stand out prominently from the regular
+        pastel palette, making forensically important fields immediately visible.
+        
+        Args:
+            category: The forensic category. Options:
+                - "critical": Most critical evidence (red)
+                - "important": Important findings (amber)
+                - "timestamp": Time-related evidence (purple)
+                - "identifier": IDs like GUIDs, MACs, serials (pink)
+                - "path": File paths and locations (cyan)
+                - "network": Network-related data (deep orange)
+                - "default": Generic forensic highlight (bright red)
+                
+        Returns:
+            Hex color string
+        """
+        return cls.FORENSIC_COLORS.get(category, cls.FORENSIC_COLORS["default"])
 
 
 class UnknownFileTypeException(Exception):
@@ -58,9 +170,9 @@ class Node:
     children: List[Tuple[int, "Node"]] = field(default_factory=list)
     
     def __post_init__(self):
-        """Initialize default color if not provided."""
+        """Initialize default color if not provided using smart color generation."""
         if self.color is None:
-            self.color = f"#{random.randint(0, 0xFFFFFF):06x}"
+            self.color = ColorGenerator.get_next_color()
     
     def add_child(self, offset: int, node: "Node") -> "Node":
         """

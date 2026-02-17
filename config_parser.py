@@ -140,8 +140,9 @@ class FieldDefinition:
     # For value mappings (enums)
     value_map: Optional[Dict[str, str]] = None
     
-    # Forensic importance marker
-    forensic_value: bool = False
+    # Forensic importance marker - can be bool (True = default) or string category:
+    # "critical", "important", "timestamp", "identifier", "path", "network"
+    forensic_value: Union[bool, str] = False
 
 
 @dataclass
@@ -521,10 +522,18 @@ class ConfigBasedParser(FileParser):
         # Store parsed value for references
         self.parsed_values[name] = table_value
         
-        # Create node
+        # Create node - determine color
         node_color = color if color else self.get_next_color()
+        
+        # Handle forensic value highlighting
         if forensic_value:
-            node_color = "#FF6B6B"  # Red for forensic value
+            from common import ColorGenerator
+            if isinstance(forensic_value, str):
+                # Use specific forensic category color
+                node_color = ColorGenerator.get_forensic_color(forensic_value)
+            else:
+                # Use default forensic color (bright red)
+                node_color = ColorGenerator.get_forensic_color("default")
         
         # Format value for display
         display_value = table_value

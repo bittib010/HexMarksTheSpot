@@ -57,7 +57,7 @@
     "definitions": {
         "field": {
             "type": "object",
-            "required": ["name", "size"],
+            "required": ["name"],
             "properties": {
                 "name": {
                     "type": "string",
@@ -74,7 +74,7 @@
                             "description": "Dynamic size reference (e.g., '$data_length')"
                         }
                     ],
-                    "description": "Size in bytes or reference to another field"
+                    "description": "Size in bytes or reference to another field (not required for struct/section types)"
                 },
                 "type": {
                     "type": "string",
@@ -93,9 +93,18 @@
                         "unix_time_64",
                         "bitfield",
                         "skip",
-                        "remaining"
+                        "remaining",
+                        "struct",
+                        "section"
                     ],
                     "default": "bytes"
+                },
+                "fields": {
+                    "type": "array",
+                    "description": "Nested fields (for struct and section types)",
+                    "items": {
+                        "$ref": "#/definitions/field"
+                    }
                 },
                 "description": {
                     "type": "string",
@@ -112,8 +121,18 @@
                     "pattern": "^#[0-9A-Fa-f]{6}$"
                 },
                 "forensic_value": {
-                    "type": "boolean",
-                    "description": "Mark as forensically important (highlighted in red)",
+                    "oneOf": [
+                        {
+                            "type": "boolean",
+                            "description": "Mark as forensically important with default red highlighting"
+                        },
+                        {
+                            "type": "string",
+                            "description": "Forensic category for specialized highlighting",
+                            "enum": ["critical", "important", "timestamp", "identifier", "path", "network"]
+                        }
+                    ],
+                    "description": "Mark as forensically important. Use true for default red, or a category: 'critical' (red), 'important' (amber), 'timestamp' (purple), 'identifier' (pink for GUIDs/MACs/serials), 'path' (cyan for file paths), 'network' (deep orange for network data)",
                     "default": false
                 },
                 "value_map": {
@@ -125,9 +144,27 @@
                 },
                 "bit_flags": {
                     "type": "object",
-                    "description": "For bitfield type - map bit positions to names",
+                    "description": "For bitfield type - map bit positions to names or detailed descriptions",
                     "additionalProperties": {
-                        "type": "string"
+                        "oneOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "name": {
+                                        "type": "string",
+                                        "description": "Flag name"
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "description": "Detailed flag description (supports markdown)"
+                                    }
+                                },
+                                "required": ["name"]
+                            }
+                        ]
                     }
                 },
                 "condition": {
