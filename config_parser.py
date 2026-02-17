@@ -633,11 +633,18 @@ class ConfigBasedParser(FileParser):
         elif value_map and str(table_value) in value_map:
             display_value = f"{table_value} ({value_map[str(table_value)]})"
         
+        # Determine if the display value is just the raw hex (same as hex viewer)
+        raw_hex = data.hex()
+        is_unparsed = (str(display_value) == raw_hex)
+        
         # Build HTML description (convert markdown in descriptions to HTML)
         html_desc = f"<h1>{name}</h1>"
         if description:
             html_desc += f"<p>{markdown_to_html(description)}</p>"
-        html_desc += f"<p><b>Value:</b> {display_value}</p>"
+        if is_unparsed:
+            html_desc += f"<p><b>Value:</b> <i>currently unparsed</i></p>"
+        else:
+            html_desc += f"<p><b>Value:</b> {display_value}</p>"
         html_desc += f"<p><b>Size:</b> {resolved_size} bytes</p>"
         html_desc += f"<p><b>Offset:</b> 0x{offset:X} ({offset})</p>"
         

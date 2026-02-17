@@ -174,6 +174,36 @@ def setup_modern_style():
         background=[('active', ModernTheme.ACCENT_PRIMARY), ('pressed', ModernTheme.ACCENT_PRIMARY)]
     )
     
+    # Configure Horizontal Scrollbar
+    style.configure(
+        "Modern.Horizontal.TScrollbar",
+        background=ModernTheme.TEXT_SECONDARY,
+        troughcolor=ModernTheme.BG_SECONDARY,
+        borderwidth=0,
+        arrowsize=14,
+        width=14
+    )
+    style.map(
+        "Modern.Horizontal.TScrollbar",
+        background=[('active', ModernTheme.ACCENT_PRIMARY), ('pressed', ModernTheme.ACCENT_PRIMARY)]
+    )
+    
+    # Stop button style - soft red
+    style.configure(
+        "Stop.TButton",
+        background="#DC6B6B",
+        foreground=ModernTheme.BTN_TEXT,
+        borderwidth=0,
+        focusthickness=0,
+        padding=(16, 10),
+        font=('Segoe UI', 10)
+    )
+    style.map(
+        "Stop.TButton",
+        background=[('active', '#C45555'), ('pressed', '#C45555'), ('disabled', ModernTheme.BG_SECONDARY)],
+        foreground=[('disabled', ModernTheme.TEXT_LIGHT)]
+    )
+    
     return style
 
 
@@ -183,25 +213,32 @@ class TextWidget:
     """
     A class to create and manage text widgets for displaying hex and ASCII data.
     Modern design with soft colors and clean typography.
+    Includes offset column and column headers for position reference.
     """
 
     def __init__(self, master):
         """
-        Initialize the TextWidget with scrollbars and modern styling.
+        Initialize the TextWidget with scrollbars, offset column, headers, and modern styling.
 
         :param master: The parent widget for this TextWidget.
         """
         # Create a container frame with padding - only column 0 (sidebar is in column 1)
         self.container = Frame(master, bg=ModernTheme.BG_PRIMARY)
-        self.container.grid(row=1, column=0, sticky=N+S+E+W, padx=(20, 10), pady=15)
+        self.container.grid(row=1, column=0, sticky=N+S+E+W, padx=(20, 10), pady=(15, 0))
         
         # Configure grid weights for the container
-        self.container.grid_columnconfigure(0, weight=3)  # Hex view
-        self.container.grid_columnconfigure(1, weight=0)  # Scrollbar
+        # col 0 = offset column, col 1 = hex view, col 2 = ASCII view, col 3 = scrollbar, col 4 = info panel
+        self.container.grid_columnconfigure(0, weight=0)  # Offset column (fixed)
+        self.container.grid_columnconfigure(1, weight=3)  # Hex view
         self.container.grid_columnconfigure(2, weight=1)  # ASCII view
-        self.container.grid_columnconfigure(3, weight=2)  # Info panel
+        self.container.grid_columnconfigure(3, weight=0)  # Scrollbar (fixed)
+        self.container.grid_columnconfigure(4, weight=3)  # Info panel
         self.container.grid_rowconfigure(0, weight=0)     # Labels
-        self.container.grid_rowconfigure(1, weight=1)     # Content
+        self.container.grid_rowconfigure(1, weight=0)     # Column headers
+        self.container.grid_rowconfigure(2, weight=1)     # Content
+        
+        mono_font = ('Consolas', 10)
+        header_font = ('Consolas', 9)
         
         # Labels for sections
         hex_label = Label(
@@ -211,7 +248,7 @@ class TextWidget:
             fg=ModernTheme.TEXT_SECONDARY,
             font=('Segoe UI', 9, 'bold')
         )
-        hex_label.grid(row=0, column=0, sticky=W, pady=(0, 5))
+        hex_label.grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 3))
         
         ascii_label = Label(
             self.container,
@@ -220,7 +257,7 @@ class TextWidget:
             fg=ModernTheme.TEXT_SECONDARY,
             font=('Segoe UI', 9, 'bold')
         )
-        ascii_label.grid(row=0, column=2, sticky=W, pady=(0, 5))
+        ascii_label.grid(row=0, column=2, sticky=W, pady=(0, 3))
         
         info_label = Label(
             self.container,
@@ -229,11 +266,77 @@ class TextWidget:
             fg=ModernTheme.TEXT_SECONDARY,
             font=('Segoe UI', 9, 'bold')
         )
-        info_label.grid(row=0, column=3, sticky=W, padx=(15, 0), pady=(0, 5))
+        info_label.grid(row=0, column=4, sticky=W, padx=(15, 0), pady=(0, 3))
+        
+        # Column headers row
+        # Offset column header
+        offset_header = Label(
+            self.container,
+            text="  Offset  ",
+            bg=ModernTheme.HEX_BG,
+            fg=ModernTheme.TEXT_LIGHT,
+            font=header_font,
+            anchor=W,
+            padx=6,
+            pady=3,
+            relief='flat',
+            bd=0
+        )
+        offset_header.grid(row=1, column=0, sticky=E+W+N+S)
+        
+        # Hex column header (00 01 02 ... 0F)
+        hex_header_text = " ".join(f"{i:02X}" for i in range(16))
+        hex_column_header = Label(
+            self.container,
+            text=f" {hex_header_text} ",
+            bg=ModernTheme.HEX_BG,
+            fg=ModernTheme.TEXT_LIGHT,
+            font=header_font,
+            anchor=W,
+            padx=12,
+            pady=3,
+            relief='flat',
+            bd=0
+        )
+        hex_column_header.grid(row=1, column=1, sticky=E+W+N+S)
+        
+        # ASCII column header (0123456789ABCDEF)
+        ascii_header_text = "0123456789ABCDEF"
+        ascii_column_header = Label(
+            self.container,
+            text=f" {ascii_header_text}",
+            bg=ModernTheme.HEX_BG,
+            fg=ModernTheme.TEXT_LIGHT,
+            font=header_font,
+            anchor=W,
+            padx=12,
+            pady=3,
+            relief='flat',
+            bd=0
+        )
+        ascii_column_header.grid(row=1, column=2, sticky=E+W+N+S)
+
+        # Offset/index column (row numbers)
+        self.offsetText = Text(
+            self.container,
+            exportselection=False,
+            width=10,
+            height=38,
+            font=mono_font,
+            padx=6,
+            pady=12,
+            bg=ModernTheme.HEX_BG,
+            fg=ModernTheme.TEXT_LIGHT,
+            relief='flat',
+            bd=0,
+            state='disabled',
+            cursor='arrow',
+            highlightthickness=0,
+            takefocus=0
+        )
+        self.offsetText.grid(row=2, column=0, sticky=N+S+E+W)
 
         # Hex view text widget - dark theme with modern colors
-        # Use Consolas as primary (available on Windows), with fallbacks
-        mono_font = ('Consolas', 10)
         self.textWidget = Text(
             self.container,
             exportselection=False,
@@ -302,10 +405,10 @@ class TextWidget:
         self.asciiText.configure(yscrollcommand=self.scrollbar.set)
 
         # Grid layout
-        self.textWidget.grid(row=1, column=0, sticky=N+S+E+W)
-        self.scrollbar.grid(row=1, column=1, sticky=N+S, padx=2)
-        self.asciiText.grid(row=1, column=2, sticky=N+S+E+W)
-        self.popupText.grid(row=1, column=3, sticky=N+S+E+W, padx=(15, 0))
+        self.textWidget.grid(row=2, column=1, sticky=N+S+E+W)
+        self.asciiText.grid(row=2, column=2, sticky=N+S+E+W)
+        self.scrollbar.grid(row=2, column=3, sticky=N+S, padx=2)
+        self.popupText.grid(row=2, column=4, sticky=N+S+E+W, padx=(10, 0))
 
         # Selection styling
         self.textWidget.tag_configure(
@@ -316,19 +419,23 @@ class TextWidget:
         # Link the scrollbars
         self.textWidget.bind("<MouseWheel>", self.scrollBoth)
         self.asciiText.bind("<MouseWheel>", self.scrollBoth)
+        self.offsetText.bind("<MouseWheel>", self.scrollBoth)
 
     def yscroll(self, *args):
         """
-        Scroll both the hex and ASCII text widgets vertically.
+        Scroll the hex, ASCII, and offset text widgets vertically.
 
         :param args: Scrolling arguments passed by the scrollbar.
         """
         self.textWidget.yview(*args)
         self.asciiText.yview(*args)
+        self.offsetText.configure(state='normal')
+        self.offsetText.yview(*args)
+        self.offsetText.configure(state='disabled')
 
     def scrollBoth(self, event):
         """
-        Handle mouse wheel scrolling in both text widgets.
+        Handle mouse wheel scrolling in all text widgets.
 
         :param event: Event object containing information about the scrolling event.
         """
@@ -336,6 +443,9 @@ class TextWidget:
 
         self.textWidget.yview("scroll", adjusted_delta, "units")
         self.asciiText.yview("scroll", adjusted_delta, "units")
+        self.offsetText.configure(state='normal')
+        self.offsetText.yview("scroll", adjusted_delta, "units")
+        self.offsetText.configure(state='disabled')
         return "break"
 
     def update_popup_text(self, text, tag):
@@ -402,35 +512,13 @@ class Main:
             font=('Segoe UI', 10)
         )
         subtitle_label.grid(row=1, column=0, sticky=W)
-        
-        # Header buttons
-        header_buttons = Frame(header_frame, bg=ModernTheme.BG_PRIMARY)
-        header_buttons.grid(row=0, column=1, rowspan=2, sticky=E)
-        
-        self.open_button = ttk.Button(
-            header_buttons,
-            text="📂 Open File",
-            command=self.open_file,
-            style="Modern.TButton"
-        )
-        self.open_button.pack(side=LEFT, padx=5)
-        
-        self.stop_parsing = False
-        self.stop_button = ttk.Button(
-            header_buttons,
-            text="⏹ Stop",
-            command=self.stop,
-            state="disabled",
-            style="Secondary.TButton"
-        )
-        self.stop_button.pack(side=LEFT, padx=5)
 
         # ========== MAIN CONTENT ==========
         self.text_widget = TextWidget(master)
         
         # ========== SIDEBAR ==========
         sidebar_frame = Frame(master, bg=ModernTheme.BG_PRIMARY)
-        sidebar_frame.grid(row=1, column=1, sticky=N+S+E+W, padx=(0, 20), pady=15)
+        sidebar_frame.grid(row=1, column=1, sticky=N+S+E+W, padx=(0, 20), pady=(15, 5))
         sidebar_frame.grid_rowconfigure(1, weight=1)
         sidebar_frame.grid_columnconfigure(0, weight=1)
         
@@ -503,7 +591,7 @@ class Main:
         
         self.sequence_treeview.grid(row=0, column=0, sticky=N+S+E+W)
         
-        # Scrollbars for treeview
+        # Vertical scrollbar for treeview
         self.sequence_vscrollbar = ttk.Scrollbar(
             treeview_frame,
             orient="vertical",
@@ -513,11 +601,40 @@ class Main:
         self.sequence_treeview.configure(yscrollcommand=self.sequence_vscrollbar.set)
         self.sequence_vscrollbar.config(command=self.sequence_treeview.yview)
         
+        # Horizontal scrollbar for treeview
+        self.sequence_hscrollbar = ttk.Scrollbar(
+            treeview_frame,
+            orient="horizontal",
+            style="Modern.Horizontal.TScrollbar"
+        )
+        self.sequence_hscrollbar.grid(row=1, column=0, sticky=E+W)
+        self.sequence_treeview.configure(xscrollcommand=self.sequence_hscrollbar.set)
+        self.sequence_hscrollbar.config(command=self.sequence_treeview.xview)
+        
         # Action buttons
         actions_frame = Frame(sidebar_frame, bg=ModernTheme.BG_PRIMARY)
-        actions_frame.grid(row=2, column=0, sticky=E+W, pady=(15, 0))
+        actions_frame.grid(row=2, column=0, sticky=E+W+S, pady=(10, 0))
         actions_frame.grid_columnconfigure(0, weight=1)
         actions_frame.grid_columnconfigure(1, weight=1)
+        
+        # Open File and Stop buttons (primary actions)
+        self.open_button = ttk.Button(
+            actions_frame,
+            text="📂 Open File",
+            command=self.open_file,
+            style="Modern.TButton"
+        )
+        self.open_button.grid(row=0, column=0, sticky=E+W, padx=(0, 5), pady=3)
+        
+        self.stop_parsing = False
+        self.stop_button = ttk.Button(
+            actions_frame,
+            text="⏹ Stop",
+            command=self.stop,
+            state="disabled",
+            style="Stop.TButton"
+        )
+        self.stop_button.grid(row=0, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
         self.bookmark_button = ttk.Button(
             actions_frame,
@@ -525,7 +642,7 @@ class Main:
             command=self.add_bookmark,
             style="Secondary.TButton"
         )
-        self.bookmark_button.grid(row=0, column=0, sticky=E+W, padx=(0, 5), pady=3)
+        self.bookmark_button.grid(row=1, column=0, sticky=E+W, padx=(0, 5), pady=3)
         
         self.show_bookmarks_button = ttk.Button(
             actions_frame,
@@ -533,7 +650,7 @@ class Main:
             command=self.show_bookmarks,
             style="Secondary.TButton"
         )
-        self.show_bookmarks_button.grid(row=0, column=1, sticky=E+W, padx=(5, 0), pady=3)
+        self.show_bookmarks_button.grid(row=1, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
         self.export_button = ttk.Button(
             actions_frame,
@@ -541,7 +658,7 @@ class Main:
             command=self.export_to_csv,
             style="Secondary.TButton"
         )
-        self.export_button.grid(row=1, column=0, sticky=E+W, padx=(0, 5), pady=3)
+        self.export_button.grid(row=2, column=0, sticky=E+W, padx=(0, 5), pady=3)
         
         self.file_info_button = ttk.Button(
             actions_frame,
@@ -549,7 +666,7 @@ class Main:
             command=self.show_file_info,
             style="Secondary.TButton"
         )
-        self.file_info_button.grid(row=1, column=1, sticky=E+W, padx=(5, 0), pady=3)
+        self.file_info_button.grid(row=2, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
         self.exit_button = ttk.Button(
             actions_frame,
@@ -557,11 +674,11 @@ class Main:
             command=self.exit_app,
             style="Secondary.TButton"
         )
-        self.exit_button.grid(row=2, column=0, columnspan=2, sticky=E+W, pady=(10, 0))
+        self.exit_button.grid(row=3, column=0, columnspan=2, sticky=E+W, pady=(10, 0))
         
         # ========== STATUS BAR ==========
         status_frame = Frame(master, bg=ModernTheme.BG_SECONDARY)
-        status_frame.grid(row=2, column=0, columnspan=2, sticky=E+W)
+        status_frame.grid(row=2, column=0, columnspan=2, sticky=E+W+S)
         status_frame.grid_columnconfigure(0, weight=1)
         
         self.progress_var = DoubleVar()
@@ -1447,8 +1564,13 @@ class Main:
         if start_idx == 0:
             self.text_widget.textWidget.configure(state='normal')
             self.text_widget.asciiText.configure(state='normal')
+            self.text_widget.offsetText.configure(state='normal')
             self.text_widget.textWidget.delete('1.0', 'end')
             self.text_widget.asciiText.delete('1.0', 'end')
+            self.text_widget.offsetText.delete('1.0', 'end')
+            
+            # Insert first offset line
+            self.text_widget.offsetText.insert('end', '00000000\n')
             
             # Mark text mirror
             self.text_widget.textWidget.bind(
@@ -1479,6 +1601,7 @@ class Main:
             # Finalize
             self.text_widget.textWidget.configure(state='disabled')
             self.text_widget.asciiText.configure(state='disabled')
+            self.text_widget.offsetText.configure(state='disabled')
             
             # Hide loading overlay
             self._hide_loading_overlay()
@@ -1531,6 +1654,9 @@ class Main:
                 if self.display_byte_counter % 16 == 0:
                     self.text_widget.textWidget.insert('end', '\n')
                     self.text_widget.asciiText.insert('end', '\n')
+                    # Add next offset line
+                    self.text_widget.offsetText.insert(
+                        'end', f'{self.display_byte_counter:08X}\n')
         
         # Bind click handlers
         self.text_widget.textWidget.tag_bind(tag, "<Button-1>",

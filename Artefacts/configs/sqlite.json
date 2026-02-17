@@ -116,7 +116,7 @@
                     "name": "TotalFreelistPages",
                     "size": 4,
                     "type": "uint",
-                    "description": "Total number of freelist pages. Higher count suggests more deleted/recoverable data.",
+                    "description": "Total number of freelist pages. Higher count suggests more deleted/recoverable data. Knowing this might help prioritize recovery efforts and focus on databases with more recoverable content.",
                     "forensic_value": true
                 },
                 {
@@ -287,6 +287,22 @@
                     "condition": "$PageType == 5 or $PageType == 2"
                 }
             ]
+        },
+        {
+            "name": "Page1Content",
+            "size": "$PageSize - 112",
+            "type": "bytes",
+            "description": "Remaining content of page 1 (cell pointer array and cell data). Page 1 contains the sqlite_master/sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers).",
+            "condition": "$PageType == 5 or $PageType == 2",
+            "informational": true
+        },
+        {
+            "name": "Page1Content",
+            "size": "$PageSize - 108",
+            "type": "bytes",
+            "description": "Remaining content of page 1 (cell pointer array and cell data). Page 1 contains the sqlite_master/sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers).",
+            "condition": "$PageType != 5 and $PageType != 2",
+            "informational": true
         },
         {
             "name": "WALHeader",
@@ -1074,6 +1090,30 @@
                     "type": "uint",
                     "description": "Total fragmented free bytes on this page. Fragments are free spaces too small to form a freeblock (<4 bytes). High values suggest heavy record churn.",
                     "forensic_value": true
+                },
+                {
+                    "name": "RightMostPointer",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Right-most child page number (interior pages only).",
+                    "forensic_value": true,
+                    "condition": "$PageType == 5 or $PageType == 2"
+                },
+                {
+                    "name": "PageContent",
+                    "size": "$PageSize - 12",
+                    "type": "bytes",
+                    "description": "Cell pointer array and cell content area. Contains the actual database records (for leaf pages) or child page pointers (for interior pages). Freeblocks and unallocated space between cell pointers and cell content may contain recoverable deleted data.",
+                    "condition": "$PageType == 5 or $PageType == 2",
+                    "informational": true
+                },
+                {
+                    "name": "PageContent",
+                    "size": "$PageSize - 8",
+                    "type": "bytes",
+                    "description": "Cell pointer array and cell content area. Contains the actual database records (for leaf pages) or child page pointers (for interior pages). Freeblocks and unallocated space between cell pointers and cell content may contain recoverable deleted data.",
+                    "condition": "$PageType != 5 and $PageType != 2",
+                    "informational": true
                 }
             ]
         }
