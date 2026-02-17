@@ -133,6 +133,32 @@
             ]
         },
         {
+            "_comment": "Repeat until condition: repeat until a field inside the iteration meets a condition",
+            "_comment2": "color_gradient: true makes children get progressively brighter colors for visual grouping",
+            "name": "VariableItems",
+            "type": "section",
+            "description": "Variable-length entries terminated by a zero-size sentinel (disabled example)",
+            "enabled": false,
+            "repeat": "until",
+            "repeat_until": "$entry_size == 0",
+            "color_gradient": true,
+            "fields": [
+                {
+                    "name": "entry_size",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Size of this entry (0 = end of list)"
+                },
+                {
+                    "name": "entry_data",
+                    "size": "$entry_size - 2",
+                    "type": "bytes",
+                    "condition": "$entry_size > 2",
+                    "description": "Entry payload"
+                }
+            ]
+        },
+        {
             "name": "remaining_data",
             "size": 0,
             "type": "remaining",

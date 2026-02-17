@@ -292,6 +292,51 @@ class ColorGenerator:
         h2 = hex_to_hue(color2)
         hue_diff = min(abs(h1 - h2), 1 - abs(h1 - h2))
         return hue_diff < threshold
+    
+    @classmethod
+    def get_gradient_series(cls, base_color: str, count: int) -> List[str]:
+        """
+        Generate a series of progressively brighter colors from a base color.
+        
+        Used when child fields should visually indicate they belong to the same
+        parent structure. Each successive color keeps the same hue but gets
+        lighter, creating a gradient effect.
+        
+        Args:
+            base_color: The parent's hex color (e.g., '#c4c4e1')
+            count: How many gradient steps to generate
+            
+        Returns:
+            List of hex color strings from base towards brighter
+        """
+        if count <= 0:
+            return []
+        if count == 1:
+            return [base_color]
+        
+        bg = base_color.lstrip('#')
+        r = int(bg[0:2], 16) / 255
+        g = int(bg[2:4], 16) / 255
+        b = int(bg[4:6], 16) / 255
+        h, l, s = colorsys.rgb_to_hls(r, g, b)
+        
+        # Calculate lightness range — go from base towards brighter
+        # Leave headroom so we don't hit pure white
+        max_lightness = min(l + 0.25, 0.93)
+        if max_lightness <= l:
+            # Already very light — go slightly darker instead
+            max_lightness = l
+            l = max(l - 0.20, 0.40)
+        
+        colors = []
+        for i in range(count):
+            # Linear interpolation from base lightness to max
+            t = i / max(count - 1, 1)
+            li = l + t * (max_lightness - l)
+            ri, gi, bi = colorsys.hls_to_rgb(h, li, s)
+            colors.append(f"#{int(ri*255):02x}{int(gi*255):02x}{int(bi*255):02x}")
+        
+        return colors
 
 
 class UnknownFileTypeException(Exception):

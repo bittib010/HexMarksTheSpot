@@ -332,11 +332,198 @@
                     "description": "**IDList Size**\n\nTotal size in bytes of the IDList structure that follows (not including this 2-byte size field).\n\n*Parsing:* Read exactly this many bytes for the complete IDList."
                 },
                 {
-                    "name": "IDList",
-                    "size": "$IDListSize",
-                    "type": "bytes",
-                    "description": "**Item ID List (ItemIDList / PIDL)**\n\n*Structure:* Sequence of ItemID structures, each consisting of:\n- ItemIDSize (2 bytes): Size of this ItemID including size field\n- Data (variable): Shell-item specific data\n\n*Terminator:* The list ends with a 2-byte zero (0x0000).\n\n**Shell Item Types and Forensic Significance:**\n\n**1. Root Folder Item (Type 0x1F)**\nContains a GUID identifying the shell namespace root:\n- `{20D04FE0-3AEA-1069-A2D8-08002B30309D}` = My Computer\n- `{450D8FBA-AD25-11D0-98A8-0800361B1103}` = My Documents\n- `{208D2C60-3AEA-1069-A2D7-08002B30309D}` = Network Neighborhood\n- `{645FF040-5081-101B-9F08-00AA002F954E}` = Recycle Bin\n- `{21EC2020-3AEA-1069-A2DD-08002B30309D}` = Control Panel\n*Forensic Value:* Confirms target is relative to a known shell location.\n\n**2. Volume Item (Type 0x2F)**\nContains drive letter or volume information:\n- Drive letter (e.g., 'C:\\\\')\n- Volume GUID path (`\\\\?\\\\Volume{...}`)\n*Forensic Value:* Identifies the specific volume/drive.\n\n**3. File Entry Item (Type 0x30-0x3F)**\nFile system entry (file or folder) with rich metadata:\n- FileSize (4 bytes)\n- ModificationDate (DOS format, 4 bytes)\n- FileAttributes (2 bytes)\n- Primary Name (short/long name)\n\n**Extension Block (Signature 0xBEEF0004)** - Present in most File Entry items:\n- CreationDate (4 bytes, DOS format)\n- LastAccessDate (4 bytes, DOS format)\n- Identifier (2 bytes)\n- NTFS File Reference (8 bytes) - **Contains MFT entry number!**\n- Unknown (8 bytes)\n- Long name (Unicode)\n- Localized name (if different)\n\n*Forensic Value:* **Critical!**\n- MFT entry number can correlate with $MFT analysis\n- Timestamps independent of file system (preserved even if file deleted)\n- May contain both 8.3 and long filename\n\n**4. Network Location Item (Type 0x40-0x4F)**\nNetwork share information:\n- UNC path (\\\\\\\\server\\\\share)\n- Network provider description\n- Comments/descriptions\n*Forensic Value:* Reveals network resources accessed by user.\n\n**5. Compressed Folder Item (Type 0x52)**\nEntry from inside a ZIP/compressed folder.\n*Forensic Value:* Target was inside a compressed archive.\n\n**6. URI Item**\nURL or web location (HTTP, FTP, etc.)\n*Forensic Value:* Reveals web resources accessed.\n\n**7. Control Panel Item (Type 0x71)**\nControl Panel applet reference.\n*Forensic Value:* Shows which system settings were accessed.\n\n**8. Users Property View (Type 0x00)**\nUser profile property storage.\n\n**Extension Block Signatures (within File Entry Items):**\n- `0xBEEF0004`: Primary extension block with timestamps and names\n- `0xBEEF0003`: Extension block version 3\n- `0xBEEF0005`: Extension block version 5 (Vista+)\n- `0xBEEF0006`: Extension block version 6 (Win7+)\n- `0xBEEF0009`: Extension block version 9 (Win8+)\n- `0xBEEF000A`: Extension block version 10 (Win10+)\n\n*Forensic Analysis Tips:*\n1. Each shell item contains type-specific data. Parse based on type byte.\n2. File Entry items often contain multiple timestamps (modified, created, accessed).\n3. The NTFS file reference can be used to locate entries in the $MFT.\n4. Shell items preserve data even when target files are deleted.",
-                    "forensic_value": true
+                    "name": "ItemID",
+                    "type": "section",
+                    "description": "**Item ID List (PIDL)**\n\nSequence of ItemID entries describing the target path in the Shell namespace. Each entry has a 2-byte size followed by type-specific data. The list terminates with a 2-byte zero (0x0000).",
+                    "repeat": "until",
+                    "repeat_until": "$ItemIDSize == 0",
+                    "color_gradient": true,
+                    "forensic_value": true,
+                    "fields": [
+                        {
+                            "name": "ItemIDSize",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "**ItemID Size**\n\nSize of this ItemID entry in bytes, including this 2-byte size field.\n\nA value of 0 marks the end of the ID list (terminator)."
+                        },
+                        {
+                            "name": "ItemType",
+                            "size": 1,
+                            "type": "uint",
+                            "condition": "$ItemIDSize > 2",
+                            "description": "**Shell Item Type Indicator**\n\nThe first byte of the ItemID data indicates the type of shell item.\n\n*Note:* File Entry items use the range 0x30-0x3F where lower nibble indicates sub-type.",
+                            "forensic_value": "identifier",
+                            "value_map": {
+                                "0": "Users Property View",
+                                "16": "Users Property View (0x10)",
+                                "31": "Root Folder (GUID)",
+                                "32": "Volume (Full)",
+                                "35": "Volume (0x23)",
+                                "37": "Volume (0x25)",
+                                "41": "Volume (0x29)",
+                                "42": "Volume (0x2A)",
+                                "46": "Volume (0x2E)",
+                                "47": "Volume / Drive Letter",
+                                "48": "File Entry (Directory)",
+                                "49": "File Entry (File)",
+                                "50": "File Entry (Unicode Dir)",
+                                "51": "File Entry (Unicode File)",
+                                "52": "File Entry (0x34)",
+                                "53": "File Entry (0x35)",
+                                "54": "File Entry (0x36)",
+                                "55": "File Entry (0x37)",
+                                "56": "File Entry (0x38)",
+                                "57": "File Entry (0x39)",
+                                "58": "File Entry (0x3A)",
+                                "59": "File Entry (0x3B)",
+                                "60": "File Entry (0x3C)",
+                                "61": "File Entry (0x3D)",
+                                "62": "File Entry (0x3E)",
+                                "63": "File Entry (0x3F)",
+                                "64": "Network Location",
+                                "65": "Network Location (0x41)",
+                                "66": "Network Location (0x42)",
+                                "67": "Network Location (0x43)",
+                                "68": "Network Location (0x44)",
+                                "69": "Network Location (0x45)",
+                                "70": "Network Location (0x46)",
+                                "71": "Network Location (0x47)",
+                                "72": "Network Location (0x48)",
+                                "73": "Network Location (0x49)",
+                                "74": "Network Location (0x4A)",
+                                "75": "Network Location (0x4B)",
+                                "76": "Network Location (0x4C)",
+                                "77": "Network Location (0x4D)",
+                                "78": "Network Location (0x4E)",
+                                "79": "Network Location (0x4F)",
+                                "82": "Compressed Folder Entry",
+                                "97": "URI (0x61)",
+                                "113": "Control Panel Item"
+                            }
+                        },
+                        {
+                            "name": "RootFolderData",
+                            "type": "section",
+                            "condition": "$ItemIDSize > 2 and $ItemType == 31",
+                            "description": "**Root Folder Shell Item**\n\nIdentifies a known shell namespace root via a 16-byte GUID.",
+                            "fields": [
+                                {
+                                    "name": "SortIndex",
+                                    "size": 1,
+                                    "type": "uint",
+                                    "description": "**Sort Order Index**\n\nControls the display order of the root folder item in the Shell namespace."
+                                },
+                                {
+                                    "name": "RootFolderGUID",
+                                    "size": 16,
+                                    "type": "guid",
+                                    "description": "**Shell Namespace Root GUID**\n\nIdentifies the root location in the Shell namespace.\n\nKnown GUIDs:\n- `20d04fe0-3aea-1069-a2d8-08002b30309d` = **My Computer**\n- `450d8fba-ad25-11d0-98a8-0800361b1103` = **My Documents**\n- `208d2c60-3aea-1069-a2d7-08002b30309d` = **Network Neighborhood**\n- `645ff040-5081-101b-9f08-00aa002f954e` = **Recycle Bin**\n- `21ec2020-3aea-1069-a2dd-08002b30309d` = **Control Panel**\n- `59031a47-3f72-44a7-89c5-5595fe6b30ee` = **Users Folder**\n- `031e4825-7b94-4dc3-b131-e946b44c8dd5` = **Users Libraries**",
+                                    "forensic_value": "identifier",
+                                    "value_map": {
+                                        "20d04fe0-3aea-1069-a2d8-08002b30309d": "My Computer",
+                                        "450d8fba-ad25-11d0-98a8-0800361b1103": "My Documents",
+                                        "208d2c60-3aea-1069-a2d7-08002b30309d": "Network Neighborhood",
+                                        "645ff040-5081-101b-9f08-00aa002f954e": "Recycle Bin",
+                                        "21ec2020-3aea-1069-a2dd-08002b30309d": "Control Panel",
+                                        "59031a47-3f72-44a7-89c5-5595fe6b30ee": "Users Folder",
+                                        "031e4825-7b94-4dc3-b131-e946b44c8dd5": "Users Libraries",
+                                        "b4bfcc3a-db2c-424c-b029-7fe99a87c641": "Desktop",
+                                        "0ac0837c-bbf8-452a-850d-79d08e667ca7": "My Computer (alt)",
+                                        "5e6c858f-0e22-4760-9afe-ea3317b67173": "User Profile",
+                                        "f02c1a0d-be21-4350-88b0-7367fc96ef3c": "Network",
+                                        "679f85cb-0220-4080-b29b-5540cc05aab6": "Quick Access"
+                                    }
+                                }
+                            ]
+                        },
+                        {
+                            "name": "VolumeData",
+                            "type": "section",
+                            "condition": "$ItemIDSize > 2 and 32 <= $ItemType <= 47",
+                            "description": "**Volume / Drive Shell Item**\n\nContains drive letter or volume identifier as an ASCII string (e.g., `C:\\`).",
+                            "fields": [
+                                {
+                                    "name": "VolumeName",
+                                    "size": "$ItemIDSize - 3",
+                                    "type": "string",
+                                    "description": "**Volume / Drive Letter**\n\nASCII string identifying the volume or drive (e.g., `C:\\`).\n\n*Forensic Value:* Identifies the specific volume the target resided on.",
+                                    "forensic_value": "path"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "FileEntryData",
+                            "type": "section",
+                            "condition": "$ItemIDSize > 2 and 48 <= $ItemType <= 63",
+                            "description": "**File Entry Shell Item**\n\nContains file/folder metadata including size, timestamps, attributes, and the short (8.3) filename. May contain BEEF0004 extension blocks with long Unicode name, creation/access timestamps, and MFT file reference.",
+                            "fields": [
+                                {
+                                    "name": "Unknown",
+                                    "size": 1,
+                                    "type": "bytes",
+                                    "description": "Unknown byte (often 0x00)."
+                                },
+                                {
+                                    "name": "EntryFileSize",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "description": "**File Size**\n\nSize of the target file in bytes. May be 0 for directories.",
+                                    "informational": true
+                                },
+                                {
+                                    "name": "EntryModifiedDate",
+                                    "size": 4,
+                                    "type": "bytes",
+                                    "description": "**Last Modified Date (DOS format)**\n\nA 4-byte DOS date/time stamp.\n- Bits 0-4: Day (1-31)\n- Bits 5-8: Month (1-12)\n- Bits 9-15: Year (offset from 1980)\n- Bits 16-20: Seconds/2 (0-29)\n- Bits 21-26: Minutes (0-59)\n- Bits 27-31: Hours (0-23)\n\n*Forensic Value:* Timestamp independent of the file system.",
+                                    "forensic_value": "timestamp"
+                                },
+                                {
+                                    "name": "EntryFileAttributes",
+                                    "size": 2,
+                                    "type": "uint",
+                                    "description": "**File Attributes**\n\nDOS/Windows file attribute flags.\n\nCommon values:\n- 0x0010 = Directory\n- 0x0020 = Archive\n- 0x0001 = Read-Only\n- 0x0002 = Hidden\n- 0x0004 = System",
+                                    "value_map": {
+                                        "16": "Directory (0x10)",
+                                        "32": "Archive (0x20)",
+                                        "33": "Read-Only Archive",
+                                        "34": "Hidden Archive",
+                                        "36": "System Archive",
+                                        "48": "Directory + Archive"
+                                    }
+                                },
+                                {
+                                    "name": "PrimaryName",
+                                    "size": "$ItemIDSize - 14",
+                                    "type": "string",
+                                    "description": "**Primary Name & Extension Data**\n\nContains the short (8.3) filename as a null-terminated ASCII string, followed by alignment padding and optional extension blocks.\n\nThe readable portion at the start is the primary filename or folder name. Remaining bytes may contain BEEF0004 extension blocks with:\n- Long Unicode filename\n- Creation and access timestamps\n- NTFS MFT file reference number\n\n*Forensic Value:* The filename is critical for path reconstruction. Extension block data may contain additional timestamps and the MFT entry number.",
+                                    "forensic_value": "path"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "NetworkData",
+                            "type": "section",
+                            "condition": "$ItemIDSize > 2 and 64 <= $ItemType <= 79",
+                            "description": "**Network Location Shell Item**\n\nContains network share/UNC path information.",
+                            "fields": [
+                                {
+                                    "name": "NetworkPath",
+                                    "size": "$ItemIDSize - 3",
+                                    "type": "string",
+                                    "description": "**Network Location Data**\n\nContains UNC path data (e.g., `\\\\server\\share`) and network provider information.\n\n*Forensic Value:* Reveals network resources accessed by the user.",
+                                    "forensic_value": "network"
+                                }
+                            ]
+                        },
+                        {
+                            "name": "ItemData",
+                            "size": "$ItemIDSize - 3",
+                            "type": "string",
+                            "condition": "$ItemIDSize > 3 and not (31 == $ItemType) and not (32 <= $ItemType <= 47) and not (48 <= $ItemType <= 63) and not (64 <= $ItemType <= 79)",
+                            "description": "**Shell Item Data (Other Type)**\n\nData for an uncommon shell item type. Displayed as ASCII text (non-printable characters stripped).",
+                            "forensic_value": true
+                        }
+                    ]
                 }
             ]
         },

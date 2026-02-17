@@ -300,7 +300,8 @@ class ConfigBasedParser(FileParser):
                 val = value.value
             else:
                 val = value
-            expr = re.sub(rf'\${key}\b', str(val), expr)
+            val_str = str(val)
+            expr = re.sub(rf'\${key}\b', lambda m, v=val_str: v, expr)
         
         try:
             return eval(expr)
@@ -351,7 +352,8 @@ class ConfigBasedParser(FileParser):
                 val = repr(value)
             else:
                 val = value
-            expr = re.sub(rf'\${key}\b', str(val), expr)
+            val_str = str(val)
+            expr = re.sub(rf'\${key}\b', lambda m, v=val_str: v, expr)
         
         try:
             return bool(eval(expr))
@@ -654,9 +656,11 @@ class ConfigBasedParser(FileParser):
         """Parse a section or struct - a group of nested fields.
         
         Supports optional repeat properties for looping:
-        - repeat: number, "$field_ref", expression, or "eof" for repeating until end of file
+        - repeat: number, "$field_ref", expression, "eof", or "until" for condition-based looping
         - repeat_step: fixed byte size per iteration (e.g., page size) - ensures each
           iteration advances exactly this many bytes regardless of inner field parsing
+        - repeat_until: condition expression evaluated after each iteration;
+          when it evaluates to True the loop stops (use with repeat: "until")
         """
         name = field_dict.get("name", "section")
         description = field_dict.get("description", "")
@@ -664,6 +668,8 @@ class ConfigBasedParser(FileParser):
         nested_fields = field_dict.get("fields", [])
         repeat = field_dict.get("repeat")
         repeat_step = field_dict.get("repeat_step")
+        repeat_until = field_dict.get("repeat_until")
+        use_gradient = field_dict.get("color_gradient", False)
         
         if not nested_fields:
             return None
@@ -671,11 +677,14 @@ class ConfigBasedParser(FileParser):
         # Resolve repeat count
         if repeat is None:
             # No repeat - parse once as before
-            return self._parse_section_once(name, description, color, nested_fields, parent_node)
+            return self._parse_section_once(name, description, color, nested_fields, parent_node,
+                                            use_gradient=use_gradient)
         
         # Has repeat - resolve the count
         if isinstance(repeat, str) and repeat.lower() == "eof":
             repeat_count = -1  # Sentinel for "until EOF"
+        elif isinstance(repeat, str) and repeat.lower() == "until":
+            repeat_count = -1  # Sentinel for "until condition met" (controlled by repeat_until)
         elif isinstance(repeat, str):
             repeat_count = self.resolve_size(repeat)
         else:
@@ -691,7 +700,10 @@ class ConfigBasedParser(FileParser):
         
         # Create container node for all iterations
         offset = self.file.tell()
-        count_label = "until EOF" if repeat_count == -1 else str(repeat_count)
+        if repeat_count == -1:
+            count_label = "until condition" if repeat_until else "until EOF"
+        else:
+            count_label = str(repeat_count)
         container_node = Node(
             data=b'',
             info=f"<h1>{name}</h1><p>{markdown_to_html(description)}</p><p><b>Repeat:</b> {count_label} iterations</p>",
@@ -723,10 +735,15 @@ class ConfigBasedParser(FileParser):
             iter_name = f"{name}[{iteration}]"
             iter_node = self._parse_section_once(
                 iter_name, f"{description} (iteration {iteration})", 
-                color, nested_fields, container_node
+                color, nested_fields, container_node,
+                use_gradient=use_gradient
             )
             
             if iter_node is None:
+                break
+            
+            # Check repeat_until condition after each iteration
+            if repeat_until and self.evaluate_condition(repeat_until):
                 break
             
             # If repeat_step is set, advance to exact position for next iteration
@@ -747,21 +764,44 @@ class ConfigBasedParser(FileParser):
         return container_node
     
     def _parse_section_once(self, name: str, description: str, color: Optional[str],
-                            nested_fields: List[Dict[str, Any]], parent_node: Node) -> Optional[Node]:
-        """Parse a single instance of a section/struct."""
+                            nested_fields: List[Dict[str, Any]], parent_node: Node,
+                            use_gradient: bool = False) -> Optional[Node]:
+        """Parse a single instance of a section/struct.
+        
+        When use_gradient is True, children inherit progressively brighter
+        variants of the section's base color, visually grouping them.
+        """
         offset = self.file.tell()
+        base_color = color or self.get_next_color()
         section_node = Node(
             data=b'',
             info=f"<h1>{name}</h1><p>{markdown_to_html(description)}</p>",
             name=name,
-            color=color or self.get_next_color()
+            color=base_color
         )
         
         start_offset = offset
         
+        # Pre-compute gradient colors if enabled
+        gradient_colors = None
+        if use_gradient:
+            from common import ColorGenerator
+            # Count only enabled, non-container fields for gradient steps
+            active_count = sum(1 for f in nested_fields if f.get("enabled", True))
+            gradient_colors = ColorGenerator.get_gradient_series(base_color, active_count)
+        
         # Parse all fields in the section
+        gradient_idx = 0
         for child_field_dict in nested_fields:
-            self.parse_field(child_field_dict, section_node)
+            if use_gradient and gradient_colors and child_field_dict.get("enabled", True):
+                # Inject gradient color into child field (without modifying the original dict)
+                child_copy = dict(child_field_dict)
+                if "color" not in child_copy:
+                    child_copy["color"] = gradient_colors[min(gradient_idx, len(gradient_colors) - 1)]
+                gradient_idx += 1
+                self.parse_field(child_copy, section_node)
+            else:
+                self.parse_field(child_field_dict, section_node)
         
         # Don't set section_node.data - children already hold the bytes.
         # Setting data on the container would cause double-counting in hex display

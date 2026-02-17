@@ -190,10 +190,14 @@
                         },
                         {
                             "type": "string",
-                            "description": "Dynamic count reference (e.g., '$DatabaseSizeInPages', '$PageCount - 1') or 'eof' to repeat until end of file"
+                            "description": "Dynamic count reference (e.g., '$DatabaseSizeInPages', '$PageCount - 1'), 'eof' to repeat until end of file, or 'until' to repeat until repeat_until condition is met"
                         }
                     ],
-                    "description": "Repeat a struct/section N times, by field reference, or until EOF. Only valid on struct/section types. Each iteration is named Name[0], Name[1], etc."
+                    "description": "Repeat a struct/section N times, by field reference, until EOF, or until a condition is met. Only valid on struct/section types. Each iteration is named Name[0], Name[1], etc."
+                },
+                "repeat_until": {
+                    "type": "string",
+                    "description": "Condition expression evaluated after each repeat iteration. When it evaluates to true, the repeat loop stops. Typically used with repeat: 'until'. Example: '$ItemIDSize == 0' to stop when a size field is zero."
                 },
                 "repeat_step": {
                     "oneOf": [
@@ -231,6 +235,11 @@
                         }
                     ],
                     "description": "Expected value constraint. If an array: parsed value must be one of the listed values. If an object with min/max: parsed value must be within range. Mismatches are logged as warnings with offset and raw hex for forensic triage."
+                },
+                "color_gradient": {
+                    "type": "boolean",
+                    "description": "When true on a struct/section, children inherit the parent's base color with progressively brighter tones. Creates a visual gradient indicating related fields belonging to the same logical group.",
+                    "default": false
                 }
             }
         }
