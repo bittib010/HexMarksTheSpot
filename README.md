@@ -19,7 +19,7 @@ Example screenshot:
 
 ```bash
 # Clone and install
-git clone https://github.com/yourusername/HexMarksTheSpot.git
+git clone https://github.com/bittib010/HexMarksTheSpot.git
 cd HexMarksTheSpot
 pip install -e .
 ```
