@@ -1,3 +1,38 @@
+Metadata-Version: 2.4
+Name: HexMarksTheSpot
+Version: 2.0.0
+Summary: Advanced Hex File Analysis and Annotation Tool for Digital Forensics
+Author: HexMarksTheSpot Contributors
+License: MIT
+Project-URL: Homepage, https://github.com/yourusername/HexMarksTheSpot
+Project-URL: Documentation, https://github.com/yourusername/HexMarksTheSpot#readme
+Project-URL: Repository, https://github.com/yourusername/HexMarksTheSpot
+Project-URL: Issues, https://github.com/yourusername/HexMarksTheSpot/issues
+Keywords: forensics,hex,parser,analysis,artifacts,digital-forensics
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Information Technology
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Security
+Classifier: Topic :: System :: Filesystems
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: tkhtmlview>=0.2.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: isort>=5.12.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Requires-Dist: pyinstaller>=6.0.0; extra == "dev"
+
 # HexMarksTheSpot: Advanced Hex File Analysis and Annotation
 
 ![](images/DALL-E%20Logo.png)

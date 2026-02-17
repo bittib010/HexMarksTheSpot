@@ -4,17 +4,155 @@ import threading
 import time
 import csv
 import hashlib
+import logging
+from datetime import datetime
 
 # Third-Party Libraries
-from tkinter import Tk, Text, N, S, E, W
+from tkinter import Tk, Text, N, S, E, W, Frame
 from tkinter import filedialog, Button, Scrollbar, Label
 from tkinter import SEL, SEL_LAST, SEL_FIRST, END
 from tkinter import TclError, Entry, Listbox, ttk
-from tkinter import StringVar, DoubleVar, NO, Toplevel, BOTH
+from tkinter import StringVar, DoubleVar, NO, Toplevel, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM
 from tkhtmlview import HTMLText
 
-# Application-specific
-from main import get_file_parser
+# Application-specific - use the new dynamic parser loader
+from parser_loader import get_file_parser, discover_all_parsers
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+
+# ============================================================================
+# Modern Color Theme
+# ============================================================================
+class ModernTheme:
+    """Modern, calm color theme for the application."""
+    
+    # Primary colors
+    BG_PRIMARY = "#F8FAFC"       # Very light gray-blue background
+    BG_SECONDARY = "#F1F5F9"     # Slightly darker background for cards
+    BG_DARK = "#1E293B"          # Dark background for hex view
+    
+    # Accent colors
+    ACCENT_PRIMARY = "#3B82F6"   # Soft blue
+    ACCENT_SUCCESS = "#10B981"   # Soft green
+    ACCENT_WARNING = "#F59E0B"   # Soft amber
+    ACCENT_DANGER = "#EF4444"    # Soft red
+    
+    # Text colors
+    TEXT_PRIMARY = "#1E293B"     # Dark text
+    TEXT_SECONDARY = "#64748B"   # Muted text
+    TEXT_LIGHT = "#94A3B8"       # Light text
+    TEXT_ON_DARK = "#E2E8F0"     # Text on dark backgrounds
+    
+    # Hex view colors
+    HEX_BG = "#1E293B"           # Dark blue-gray
+    HEX_FG = "#A5F3FC"           # Cyan text
+    ASCII_FG = "#86EFAC"         # Green text
+    
+    # Border colors
+    BORDER = "#E2E8F0"           # Light border
+    BORDER_FOCUS = "#3B82F6"     # Focus border
+    
+    # Button colors
+    BTN_PRIMARY = "#3B82F6"
+    BTN_PRIMARY_HOVER = "#2563EB"
+    BTN_SECONDARY = "#64748B"
+    BTN_TEXT = "#FFFFFF"
+    
+    # Status colors
+    SELECTION_BG = "#BFDBFE"     # Light blue selection
+
+
+def setup_modern_style():
+    """Configure ttk styles for a modern appearance."""
+    style = ttk.Style()
+    
+    # Use clam theme as base (more customizable)
+    style.theme_use('clam')
+    
+    # Configure Treeview
+    style.configure(
+        "Modern.Treeview",
+        background=ModernTheme.BG_SECONDARY,
+        foreground=ModernTheme.TEXT_PRIMARY,
+        fieldbackground=ModernTheme.BG_SECONDARY,
+        borderwidth=0,
+        relief="flat",
+        rowheight=28,
+        font=('Segoe UI', 10)
+    )
+    style.configure(
+        "Modern.Treeview.Heading",
+        background=ModernTheme.BG_PRIMARY,
+        foreground=ModernTheme.TEXT_PRIMARY,
+        relief="flat",
+        font=('Segoe UI', 10, 'bold'),
+        padding=(10, 8)
+    )
+    style.map(
+        "Modern.Treeview",
+        background=[('selected', ModernTheme.SELECTION_BG)],
+        foreground=[('selected', ModernTheme.TEXT_PRIMARY)]
+    )
+    
+    # Configure Button
+    style.configure(
+        "Modern.TButton",
+        background=ModernTheme.BTN_PRIMARY,
+        foreground=ModernTheme.BTN_TEXT,
+        borderwidth=0,
+        focusthickness=0,
+        padding=(16, 10),
+        font=('Segoe UI', 10)
+    )
+    style.map(
+        "Modern.TButton",
+        background=[('active', ModernTheme.BTN_PRIMARY_HOVER), ('pressed', ModernTheme.BTN_PRIMARY_HOVER)]
+    )
+    
+    # Secondary button style
+    style.configure(
+        "Secondary.TButton",
+        background=ModernTheme.BG_SECONDARY,
+        foreground=ModernTheme.TEXT_PRIMARY,
+        borderwidth=1,
+        padding=(16, 10),
+        font=('Segoe UI', 10)
+    )
+    
+    # Configure Entry
+    style.configure(
+        "Modern.TEntry",
+        fieldbackground=ModernTheme.BG_SECONDARY,
+        borderwidth=1,
+        relief="flat",
+        padding=(10, 8),
+        font=('Segoe UI', 10)
+    )
+    
+    # Configure Progressbar
+    style.configure(
+        "Modern.Horizontal.TProgressbar",
+        background=ModernTheme.ACCENT_PRIMARY,
+        troughcolor=ModernTheme.BG_SECONDARY,
+        borderwidth=0,
+        thickness=6
+    )
+    
+    # Configure Scrollbar
+    style.configure(
+        "Modern.Vertical.TScrollbar",
+        background=ModernTheme.BG_SECONDARY,
+        troughcolor=ModernTheme.BG_PRIMARY,
+        borderwidth=0,
+        arrowsize=0
+    )
+    
+    return style
 
 
 
@@ -22,40 +160,136 @@ from main import get_file_parser
 class TextWidget:
     """
     A class to create and manage text widgets for displaying hex and ASCII data.
+    Modern design with soft colors and clean typography.
     """
 
     def __init__(self, master):
         """
-        Initialize the TextWidget with scrollbars and other configurations.
+        Initialize the TextWidget with scrollbars and modern styling.
 
         :param master: The parent widget for this TextWidget.
         """
-        self.textWidget = Text(master, exportselection=False, width=49, height=43, font=(
-            'Courier 10 bold'), padx=5, bg='black', fg='green', relief='flat', bd=2)
-
-        self.scrollbar = Scrollbar(master, command=self.yscroll)
-
-        #self.popupText = Text(master, width=35, height=38, font=(
-        #    'Courier 12 bold'), padx=5, bg='white', relief='sunken', bd=2)
+        # Create a container frame with padding - only column 0 (sidebar is in column 1)
+        self.container = Frame(master, bg=ModernTheme.BG_PRIMARY)
+        self.container.grid(row=1, column=0, sticky=N+S+E+W, padx=(20, 10), pady=15)
         
-        self.popupText = HTMLText(master, width=35, height=38, font=('Courier 12 bold'), padx=5, bg='white', relief='sunken', bd=2)
+        # Configure grid weights for the container
+        self.container.grid_columnconfigure(0, weight=3)  # Hex view
+        self.container.grid_columnconfigure(1, weight=0)  # Scrollbar
+        self.container.grid_columnconfigure(2, weight=1)  # ASCII view
+        self.container.grid_columnconfigure(3, weight=2)  # Info panel
+        self.container.grid_rowconfigure(0, weight=0)     # Labels
+        self.container.grid_rowconfigure(1, weight=1)     # Content
         
-        self.asciiText = Text(master, exportselection=False, width=16, height=43, font=(
-            'Courier 10 bold'), padx=5, bg='black', fg='green', relief='flat', bd=2)
+        # Labels for sections
+        hex_label = Label(
+            self.container, 
+            text="HEX VIEW", 
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            font=('Segoe UI', 9, 'bold')
+        )
+        hex_label.grid(row=0, column=0, sticky=W, pady=(0, 5))
+        
+        ascii_label = Label(
+            self.container,
+            text="ASCII",
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            font=('Segoe UI', 9, 'bold')
+        )
+        ascii_label.grid(row=0, column=2, sticky=W, pady=(0, 5))
+        
+        info_label = Label(
+            self.container,
+            text="FIELD DETAILS",
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            font=('Segoe UI', 9, 'bold')
+        )
+        info_label.grid(row=0, column=3, sticky=W, padx=(15, 0), pady=(0, 5))
+
+        # Hex view text widget - dark theme with modern colors
+        # Use Consolas as primary (available on Windows), with fallbacks
+        mono_font = ('Consolas', 10)
+        self.textWidget = Text(
+            self.container,
+            exportselection=False,
+            width=52,
+            height=38,
+            font=mono_font,
+            padx=12,
+            pady=12,
+            bg=ModernTheme.HEX_BG,
+            fg=ModernTheme.HEX_FG,
+            relief='flat',
+            bd=0,
+            insertbackground=ModernTheme.HEX_FG,
+            selectbackground=ModernTheme.SELECTION_BG,
+            selectforeground=ModernTheme.TEXT_PRIMARY,
+            highlightthickness=1,
+            highlightbackground=ModernTheme.BORDER,
+            highlightcolor=ModernTheme.BORDER_FOCUS
+        )
+
+        # Scrollbar with modern styling
+        self.scrollbar = ttk.Scrollbar(
+            self.container,
+            command=self.yscroll,
+            style="Modern.Vertical.TScrollbar"
+        )
+
+        # Info panel - light theme with HTML support
+        self.popupText = HTMLText(
+            self.container,
+            width=40,
+            height=38,
+            font=('Segoe UI', 10),
+            padx=15,
+            pady=15,
+            bg=ModernTheme.BG_SECONDARY,
+            relief='flat',
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=ModernTheme.BORDER,
+            highlightcolor=ModernTheme.BORDER_FOCUS
+        )
+        
+        # ASCII view text widget
+        self.asciiText = Text(
+            self.container,
+            exportselection=False,
+            width=18,
+            height=38,
+            font=mono_font,
+            padx=12,
+            pady=12,
+            bg=ModernTheme.HEX_BG,
+            fg=ModernTheme.ASCII_FG,
+            relief='flat',
+            bd=0,
+            insertbackground=ModernTheme.ASCII_FG,
+            selectbackground=ModernTheme.SELECTION_BG,
+            selectforeground=ModernTheme.TEXT_PRIMARY,
+            highlightthickness=1,
+            highlightbackground=ModernTheme.BORDER,
+            highlightcolor=ModernTheme.BORDER_FOCUS
+        )
 
         self.textWidget.configure(yscrollcommand=self.scrollbar.set)
         self.asciiText.configure(yscrollcommand=self.scrollbar.set)
 
-        self.textWidget.grid(row=1, column=0, pady=15,
-                             padx=(20, 0), sticky=W+E+N+S)
-        self.scrollbar.grid(row=1, column=1, pady=15, sticky=N+S+W)
-        self.asciiText.grid(row=1, column=2, pady=15, sticky=W)
-        self.popupText.grid(row=1, column=3, pady=15, padx=(0, 10), sticky=E)
+        # Grid layout
+        self.textWidget.grid(row=1, column=0, sticky=N+S+E+W)
+        self.scrollbar.grid(row=1, column=1, sticky=N+S, padx=2)
+        self.asciiText.grid(row=1, column=2, sticky=N+S+E+W)
+        self.popupText.grid(row=1, column=3, sticky=N+S+E+W, padx=(15, 0))
 
+        # Selection styling
         self.textWidget.tag_configure(
-            "sel", background="#c3c3c3", foreground="black")
+            "sel", background=ModernTheme.SELECTION_BG, foreground=ModernTheme.TEXT_PRIMARY)
         self.asciiText.tag_configure(
-            "sel", background="#c3c3c3", foreground="black")
+            "sel", background=ModernTheme.SELECTION_BG, foreground=ModernTheme.TEXT_PRIMARY)
 
         # Link the scrollbars
         self.textWidget.bind("<MouseWheel>", self.scrollBoth)
@@ -95,6 +329,7 @@ class TextWidget:
 class Main:
     """
     The main class of the application, containing the logic for the GUI layout, file parsing, and other functionalities.
+    Modern design with soft colors and clean layout.
     """
 
     def __init__(self, master):
@@ -106,139 +341,245 @@ class Main:
         self.master = master
         self.bookmark_treeview = None
         self.bookmark_window = None
-
-        # Stop parsing button
-        self.stop_parsing = False
-        self.stop_button = Button(
-            master, text="Stop", command=self.stop, state="disabled")
-        self.stop_button.grid(row=3, column=6, padx=10, pady=10, sticky=W+E)
+        
+        # Set up modern styling
+        self.style = setup_modern_style()
+        
+        # Configure master background
+        master.configure(bg=ModernTheme.BG_PRIMARY)
 
         # Configure rows and columns in the master frame
-        master.grid_rowconfigure(0, weight=0)  # Top padding row
-        master.grid_rowconfigure(1, weight=1)  # TextWidget row
+        master.grid_rowconfigure(0, weight=0)  # Header row
+        master.grid_rowconfigure(1, weight=1)  # Main content row
         master.grid_rowconfigure(2, weight=0)  # Status bar row
-        master.grid_rowconfigure(3, weight=0)  # Buttons row
-        master.grid_rowconfigure(4, weight=0)  # Progress bar row
-        master.grid_rowconfigure(5, weight=0)  # Progress label row
 
-        # TextWidget column (hex view)
-        master.grid_columnconfigure(0, weight=1, minsize=420)
-        master.grid_columnconfigure(1, weight=0)  # Scrollbar column
-        # TextWidget column (ASCII view)
-        master.grid_columnconfigure(2, weight=1, minsize=150)
-        master.grid_columnconfigure(
-            3, weight=0, minsize=150)  # PopupText column
-        master.grid_columnconfigure(4, weight=1)  # Sequence treeview column
-        master.grid_columnconfigure(5, weight=0)  # Buttons column
-        master.grid_columnconfigure(6, weight=0)  # Buttons column
-        # Sequence treeview scrollbar column
-        master.grid_columnconfigure(7, weight=0)
+        master.grid_columnconfigure(0, weight=3)  # Content area
+        master.grid_columnconfigure(1, weight=2)  # Sidebar
+        
+        # ========== HEADER SECTION ==========
+        header_frame = Frame(master, bg=ModernTheme.BG_PRIMARY)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky=E+W, padx=20, pady=(15, 0))
+        header_frame.grid_columnconfigure(0, weight=1)
+        
+        # App title
+        title_label = Label(
+            header_frame,
+            text="HexMarksTheSpot",
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_PRIMARY,
+            font=('Segoe UI', 18, 'bold')
+        )
+        title_label.grid(row=0, column=0, sticky=W)
+        
+        subtitle_label = Label(
+            header_frame,
+            text="Forensic Hex File Analysis Tool",
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            font=('Segoe UI', 10)
+        )
+        subtitle_label.grid(row=1, column=0, sticky=W)
+        
+        # Header buttons
+        header_buttons = Frame(header_frame, bg=ModernTheme.BG_PRIMARY)
+        header_buttons.grid(row=0, column=1, rowspan=2, sticky=E)
+        
+        self.open_button = ttk.Button(
+            header_buttons,
+            text="📂 Open File",
+            command=self.open_file,
+            style="Modern.TButton"
+        )
+        self.open_button.pack(side=LEFT, padx=5)
+        
+        self.stop_parsing = False
+        self.stop_button = ttk.Button(
+            header_buttons,
+            text="⏹ Stop",
+            command=self.stop,
+            state="disabled",
+            style="Secondary.TButton"
+        )
+        self.stop_button.pack(side=LEFT, padx=5)
 
+        # ========== MAIN CONTENT ==========
         self.text_widget = TextWidget(master)
-
-        # Open file button
-        self.open_button = Button(
-            master, text="Open File", command=self.open_file)
-        self.open_button.grid(row=2, column=6, padx=10, pady=(40,10), sticky=W+E)
-
-        # Exit button
-        self.exit_button = Button(master, text="Exit", command=self.exit_app)
-        self.exit_button.grid(row=4, column=6, padx=10, pady=10, sticky=W+E)
-
-        # Export to CSV treeview
-        self.export_button = Button(master, text="Export to CSV", command=self.export_to_csv)
-        self.export_button.grid(row=4, column=5, padx=10, pady=10, sticky=W+E)
-
-        # Set bookmark button
-        self.bookmark_button = Button(
-            master, text="Add Bookmark", command=self.add_bookmark)
-        self.bookmark_button.grid(
-            row=3, column=5, padx=10, pady=10, sticky=W+E)
-
-        # Show bookmarks button
-        self.show_bookmarks_button = Button(
-            master, text="Show Bookmarks", command=self.show_bookmarks)
-        self.show_bookmarks_button.grid(
-            row=2, column=5, padx=10, pady=(40,10), sticky=W+E)
-
-        self.last_clicked = None
-
-        # File info button
-        self.file_info_button = Button(master, text="File Info", command=self.show_file_info)
-        self.file_info_button.grid(row=5, column=6, padx=10, pady=10, sticky=W+E)
-
-        # Start in fullscreen mode
-        self.master.attributes("-fullscreen", True)
-
-        # Allow toggling fullscreen mode with F11
-        self.master.bind("<F11>", self.toggle_fullscreen)
-
+        
+        # ========== SIDEBAR ==========
+        sidebar_frame = Frame(master, bg=ModernTheme.BG_PRIMARY)
+        sidebar_frame.grid(row=1, column=1, sticky=N+S+E+W, padx=(0, 20), pady=15)
+        sidebar_frame.grid_rowconfigure(1, weight=1)
+        sidebar_frame.grid_columnconfigure(0, weight=1)
+        
+        # Search section
+        search_frame = Frame(sidebar_frame, bg=ModernTheme.BG_PRIMARY)
+        search_frame.grid(row=0, column=0, sticky=E+W, pady=(0, 10))
+        search_frame.grid_columnconfigure(0, weight=1)
+        
+        search_label = Label(
+            search_frame,
+            text="PARSED FIELDS",
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            font=('Segoe UI', 9, 'bold')
+        )
+        search_label.grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 8))
+        
+        self.search_var = StringVar()
+        self.search_entry = ttk.Entry(
+            search_frame,
+            textvariable=self.search_var,
+            style="Modern.TEntry",
+            font=('Segoe UI', 10)
+        )
+        self.search_entry.grid(row=1, column=0, sticky=E+W, padx=(0, 5))
+        self.search_entry.insert(0, "Search fields...")
+        self.search_entry.bind("<FocusIn>", lambda e: self.search_entry.delete(0, END) if self.search_entry.get() == "Search fields..." else None)
+        self.search_entry.bind("<FocusOut>", lambda e: self.search_entry.insert(0, "Search fields...") if not self.search_entry.get() else None)
+        
+        search_buttons = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
+        search_buttons.grid(row=1, column=1, sticky=E)
+        
+        self.search_button = ttk.Button(
+            search_buttons,
+            text="🔍",
+            command=self.search_sequence,
+            style="Secondary.TButton",
+            width=3
+        )
+        self.search_button.pack(side=LEFT, padx=2)
+        
+        self.clear_button = ttk.Button(
+            search_buttons,
+            text="✕",
+            command=self.clear_search,
+            style="Secondary.TButton",
+            width=3
+        )
+        self.clear_button.pack(side=LEFT, padx=2)
+        
+        # Treeview with modern styling
+        treeview_frame = Frame(sidebar_frame, bg=ModernTheme.BG_PRIMARY)
+        treeview_frame.grid(row=1, column=0, sticky=N+S+E+W)
+        treeview_frame.grid_rowconfigure(0, weight=1)
+        treeview_frame.grid_columnconfigure(0, weight=1)
+        
         self.sequence_treeview = ttk.Treeview(
-            self.master, columns=('Offset', 'Name', "Value"), height=43)
-        # Heading for the first implicit column
-        self.sequence_treeview.heading('#0', text='')
+            treeview_frame,
+            columns=('Offset', 'Name', 'Value'),
+            style="Modern.Treeview",
+            show="headings"
+        )
         self.sequence_treeview.heading('Offset', text='Offset')
         self.sequence_treeview.heading('Name', text='Name')
         self.sequence_treeview.heading('Value', text='Value')
-
-        # Hide the first implicit column
-        self.sequence_treeview.column('#0', stretch=NO, width=0)
-        self.sequence_treeview.column("Offset", width=39)
-        self.sequence_treeview.column("Name", width=70)
-        self.sequence_treeview.column("Value", width=150)
-
-        self.sequence_treeview.grid(
-            row=1, column=4, columnspan=3, padx=10, pady=15, sticky=W+E+N+S)
-
-        # status bar
-        self.status_bar = Label(
-            self.master, text="Offset: 0", bd=1, relief="sunken", anchor=W)
-        self.status_bar.grid(row=2, column=0, columnspan=5,
-                             sticky=W+E+S, pady=(0, 0))
-
-        # Add a search entry
-        self.search_var = StringVar()
-        self.search_entry = Entry(master, textvariable=self.search_var)
-        self.search_entry.grid(row=0, column=4, padx=10, pady=10, sticky=W+E)
-        self.search_button = Button(
-            master, text="Search", command=self.search_sequence)
-        self.search_button.grid(row=0, column=6, padx=10, pady=10, sticky=W+E)
-        self.clear_button = Button(
-            master, text="Clear", command=self.clear_search)
-        self.clear_button.grid(row=0, column=5, padx=10, pady=10, sticky=W+E)
-
-        # Store original sequence items
-        self.sequence_items = []
-
-        # Bind the search entry to update the list on every key press
-        # self.search_entry.bind("<KeyRelease>", self.search_sequence)
-
-        # Progress bar
-        self.progress_var = DoubleVar()  # Variable to track progress bar value
-        self.progress_bar = ttk.Progressbar(
-            self.master, variable=self.progress_var, orient="horizontal", length=200, mode="determinate")
-        self.progress_bar.grid(
-            row=4, column=0, columnspan=5, sticky=W+E+S, pady=(0, 0))
-        self.progress_message = StringVar()
-        self.progress_label = Label(
-            self.master, textvariable=self.progress_message, bd=1, relief="sunken", anchor=W)
-        self.progress_label.grid(
-            row=5, column=0, columnspan=5, sticky=W+E+S, pady=(0, 0))
-
-        # Vertical Scrollbar
-        self.sequence_vscrollbar = Scrollbar(self.master, orient="vertical")
-        self.sequence_vscrollbar.grid(row=1, column=7, sticky=E+N+S)
-        self.sequence_treeview.configure(
-            yscrollcommand=self.sequence_vscrollbar.set)
+        
+        self.sequence_treeview.column('Offset', width=60, minwidth=50)
+        self.sequence_treeview.column('Name', width=120, minwidth=80)
+        self.sequence_treeview.column('Value', width=150, minwidth=100)
+        
+        self.sequence_treeview.grid(row=0, column=0, sticky=N+S+E+W)
+        
+        # Scrollbars for treeview
+        self.sequence_vscrollbar = ttk.Scrollbar(
+            treeview_frame,
+            orient="vertical",
+            style="Modern.Vertical.TScrollbar"
+        )
+        self.sequence_vscrollbar.grid(row=0, column=1, sticky=N+S)
+        self.sequence_treeview.configure(yscrollcommand=self.sequence_vscrollbar.set)
         self.sequence_vscrollbar.config(command=self.sequence_treeview.yview)
+        
+        # Action buttons
+        actions_frame = Frame(sidebar_frame, bg=ModernTheme.BG_PRIMARY)
+        actions_frame.grid(row=2, column=0, sticky=E+W, pady=(15, 0))
+        actions_frame.grid_columnconfigure(0, weight=1)
+        actions_frame.grid_columnconfigure(1, weight=1)
+        
+        self.bookmark_button = ttk.Button(
+            actions_frame,
+            text="📌 Add Bookmark",
+            command=self.add_bookmark,
+            style="Secondary.TButton"
+        )
+        self.bookmark_button.grid(row=0, column=0, sticky=E+W, padx=(0, 5), pady=3)
+        
+        self.show_bookmarks_button = ttk.Button(
+            actions_frame,
+            text="📚 Bookmarks",
+            command=self.show_bookmarks,
+            style="Secondary.TButton"
+        )
+        self.show_bookmarks_button.grid(row=0, column=1, sticky=E+W, padx=(5, 0), pady=3)
+        
+        self.export_button = ttk.Button(
+            actions_frame,
+            text="📄 Export CSV",
+            command=self.export_to_csv,
+            style="Secondary.TButton"
+        )
+        self.export_button.grid(row=1, column=0, sticky=E+W, padx=(0, 5), pady=3)
+        
+        self.file_info_button = ttk.Button(
+            actions_frame,
+            text="ℹ️ File Info",
+            command=self.show_file_info,
+            style="Secondary.TButton"
+        )
+        self.file_info_button.grid(row=1, column=1, sticky=E+W, padx=(5, 0), pady=3)
+        
+        self.exit_button = ttk.Button(
+            actions_frame,
+            text="Exit",
+            command=self.exit_app,
+            style="Secondary.TButton"
+        )
+        self.exit_button.grid(row=2, column=0, columnspan=2, sticky=E+W, pady=(10, 0))
+        
+        # ========== STATUS BAR ==========
+        status_frame = Frame(master, bg=ModernTheme.BG_SECONDARY)
+        status_frame.grid(row=2, column=0, columnspan=2, sticky=E+W)
+        status_frame.grid_columnconfigure(0, weight=1)
+        
+        self.progress_var = DoubleVar()
+        self.progress_bar = ttk.Progressbar(
+            status_frame,
+            variable=self.progress_var,
+            style="Modern.Horizontal.TProgressbar",
+            mode="determinate"
+        )
+        self.progress_bar.grid(row=0, column=0, sticky=E+W)
+        
+        self.progress_message = StringVar()
+        self.status_bar = Label(
+            status_frame,
+            textvariable=self.progress_message,
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            font=('Segoe UI', 9),
+            anchor=W,
+            padx=20,
+            pady=8
+        )
+        self.status_bar.grid(row=1, column=0, sticky=E+W)
 
-        # Horizontal Scrollbar
-        self.sequence_hscrollbar = Scrollbar(self.master, orient="horizontal")
-        self.sequence_hscrollbar.grid(
-            row=2, column=4, columnspan=3, sticky=N+E+W)
-        self.sequence_treeview.configure(
-            xscrollcommand=self.sequence_hscrollbar.set)
-        self.sequence_hscrollbar.config(command=self.sequence_treeview.xview)
+        self.last_clicked = None
+        
+        # Store original sequence items for search
+        self.sequence_items = []
+        
+        # Don't start in fullscreen by default for better usability
+        # self.master.attributes("-fullscreen", True)
+        
+        # Set a reasonable default window size
+        self.master.geometry("1400x900")
+        self.master.minsize(1200, 700)
+
+        # Allow toggling fullscreen mode with F11
+        self.master.bind("<F11>", self.toggle_fullscreen)
+        
+        # Bind treeview selection
+        self.sequence_treeview.bind("<<TreeviewSelect>>", self.listbox_item_selected)
 
     def export_to_csv(self):
         # Ask the user where to save the CSV file
@@ -417,12 +758,143 @@ class Main:
         return hash_obj.hexdigest()
 
     def show_file_info(self):
-        # Create a popup to show file info
-        file_info_window = Toplevel(self.master)
-        file_info_window.title("File Info")
-        Label(file_info_window, text=f"File: {self.current_file}").pack()
-        Label(file_info_window, text=f"Size: {os.path.getsize(self.current_file)} bytes").pack()
-        Label(file_info_window, text=f"Hash: {self.generate_file_hash()}").pack()
+        """Show file information in a modal overlay within the main window."""
+        if not hasattr(self, 'current_file') or not self.current_file:
+            self.update_status("No file loaded")
+            return
+            
+        # Create overlay frame that covers the entire window
+        self.overlay = Frame(self.master, bg='#00000080')  # Semi-transparent
+        self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        
+        # Create modal card in the center
+        modal = Frame(
+            self.overlay,
+            bg=ModernTheme.BG_SECONDARY,
+            highlightthickness=1,
+            highlightbackground=ModernTheme.BORDER,
+            padx=30,
+            pady=25
+        )
+        modal.place(relx=0.5, rely=0.5, anchor='center')
+        
+        # Header with title and close button
+        header_frame = Frame(modal, bg=ModernTheme.BG_SECONDARY)
+        header_frame.pack(fill=X, pady=(0, 20))
+        
+        title = Label(
+            header_frame,
+            text="File Information",
+            font=('Segoe UI', 14, 'bold'),
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.TEXT_PRIMARY
+        )
+        title.pack(side=LEFT)
+        
+        close_btn = ttk.Button(
+            header_frame,
+            text="✕",
+            command=self.close_file_info_modal,
+            style="Secondary.TButton",
+            width=3
+        )
+        close_btn.pack(side=RIGHT)
+        
+        # File info content
+        info_frame = Frame(modal, bg=ModernTheme.BG_SECONDARY)
+        info_frame.pack(fill=X)
+        
+        # File name
+        self._add_info_row(info_frame, "File Name:", os.path.basename(self.current_file), 0)
+        
+        # Full path
+        self._add_info_row(info_frame, "Full Path:", self.current_file, 1)
+        
+        # File size
+        file_size = os.path.getsize(self.current_file)
+        size_str = self._format_file_size(file_size)
+        self._add_info_row(info_frame, "Size:", f"{size_str} ({file_size:,} bytes)", 2)
+        
+        # SHA-256 Hash (show loading initially, then update)
+        hash_label = Label(
+            info_frame,
+            text="SHA-256:",
+            font=('Segoe UI', 10, 'bold'),
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            anchor=W
+        )
+        hash_label.grid(row=3, column=0, sticky=W, pady=5)
+        
+        self.hash_value_label = Label(
+            info_frame,
+            text="Calculating...",
+            font=('Consolas', 9),
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.TEXT_PRIMARY,
+            anchor=W,
+            wraplength=350
+        )
+        self.hash_value_label.grid(row=3, column=1, sticky=W, pady=5, padx=(10, 0))
+        
+        # Calculate hash in background
+        threading.Thread(target=self._update_hash_display, daemon=True).start()
+        
+        # Parsed fields count
+        if hasattr(self, 'total_nodes'):
+            self._add_info_row(info_frame, "Parsed Fields:", str(self.total_nodes), 4)
+        
+        # Bind Escape key to close modal
+        self.master.bind('<Escape>', lambda e: self.close_file_info_modal())
+        
+        # Click outside modal to close
+        self.overlay.bind('<Button-1>', lambda e: self.close_file_info_modal() if e.widget == self.overlay else None)
+    
+    def _add_info_row(self, parent, label_text, value_text, row):
+        """Helper to add an info row to the modal."""
+        label = Label(
+            parent,
+            text=label_text,
+            font=('Segoe UI', 10, 'bold'),
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            anchor=W
+        )
+        label.grid(row=row, column=0, sticky=W, pady=5)
+        
+        value = Label(
+            parent,
+            text=value_text,
+            font=('Segoe UI', 10),
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.TEXT_PRIMARY,
+            anchor=W,
+            wraplength=350
+        )
+        value.grid(row=row, column=1, sticky=W, pady=5, padx=(10, 0))
+    
+    def _format_file_size(self, size_bytes):
+        """Format file size to human readable format."""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} PB"
+    
+    def _update_hash_display(self):
+        """Update the hash display after calculation."""
+        try:
+            hash_value = self.generate_file_hash()
+            self.master.after(0, lambda: self.hash_value_label.config(text=hash_value))
+        except Exception as e:
+            self.master.after(0, lambda: self.hash_value_label.config(text=f"Error: {e}"))
+    
+    def close_file_info_modal(self):
+        """Close the file info modal overlay."""
+        if hasattr(self, 'overlay') and self.overlay:
+            self.master.unbind('<Escape>')
+            self.overlay.destroy()
+            self.overlay = None
 
 
     def open_file(self):
@@ -468,6 +940,8 @@ class Main:
                 self.total_nodes = self.count_nodes(self.root)
                 self.processed_nodes = 0
                 self.show_parsed_data(self.root)
+                # Write parsed content to log file
+                self.write_parse_log(filename, self.root)
             if self.stop_parsing:
                 self.update_status(f"Parsing of {filename} stopped.")
             else:
@@ -492,6 +966,83 @@ class Main:
             count += self.count_nodes(child)
         return count
 
+    def write_parse_log(self, filename, root):
+        """
+        Write parsed content to a log file in table format.
+        
+        Format: Index | From:To | Field Name | Description
+        
+        :param filename: The original file that was parsed
+        :param root: The root node of the parsed data
+        """
+        # Create logs directory if it doesn't exist
+        logs_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logs')
+        os.makedirs(logs_dir, exist_ok=True)
+        
+        # Generate log filename based on parsed file and timestamp
+        base_name = os.path.basename(filename)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_filename = os.path.join(logs_dir, f'{base_name}_{timestamp}.log')
+        
+        try:
+            with open(log_filename, 'w', encoding='utf-8') as log_file:
+                # Write header
+                log_file.write(f"{'='*80}\n")
+                log_file.write(f"HexMarksTheSpot - Parse Log\n")
+                log_file.write(f"{'='*80}\n")
+                log_file.write(f"File: {filename}\n")
+                log_file.write(f"Parsed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                log_file.write(f"{'='*80}\n\n")
+                
+                # Write table header
+                log_file.write(f"{'Index':<8} | {'From:To':<20} | {'Field Name':<30} | {'Value'}\n")
+                log_file.write(f"{'-'*8}-+-{'-'*20}-+-{'-'*30}-+-{'-'*40}\n")
+                
+                # Write parsed fields
+                self._write_node_to_log(log_file, root, index=[0], offset=[0])
+                
+                log_file.write(f"\n{'='*80}\n")
+                log_file.write(f"End of parse log\n")
+                
+            logging.info(f"Parse log written to: {log_filename}")
+        except Exception as e:
+            logging.error(f"Failed to write parse log: {e}")
+
+    def _write_node_to_log(self, log_file, node, index, offset, depth=0):
+        """
+        Recursively write node data to log file.
+        
+        :param log_file: Open file handle for writing
+        :param node: Current node to process
+        :param index: Mutable list containing current index (for reference passing)
+        :param offset: Mutable list containing current byte offset
+        :param depth: Current depth for indentation
+        """
+        for _, child in node.children:
+            start_offset = offset[0]
+            end_offset = start_offset + len(child.data) - 1 if child.data else start_offset
+            
+            # Format the range
+            offset_range = f"0x{start_offset:04X}:0x{end_offset:04X}"
+            
+            # Get description (clean HTML if present)
+            description = child.table_value or ''
+            # Truncate long descriptions
+            if len(description) > 50:
+                description = description[:47] + '...'
+            
+            # Indent nested fields
+            indent = '  ' * depth
+            field_name = f"{indent}{child.name}"
+            
+            log_file.write(f"{index[0]:<8} | {offset_range:<20} | {field_name:<30} | {description}\n")
+            
+            index[0] += 1
+            offset[0] += len(child.data) if child.data else 0
+            
+            # Process children recursively
+            self._write_node_to_log(log_file, child, index, offset, depth + 1)
+
     def update_progress(self, progress):
         """
         Update the progress bar with the given progress value.
@@ -499,7 +1050,10 @@ class Main:
         :param progress: The progress value to be set (0 to 100).
         """
         self.progress_var.set(progress)
-        if progress >= 100:
+        # Show percentage in status message
+        if progress < 100:
+            self.progress_message.set(f"Loading... {progress:.1f}% ({self.processed_nodes}/{self.total_nodes} fields)")
+        else:
             self.progress_bar.grid_forget()  # Hide the progress bar when done
 
     def update_status(self, message):
@@ -547,29 +1101,142 @@ class Main:
     def show_parsed_data(self, root):
         """
         Display the parsed data from the given root node.
+        Collects all data first, then updates GUI on main thread.
 
         :param root: The root node of the parsed data.
         """
         self.sequence_items = []  # Initialize the sequence items list
-        self.text_widget.textWidget.configure(
-            state='normal')  # Temporarily enable the widget
-        self.text_widget.asciiText.configure(
-            state='normal')  # Temporarily enable the widget
-
-        self.text_widget.textWidget.delete('1.0', 'end')
-        self.text_widget.asciiText.delete('1.0', 'end')
-
-        # Mark text mirror
-        self.text_widget.textWidget.bind(
-            "<ButtonRelease-1>", lambda e: self.mirror_highlight(self.text_widget.textWidget))
-        self.text_widget.asciiText.bind(
-            "<ButtonRelease-1>", lambda e: self.mirror_highlight(self.text_widget.asciiText))
-        self.text_widget.textWidget.bind(
-            "<Button-1>", lambda e: self.clear_mirror_highlight())
-        self.text_widget.asciiText.bind(
-            "<Button-1>", lambda e: self.clear_mirror_highlight())
-
-        self.iterNode(root)
+        self.byte_counter = 0  # Global byte counter for hex display
+        
+        # Collect all node data first (can be done in background thread)
+        self.collected_nodes = []
+        self._collect_nodes(root)
+        
+        # Schedule GUI updates on main thread in batches
+        self.master.after(0, self._update_gui_batch, 0)
+    
+    def _collect_nodes(self, node):
+        """
+        Recursively collect all node data for display.
+        This can safely run in a background thread.
+        """
+        if self.stop_parsing:
+            return
+        for idx, (key, child) in enumerate(node.children):
+            if self.stop_parsing:
+                return
+            
+            offset = self.byte_counter
+            tag = f"color{offset}_{idx}"
+            table_val = child.table_value or ''
+            
+            # Store all data needed for GUI update
+            self.collected_nodes.append({
+                'tag': tag,
+                'color': child.color,
+                'name': child.name,
+                'data': child.data,
+                'info': child.info,
+                'table_val': table_val,
+                'offset': offset,
+                'child': child
+            })
+            
+            self.byte_counter += len(child.data) if child.data else 0
+            self._collect_nodes(child)
+    
+    def _update_gui_batch(self, start_idx):
+        """
+        Update GUI in batches to prevent freezing.
+        Runs on main thread via after().
+        """
+        if self.stop_parsing:
+            return
+            
+        BATCH_SIZE = 50  # Process 50 nodes at a time
+        end_idx = min(start_idx + BATCH_SIZE, len(self.collected_nodes))
+        
+        # First batch: initialize widgets
+        if start_idx == 0:
+            self.text_widget.textWidget.configure(state='normal')
+            self.text_widget.asciiText.configure(state='normal')
+            self.text_widget.textWidget.delete('1.0', 'end')
+            self.text_widget.asciiText.delete('1.0', 'end')
+            
+            # Mark text mirror
+            self.text_widget.textWidget.bind(
+                "<ButtonRelease-1>", lambda e: self.mirror_highlight(self.text_widget.textWidget))
+            self.text_widget.asciiText.bind(
+                "<ButtonRelease-1>", lambda e: self.mirror_highlight(self.text_widget.asciiText))
+            self.text_widget.textWidget.bind(
+                "<Button-1>", lambda e: self.clear_mirror_highlight())
+            self.text_widget.asciiText.bind(
+                "<Button-1>", lambda e: self.clear_mirror_highlight())
+            
+            self.display_byte_counter = 0
+        
+        # Process batch
+        for i in range(start_idx, end_idx):
+            node_data = self.collected_nodes[i]
+            self._display_node(node_data)
+            self.processed_nodes += 1
+        
+        # Update progress
+        progress = (end_idx / len(self.collected_nodes)) * 100 if self.collected_nodes else 100
+        self.update_progress(progress)
+        
+        # Schedule next batch or finalize
+        if end_idx < len(self.collected_nodes):
+            self.master.after(1, self._update_gui_batch, end_idx)
+        else:
+            # Finalize
+            self.text_widget.textWidget.configure(state='disabled')
+            self.text_widget.asciiText.configure(state='disabled')
+    
+    def _display_node(self, node_data):
+        """
+        Display a single node's data in the GUI.
+        Must run on main thread.
+        """
+        tag = node_data['tag']
+        color = node_data['color']
+        offset = node_data['offset']
+        child = node_data['child']
+        table_val = node_data['table_val']
+        
+        # Insert into treeview
+        item_id = self.sequence_treeview.insert('', 'end', values=(
+            offset, node_data['name'], table_val), tags=(tag,))
+        
+        self.sequence_treeview.tag_configure(tag, background=color)
+        self.sequence_items.append(((offset, node_data['name'], table_val), (tag,)))
+        
+        # Configure tags for text widgets
+        self.text_widget.textWidget.tag_configure(tag, background=color)
+        self.text_widget.asciiText.tag_configure(tag, background=color)
+        
+        # Insert hex and ASCII data
+        if node_data['data']:
+            for byte in node_data['data']:
+                text = f'{byte:02x} '
+                self.text_widget.textWidget.insert('end', text, (tag,))
+                
+                if 32 <= byte < 127:
+                    ascii_char = chr(byte)
+                else:
+                    ascii_char = '.'
+                self.text_widget.asciiText.insert('end', ascii_char, (tag,))
+                
+                self.display_byte_counter += 1
+                if self.display_byte_counter % 16 == 0:
+                    self.text_widget.textWidget.insert('end', '\n')
+                    self.text_widget.asciiText.insert('end', '\n')
+        
+        # Bind click handlers
+        self.text_widget.textWidget.tag_bind(tag, "<Button-1>",
+            lambda event, currentTag=tag, c=child: self.handle_click(event, currentTag, c))
+        self.text_widget.asciiText.tag_bind(tag, "<Button-1>",
+            lambda event, currentTag=tag, c=child: self.handle_click(event, currentTag, c))
 
     def mirror_highlight(self, source_widget):
         try:
@@ -611,82 +1278,6 @@ class Main:
         for widget in [self.text_widget.textWidget, self.text_widget.asciiText]:
             widget.tag_remove("mirror_highlight", "1.0", END)
 
-    def iterNode(self, node):
-        """
-        Iterate through the node tree, displaying the content and handling the user interactions.
-
-        :param node: The current node in the iteration.
-        """
-        if self.stop_parsing:
-            return
-        byte_counter = 0
-        for idx, (key, child) in enumerate(node.children):
-            if self.stop_parsing:
-                return
-            tag = f"color{idx}"  # Create a unique tag for each item
-            color = child.color  # Use the color from the Node
-            table_val = child.table_value
-            offset = byte_counter
-
-            if table_val:
-                text_from_popup_text = table_val
-            else:
-                text_from_popup_text = ''
-
-            item_id = self.sequence_treeview.insert('', 'end', values=(
-                offset, child.name, text_from_popup_text), tags=(tag,))
-            
-            # Update the Value column if needed
-            if text_from_popup_text:
-                self.sequence_treeview.item(
-                    item_id, values=(offset, child.name, text_from_popup_text))
-
-            self.sequence_treeview.tag_configure(tag, background=child.color)
-
-
-            # Search in treeview and place it after search
-            self.sequence_items.append(((offset, child.name, text_from_popup_text), (tag,)))
-
-
-            self.text_widget.textWidget.tag_configure(tag, background=color)
-            self.text_widget.asciiText.tag_configure(tag, background=color)
-            self.text_widget.textWidget.configure(
-                state='normal')  # Temporarily enable the widget
-            self.text_widget.asciiText.configure(
-                state='normal')  # Temporarily enable the widget
-            for byte in child.data:
-                text = f'{byte:02x} '
-                self.text_widget.textWidget.insert('end', text, (tag,))
-                # Insert ASCII representation into the asciiText widget
-                if 32 <= byte < 127:
-                    ascii_char = chr(byte)
-                else:
-                    ascii_char = '.'
-                self.text_widget.asciiText.insert('end', ascii_char, (tag,))
-                byte_counter += 1
-                if byte_counter % 16 == 0:
-                    self.text_widget.textWidget.insert('end', '\n')
-                    self.text_widget.asciiText.insert('end', '\n')
-
-            self.text_widget.textWidget.configure(
-                state='disabled')  # Make the widget read-only
-            self.text_widget.asciiText.configure(
-                state='disabled')  # Make the widget read-only
-
-            self.text_widget.textWidget.tag_bind(tag, "<Button-1>",
-                                                 lambda event, currentTag=tag, child=child: self.handle_click(event, currentTag, child))
-            self.text_widget.asciiText.tag_bind(tag, "<Button-1>",
-                                                lambda event, currentTag=tag, child=child: self.handle_click(event, currentTag, child))
-            # Bind the selection event
-            self.sequence_treeview.bind(
-                "<<TreeviewSelect>>", self.listbox_item_selected)
-
-            self.iterNode(child)
-
-            self.processed_nodes += 1
-            progress = (self.processed_nodes / self.total_nodes) * 100
-            self.master.after(0, self.update_progress, progress)
-
     def popItUp(self, text, currTag):
         """
         Display the given text in a popup with the specified tag.
@@ -723,12 +1314,20 @@ class Main:
             text=f"File: {(self.current_file)}\t\tOffset Decimal: {byte_offset} \tOffset Hexadecimal: 0x{byte_offset:X}")
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the GUI application."""
+    # Discover all available parsers on startup
+    discover_all_parsers()
+    
     root = Tk()
     app = Main(root)
-    root.title("Poppetypop")
-    root.configure(bg='#F0F0F0')  # Change to a light background color
+    root.title("HexMarksTheSpot - Hex File Analysis")
+    root.configure(bg='#F0F0F0')
     root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
 
 # TODO: Consider adding menu: File
 # TODO: Add information showing related info for the current file chosen as a questionmark button in a corner to represent the file in its birdseye view.

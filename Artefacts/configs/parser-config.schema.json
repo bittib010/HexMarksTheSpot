@@ -1,0 +1,140 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "HexMarksTheSpot Parser Configuration",
+    "description": "JSON schema for defining file format parsers in HexMarksTheSpot",
+    "type": "object",
+    "required": ["name", "fields"],
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "Name of the file format"
+        },
+        "description": {
+            "type": "string",
+            "description": "Description of the file format"
+        },
+        "magic_bytes": {
+            "type": "string",
+            "description": "Hex string of magic bytes (e.g., '504B0304' for ZIP)",
+            "pattern": "^[0-9A-Fa-f]+$"
+        },
+        "magic_offset": {
+            "type": "integer",
+            "description": "Offset where magic bytes appear",
+            "default": 0,
+            "minimum": 0
+        },
+        "endianness": {
+            "type": "string",
+            "description": "Default byte order for multi-byte values",
+            "enum": ["little", "big"],
+            "default": "little"
+        },
+        "version": {
+            "type": "string",
+            "description": "Parser version"
+        },
+        "author": {
+            "type": "string",
+            "description": "Parser author"
+        },
+        "references": {
+            "type": "array",
+            "description": "URLs to format documentation",
+            "items": {
+                "type": "string",
+                "format": "uri"
+            }
+        },
+        "fields": {
+            "type": "array",
+            "description": "Array of field definitions",
+            "items": {
+                "$ref": "#/definitions/field"
+            }
+        }
+    },
+    "definitions": {
+        "field": {
+            "type": "object",
+            "required": ["name", "size"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Field name (used as identifier)"
+                },
+                "size": {
+                    "oneOf": [
+                        {
+                            "type": "integer",
+                            "minimum": 0
+                        },
+                        {
+                            "type": "string",
+                            "description": "Dynamic size reference (e.g., '$data_length')"
+                        }
+                    ],
+                    "description": "Size in bytes or reference to another field"
+                },
+                "type": {
+                    "type": "string",
+                    "description": "Field type",
+                    "enum": [
+                        "bytes",
+                        "uint",
+                        "int",
+                        "string",
+                        "utf16",
+                        "utf16le",
+                        "utf16be",
+                        "guid",
+                        "filetime",
+                        "unix_time",
+                        "unix_time_64",
+                        "bitfield",
+                        "skip",
+                        "remaining"
+                    ],
+                    "default": "bytes"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Human-readable description of the field"
+                },
+                "endianness": {
+                    "type": "string",
+                    "description": "Override endianness for this field",
+                    "enum": ["little", "big"]
+                },
+                "color": {
+                    "type": "string",
+                    "description": "Hex color code for highlighting (e.g., '#FF0000')",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                },
+                "forensic_value": {
+                    "type": "boolean",
+                    "description": "Mark as forensically important (highlighted in red)",
+                    "default": false
+                },
+                "value_map": {
+                    "type": "object",
+                    "description": "Map integer values to descriptions",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "bit_flags": {
+                    "type": "object",
+                    "description": "For bitfield type - map bit positions to names",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "condition": {
+                    "type": "string",
+                    "description": "Conditional expression (e.g., '$flags & 0x01')"
+                }
+            }
+        }
+    }
+}

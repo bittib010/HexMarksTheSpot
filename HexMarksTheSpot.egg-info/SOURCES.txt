@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+Artefacts/JPEGFileParser.py
+Artefacts/LNKFileParser.py
+Artefacts/MFTFileParser.py
+Artefacts/SQLiteFileParser.py
+HexMarksTheSpot.egg-info/PKG-INFO
+HexMarksTheSpot.egg-info/SOURCES.txt
+HexMarksTheSpot.egg-info/dependency_links.txt
+HexMarksTheSpot.egg-info/entry_points.txt
+HexMarksTheSpot.egg-info/requires.txt
+HexMarksTheSpot.egg-info/top_level.txt

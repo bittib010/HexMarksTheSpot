@@ -1,0 +1,108 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "JPEG",
+    "description": "JPEG/JFIF Image File Format",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "FFD8",
+    "magic_offset": 0,
+    "endianness": "big",
+    "references": [
+        "https://www.w3.org/Graphics/JPEG/jfif3.pdf",
+        "https://www.w3.org/Graphics/JPEG/itu-t81.pdf",
+        "https://en.wikipedia.org/wiki/JPEG_File_Interchange_Format"
+    ],
+    "fields": [
+        {
+            "name": "StartOfImage",
+            "type": "struct",
+            "description": "Start of Image marker (SOI)",
+            "fields": [
+                {
+                    "name": "SOI_Marker",
+                    "size": 2,
+                    "type": "bytes",
+                    "description": "Start of Image marker - always FF D8"
+                }
+            ]
+        },
+        {
+            "name": "APP0_Segment",
+            "type": "struct",
+            "description": "Application Marker Segment 0 (JFIF)",
+            "fields": [
+                {
+                    "name": "APP0_Marker",
+                    "size": 2,
+                    "type": "bytes",
+                    "description": "APP0 marker - should be FF E0"
+                },
+                {
+                    "name": "APP0_Length",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Length of APP0 segment (including this field)"
+                },
+                {
+                    "name": "Identifier",
+                    "size": 5,
+                    "type": "string",
+                    "description": "JFIF identifier - 'JFIF' with null terminator. JFIF = JPEG File Interchange Format"
+                },
+                {
+                    "name": "Version_Major",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Major version number"
+                },
+                {
+                    "name": "Version_Minor",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Minor version number (e.g., 01 02 = version 1.02)"
+                },
+                {
+                    "name": "DensityUnits",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Units for pixel density",
+                    "value_map": {
+                        "0": "No units (aspect ratio only)",
+                        "1": "Pixels per inch",
+                        "2": "Pixels per centimeter"
+                    }
+                },
+                {
+                    "name": "Xdensity",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Horizontal pixel density (must not be zero)"
+                },
+                {
+                    "name": "Ydensity",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Vertical pixel density (must not be zero)"
+                },
+                {
+                    "name": "Xthumbnail",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Thumbnail horizontal pixel count (may be zero)"
+                },
+                {
+                    "name": "Ythumbnail",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Thumbnail vertical pixel count (may be zero)"
+                }
+            ]
+        },
+        {
+            "name": "RemainingData",
+            "size": 0,
+            "type": "remaining",
+            "description": "Remaining JPEG data (compressed image data, other segments, and End of Image marker)"
+        }
+    ]
+}

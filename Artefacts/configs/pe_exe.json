@@ -1,0 +1,131 @@
+{
+    "name": "WindowsEXE",
+    "description": "Windows PE (Portable Executable) file header - EXE/DLL files",
+    "version": "1.0",
+    "author": "HexMarksTheSpot",
+    "magic_bytes": "4D5A",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://docs.microsoft.com/en-us/windows/win32/debug/pe-format",
+        "https://www.forensicswiki.org/wiki/Portable_Executable_(PE)"
+    ],
+    "fields": [
+        {
+            "name": "dos_signature",
+            "size": 2,
+            "type": "string",
+            "description": "DOS MZ signature ('MZ' = 0x4D5A). Mark Zbikowski's initials.",
+            "forensic_value": true
+        },
+        {
+            "name": "e_cblp",
+            "size": 2,
+            "type": "uint",
+            "description": "Bytes on last page of file"
+        },
+        {
+            "name": "e_cp",
+            "size": 2,
+            "type": "uint",
+            "description": "Pages in file"
+        },
+        {
+            "name": "e_crlc",
+            "size": 2,
+            "type": "uint",
+            "description": "Relocations"
+        },
+        {
+            "name": "e_cparhdr",
+            "size": 2,
+            "type": "uint",
+            "description": "Size of header in paragraphs"
+        },
+        {
+            "name": "e_minalloc",
+            "size": 2,
+            "type": "uint",
+            "description": "Minimum extra paragraphs needed"
+        },
+        {
+            "name": "e_maxalloc",
+            "size": 2,
+            "type": "uint",
+            "description": "Maximum extra paragraphs needed"
+        },
+        {
+            "name": "e_ss",
+            "size": 2,
+            "type": "uint",
+            "description": "Initial (relative) SS value"
+        },
+        {
+            "name": "e_sp",
+            "size": 2,
+            "type": "uint",
+            "description": "Initial SP value"
+        },
+        {
+            "name": "e_csum",
+            "size": 2,
+            "type": "uint",
+            "description": "Checksum"
+        },
+        {
+            "name": "e_ip",
+            "size": 2,
+            "type": "uint",
+            "description": "Initial IP value"
+        },
+        {
+            "name": "e_cs",
+            "size": 2,
+            "type": "uint",
+            "description": "Initial (relative) CS value"
+        },
+        {
+            "name": "e_lfarlc",
+            "size": 2,
+            "type": "uint",
+            "description": "File address of relocation table"
+        },
+        {
+            "name": "e_ovno",
+            "size": 2,
+            "type": "uint",
+            "description": "Overlay number"
+        },
+        {
+            "name": "e_res",
+            "size": 8,
+            "type": "bytes",
+            "description": "Reserved words (4 words)"
+        },
+        {
+            "name": "e_oemid",
+            "size": 2,
+            "type": "uint",
+            "description": "OEM identifier"
+        },
+        {
+            "name": "e_oeminfo",
+            "size": 2,
+            "type": "uint",
+            "description": "OEM information"
+        },
+        {
+            "name": "e_res2",
+            "size": 20,
+            "type": "bytes",
+            "description": "Reserved words (10 words)"
+        },
+        {
+            "name": "e_lfanew",
+            "size": 4,
+            "type": "uint",
+            "description": "File address of PE header. This offset points to the PE signature.",
+            "forensic_value": true
+        }
+    ]
+}

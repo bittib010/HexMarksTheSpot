@@ -1,0 +1,112 @@
+{
+    "name": "PNG",
+    "description": "Portable Network Graphics image file format",
+    "version": "1.0",
+    "author": "HexMarksTheSpot",
+    "magic_bytes": "89504E470D0A1A0A",
+    "magic_offset": 0,
+    "endianness": "big",
+    "references": [
+        "https://www.w3.org/TR/PNG/",
+        "http://www.libpng.org/pub/png/spec/1.2/PNG-Structure.html"
+    ],
+    "fields": [
+        {
+            "name": "signature",
+            "size": 8,
+            "type": "bytes",
+            "description": "PNG signature. The first 8 bytes always contain: 89 50 4E 47 0D 0A 1A 0A. This identifies the file as PNG and detects common file transfer problems.",
+            "forensic_value": true
+        },
+        {
+            "name": "ihdr_length",
+            "size": 4,
+            "type": "uint",
+            "description": "Length of the IHDR chunk data (always 13 for IHDR)"
+        },
+        {
+            "name": "ihdr_type",
+            "size": 4,
+            "type": "string",
+            "description": "Chunk type - should be 'IHDR' for the first chunk"
+        },
+        {
+            "name": "width",
+            "size": 4,
+            "type": "uint",
+            "description": "Image width in pixels"
+        },
+        {
+            "name": "height",
+            "size": 4,
+            "type": "uint",
+            "description": "Image height in pixels"
+        },
+        {
+            "name": "bit_depth",
+            "size": 1,
+            "type": "uint",
+            "description": "Bit depth - number of bits per sample or per palette index. Valid values: 1, 2, 4, 8, 16",
+            "value_map": {
+                "1": "1-bit (2 colors)",
+                "2": "2-bit (4 colors)",
+                "4": "4-bit (16 colors)",
+                "8": "8-bit (256 colors)",
+                "16": "16-bit (65536 colors)"
+            }
+        },
+        {
+            "name": "color_type",
+            "size": 1,
+            "type": "uint",
+            "description": "Color type describes how to interpret image data",
+            "value_map": {
+                "0": "Grayscale",
+                "2": "RGB (Truecolor)",
+                "3": "Indexed-color (Palette)",
+                "4": "Grayscale with alpha",
+                "6": "RGBA (Truecolor with alpha)"
+            }
+        },
+        {
+            "name": "compression_method",
+            "size": 1,
+            "type": "uint",
+            "description": "Compression method. Only method 0 (deflate/inflate) is defined in the standard",
+            "value_map": {
+                "0": "Deflate/Inflate compression"
+            }
+        },
+        {
+            "name": "filter_method",
+            "size": 1,
+            "type": "uint",
+            "description": "Filter method. Only method 0 (adaptive filtering) is defined",
+            "value_map": {
+                "0": "Adaptive filtering with 5 basic filter types"
+            }
+        },
+        {
+            "name": "interlace_method",
+            "size": 1,
+            "type": "uint",
+            "description": "Interlace method for progressive display",
+            "value_map": {
+                "0": "No interlace",
+                "1": "Adam7 interlace"
+            }
+        },
+        {
+            "name": "ihdr_crc",
+            "size": 4,
+            "type": "bytes",
+            "description": "CRC32 checksum of chunk type and chunk data"
+        },
+        {
+            "name": "remaining_chunks",
+            "size": 0,
+            "type": "remaining",
+            "description": "Remaining PNG chunks (IDAT, IEND, metadata chunks, etc.)"
+        }
+    ]
+}

@@ -1,0 +1,105 @@
+{
+    "name": "ZIP",
+    "description": "ZIP archive file format - Local file header",
+    "version": "1.0",
+    "author": "HexMarksTheSpot",
+    "magic_bytes": "504B0304",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://pkware.cachefly.net/webdocs/APPNOTE/APPNOTE-6.3.9.TXT",
+        "https://en.wikipedia.org/wiki/ZIP_(file_format)"
+    ],
+    "fields": [
+        {
+            "name": "local_file_header_signature",
+            "size": 4,
+            "type": "bytes",
+            "description": "Local file header signature (0x04034b50 = 'PK' 03 04)",
+            "forensic_value": true
+        },
+        {
+            "name": "version_needed",
+            "size": 2,
+            "type": "uint",
+            "description": "Version needed to extract. Lower byte = version, upper byte = host OS"
+        },
+        {
+            "name": "general_purpose_flag",
+            "size": 2,
+            "type": "bitfield",
+            "description": "General purpose bit flag",
+            "bit_flags": {
+                "0": "Encrypted",
+                "1": "Compression option 1",
+                "2": "Compression option 2", 
+                "3": "Data descriptor present",
+                "4": "Enhanced deflating",
+                "5": "Compressed patched data",
+                "6": "Strong encryption",
+                "11": "Language encoding (UTF-8)",
+                "13": "Mask header values"
+            }
+        },
+        {
+            "name": "compression_method",
+            "size": 2,
+            "type": "uint",
+            "description": "Compression method used",
+            "value_map": {
+                "0": "No compression (stored)",
+                "1": "Shrunk",
+                "6": "Imploded",
+                "8": "Deflated",
+                "9": "Enhanced Deflated",
+                "12": "BZIP2",
+                "14": "LZMA",
+                "98": "PPMd"
+            }
+        },
+        {
+            "name": "last_mod_time",
+            "size": 2,
+            "type": "uint",
+            "description": "Last modification time in DOS format (HHHHHMMMMMMSSSSS - 5 bits hour, 6 bits minute, 5 bits second/2)",
+            "forensic_value": true
+        },
+        {
+            "name": "last_mod_date",
+            "size": 2,
+            "type": "uint",
+            "description": "Last modification date in DOS format (YYYYYYYMMMMDDDDD - 7 bits year from 1980, 4 bits month, 5 bits day)",
+            "forensic_value": true
+        },
+        {
+            "name": "crc32",
+            "size": 4,
+            "type": "bytes",
+            "description": "CRC-32 checksum of uncompressed data"
+        },
+        {
+            "name": "compressed_size",
+            "size": 4,
+            "type": "uint",
+            "description": "Compressed size in bytes"
+        },
+        {
+            "name": "uncompressed_size",
+            "size": 4,
+            "type": "uint",
+            "description": "Uncompressed size in bytes"
+        },
+        {
+            "name": "filename_length",
+            "size": 2,
+            "type": "uint",
+            "description": "Length of the filename field"
+        },
+        {
+            "name": "extra_field_length",
+            "size": 2,
+            "type": "uint",
+            "description": "Length of the extra field"
+        }
+    ]
+}

@@ -1,0 +1,66 @@
+{
+    "name": "WindowsPrefetch",
+    "description": "Windows Prefetch file (.pf) - Evidence of program execution",
+    "version": "1.0",
+    "author": "HexMarksTheSpot",
+    "magic_bytes": "11000000534341",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://github.com/libyal/libscca/blob/main/documentation/Windows%20Prefetch%20File%20(PF)%20format.asciidoc",
+        "https://www.forensicswiki.org/wiki/Prefetch"
+    ],
+    "fields": [
+        {
+            "name": "format_version",
+            "size": 4,
+            "type": "uint",
+            "description": "Prefetch format version. Indicates Windows version.",
+            "forensic_value": true,
+            "value_map": {
+                "17": "Windows XP/2003",
+                "23": "Windows Vista/7",
+                "26": "Windows 8/8.1",
+                "30": "Windows 10 (v1607+)"
+            }
+        },
+        {
+            "name": "signature",
+            "size": 4,
+            "type": "string",
+            "description": "Signature - should be 'SCCA' (0x53, 0x43, 0x43, 0x41)"
+        },
+        {
+            "name": "unknown1",
+            "size": 4,
+            "type": "uint",
+            "description": "Unknown field"
+        },
+        {
+            "name": "file_size",
+            "size": 4,
+            "type": "uint",
+            "description": "Size of the prefetch file"
+        },
+        {
+            "name": "executable_name",
+            "size": 60,
+            "type": "utf16le",
+            "description": "Name of the executable (up to 29 characters + null terminator)",
+            "forensic_value": true
+        },
+        {
+            "name": "prefetch_hash",
+            "size": 4,
+            "type": "bytes",
+            "description": "Prefetch hash - hash of the executable path",
+            "forensic_value": true
+        },
+        {
+            "name": "unknown2",
+            "size": 4,
+            "type": "bytes",
+            "description": "Unknown/Flags field"
+        }
+    ]
+}

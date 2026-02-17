@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "HexMarksTheSpot"
+version = "2.0.0"
+description = "Advanced Hex File Analysis and Annotation Tool for Digital Forensics"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "HexMarksTheSpot Contributors"}
+]
+keywords = ["forensics", "hex", "parser", "analysis", "artifacts", "digital-forensics"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Filesystems",
+]
+dependencies = [
+    "tkhtmlview>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "pyinstaller>=6.0.0",
+]
+
+[project.scripts]
+hexmarks = "gui:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/HexMarksTheSpot"
+Documentation = "https://github.com/yourusername/HexMarksTheSpot#readme"
+Repository = "https://github.com/yourusername/HexMarksTheSpot"
+Issues = "https://github.com/yourusername/HexMarksTheSpot/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311', 'py312']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

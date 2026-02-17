@@ -1,0 +1,189 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "SQLite",
+    "description": "SQLite Database File Format",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "53514C69746520666F726D6174203300",
+    "magic_offset": 0,
+    "endianness": "big",
+    "references": [
+        "https://www.sqlite.org/fileformat.html",
+        "https://www.sciencedirect.com/science/article/pii/S1742287618300471"
+    ],
+    "fields": [
+        {
+            "name": "DatabaseHeader",
+            "type": "struct",
+            "description": "SQLite Database Header (first 100 bytes)",
+            "fields": [
+                {
+                    "name": "HeaderString",
+                    "size": 16,
+                    "type": "string",
+                    "description": "SQLite format signature: 'SQLite format 3\\0'"
+                },
+                {
+                    "name": "PageSize",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Database page size in bytes (power of 2, 512-65536). 1 means 65536."
+                },
+                {
+                    "name": "WriteVersion",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "File format write version",
+                    "value_map": {
+                        "1": "Legacy (rollback journal)",
+                        "2": "WAL mode"
+                    }
+                },
+                {
+                    "name": "ReadVersion",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "File format read version",
+                    "value_map": {
+                        "1": "Legacy (rollback journal)",
+                        "2": "WAL mode"
+                    }
+                },
+                {
+                    "name": "ReservedSpace",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Bytes of unused space at end of each page"
+                },
+                {
+                    "name": "MaxPayloadFraction",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Maximum embedded payload fraction (must be 64)"
+                },
+                {
+                    "name": "MinPayloadFraction",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Minimum embedded payload fraction (must be 32)"
+                },
+                {
+                    "name": "LeafPayloadFraction",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Leaf payload fraction (must be 32)"
+                },
+                {
+                    "name": "FileChangeCounter",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "File change counter - incremented on each transaction",
+                    "forensic_value": true
+                },
+                {
+                    "name": "DatabaseSizePages",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Size of database file in pages"
+                },
+                {
+                    "name": "FirstFreelistPage",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Page number of first freelist trunk page",
+                    "forensic_value": true
+                },
+                {
+                    "name": "TotalFreelistPages",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Total number of freelist pages",
+                    "forensic_value": true
+                },
+                {
+                    "name": "SchemaCookie",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Schema cookie - incremented when schema changes"
+                },
+                {
+                    "name": "SchemaFormat",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Schema format number",
+                    "value_map": {
+                        "1": "SQLite 3.0.0",
+                        "2": "SQLite 3.1.3",
+                        "3": "SQLite 3.1.4",
+                        "4": "SQLite 3.3.0"
+                    }
+                },
+                {
+                    "name": "DefaultPageCacheSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Suggested cache size in pages"
+                },
+                {
+                    "name": "LargestRootBTree",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Page number of largest root b-tree page (auto-vacuum mode)"
+                },
+                {
+                    "name": "TextEncoding",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Database text encoding",
+                    "value_map": {
+                        "1": "UTF-8",
+                        "2": "UTF-16le",
+                        "3": "UTF-16be"
+                    }
+                },
+                {
+                    "name": "UserVersion",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "User version number (application-defined)"
+                },
+                {
+                    "name": "IncrementalVacuumMode",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Incremental vacuum mode flag (0=false, non-zero=true)"
+                },
+                {
+                    "name": "ApplicationID",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Application ID set by PRAGMA application_id"
+                },
+                {
+                    "name": "Reserved",
+                    "size": 20,
+                    "type": "skip",
+                    "description": "Reserved for expansion (must be zero)"
+                },
+                {
+                    "name": "VersionValidFor",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Version-valid-for number"
+                },
+                {
+                    "name": "SQLiteVersionNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "SQLite version number that wrote the database"
+                }
+            ]
+        },
+        {
+            "name": "RemainingData",
+            "size": 0,
+            "type": "remaining",
+            "description": "Database pages (B-tree pages, freelist pages, overflow pages)"
+        }
+    ]
+}

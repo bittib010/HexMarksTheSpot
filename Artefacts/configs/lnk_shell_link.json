@@ -1,0 +1,341 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "ShellLink",
+    "description": "Windows Shell Link (LNK) file format - demonstrates nested/conditional JSON parsing",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "4C000000",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-shllink",
+        "https://github.com/libyal/liblnk/blob/main/documentation/Windows%20Shortcut%20File%20(LNK)%20format.asciidoc"
+    ],
+    "fields": [
+        {
+            "name": "ShellLinkHeader",
+            "type": "struct",
+            "description": "Required header structure (76 bytes)",
+            "fields": [
+                {
+                    "name": "HeaderSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Always 0x0000004C (76 bytes)"
+                },
+                {
+                    "name": "LinkCLSID",
+                    "size": 16,
+                    "type": "guid",
+                    "description": "Shell Link GUID: 00021401-0000-0000-C000-000000000046"
+                },
+                {
+                    "name": "LinkFlags",
+                    "size": 4,
+                    "type": "bitfield",
+                    "description": "Flags indicating which optional sections are present",
+                    "bit_flags": {
+                        "0": "HasLinkTargetIDList",
+                        "1": "HasLinkInfo",
+                        "2": "HasName",
+                        "3": "HasRelativePath",
+                        "4": "HasWorkingDir",
+                        "5": "HasArguments",
+                        "6": "HasIconLocation",
+                        "7": "IsUnicode",
+                        "8": "ForceNoLinkInfo",
+                        "9": "HasExpString",
+                        "10": "RunInSeparateProcess",
+                        "11": "Unused1",
+                        "12": "HasDarwinID",
+                        "13": "RunAsUser",
+                        "14": "HasExpIcon",
+                        "15": "NoPidlAlias",
+                        "16": "Unused2",
+                        "17": "RunWithShimLayer",
+                        "18": "ForceNoLinkTrack",
+                        "19": "EnableTargetMetadata",
+                        "20": "DisableLinkPathTracking",
+                        "21": "DisableKnownFolderTracking",
+                        "22": "DisableKnownFolderAlias",
+                        "23": "AllowLinkToLink",
+                        "24": "UnaliasOnSave",
+                        "25": "PreferEnvironmentPath",
+                        "26": "KeepLocalIDListForUNCTarget"
+                    },
+                    "forensic_value": true
+                },
+                {
+                    "name": "FileAttributes",
+                    "size": 4,
+                    "type": "bitfield",
+                    "description": "Target file attributes",
+                    "bit_flags": {
+                        "0": "FILE_ATTRIBUTE_READONLY",
+                        "1": "FILE_ATTRIBUTE_HIDDEN",
+                        "2": "FILE_ATTRIBUTE_SYSTEM",
+                        "3": "Reserved1",
+                        "4": "FILE_ATTRIBUTE_DIRECTORY",
+                        "5": "FILE_ATTRIBUTE_ARCHIVE",
+                        "6": "Reserved2",
+                        "7": "FILE_ATTRIBUTE_NORMAL",
+                        "8": "FILE_ATTRIBUTE_TEMPORARY",
+                        "9": "FILE_ATTRIBUTE_SPARSE_FILE",
+                        "10": "FILE_ATTRIBUTE_REPARSE_POINT",
+                        "11": "FILE_ATTRIBUTE_COMPRESSED",
+                        "12": "FILE_ATTRIBUTE_OFFLINE",
+                        "13": "FILE_ATTRIBUTE_NOT_CONTENT_INDEXED",
+                        "14": "FILE_ATTRIBUTE_ENCRYPTED"
+                    }
+                },
+                {
+                    "name": "CreationTime",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "Target file creation time",
+                    "forensic_value": true
+                },
+                {
+                    "name": "AccessTime",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "Target file last access time",
+                    "forensic_value": true
+                },
+                {
+                    "name": "WriteTime",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "Target file last write time",
+                    "forensic_value": true
+                },
+                {
+                    "name": "FileSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Target file size (lower 32 bits)"
+                },
+                {
+                    "name": "IconIndex",
+                    "size": 4,
+                    "type": "int",
+                    "description": "Icon index within the icon location"
+                },
+                {
+                    "name": "ShowCommand",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Expected window state",
+                    "value_map": {
+                        "1": "SW_SHOWNORMAL",
+                        "3": "SW_SHOWMAXIMIZED",
+                        "7": "SW_SHOWMINNOACTIVE"
+                    }
+                },
+                {
+                    "name": "HotKey",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Keyboard shortcut"
+                },
+                {
+                    "name": "Reserved1",
+                    "size": 2,
+                    "type": "skip"
+                },
+                {
+                    "name": "Reserved2",
+                    "size": 4,
+                    "type": "skip"
+                },
+                {
+                    "name": "Reserved3",
+                    "size": 4,
+                    "type": "skip"
+                }
+            ]
+        },
+        {
+            "name": "LinkTargetIDList",
+            "type": "section",
+            "description": "Target path as Shell Item ID List - only present if HasLinkTargetIDList flag is set",
+            "condition": "$LinkFlags.0",
+            "fields": [
+                {
+                    "name": "IDListSize",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Size of the IDList in bytes"
+                },
+                {
+                    "name": "IDListData",
+                    "size": "$IDListSize",
+                    "type": "bytes",
+                    "description": "Shell Item ID List data (contains path information)",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "LinkInfo",
+            "type": "section",
+            "description": "Information about the link target location - only present if HasLinkInfo flag is set",
+            "condition": "$LinkFlags.1",
+            "fields": [
+                {
+                    "name": "LinkInfoSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Total size of LinkInfo structure"
+                },
+                {
+                    "name": "LinkInfoHeaderSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Size of the LinkInfo header"
+                },
+                {
+                    "name": "LinkInfoFlags",
+                    "size": 4,
+                    "type": "bitfield",
+                    "description": "Flags indicating which optional fields are present",
+                    "bit_flags": {
+                        "0": "VolumeIDAndLocalBasePath",
+                        "1": "CommonNetworkRelativeLinkAndPathSuffix"
+                    }
+                },
+                {
+                    "name": "VolumeIDOffset",
+                    "size": 4,
+                    "type": "uint"
+                },
+                {
+                    "name": "LocalBasePathOffset",
+                    "size": 4,
+                    "type": "uint"
+                },
+                {
+                    "name": "CommonNetworkRelativeLinkOffset",
+                    "size": 4,
+                    "type": "uint"
+                },
+                {
+                    "name": "CommonPathSuffixOffset",
+                    "size": 4,
+                    "type": "uint"
+                },
+                {
+                    "name": "RemainingLinkInfo",
+                    "size": "$LinkInfoSize - 28",
+                    "type": "bytes",
+                    "description": "Remaining LinkInfo data (contains paths)",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "StringData_Name",
+            "type": "section",
+            "description": "Description string - only present if HasName flag is set",
+            "condition": "$LinkFlags.2",
+            "fields": [
+                {
+                    "name": "NameLength",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Character count of the name string"
+                },
+                {
+                    "name": "NameString",
+                    "size": "$NameLength * 2",
+                    "type": "utf16le",
+                    "description": "Description/Name string (Unicode)",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "StringData_RelativePath",
+            "type": "section",
+            "description": "Relative path - only present if HasRelativePath flag is set",
+            "condition": "$LinkFlags.3",
+            "fields": [
+                {
+                    "name": "RelativePathLength",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Character count of the relative path"
+                },
+                {
+                    "name": "RelativePathString",
+                    "size": "$RelativePathLength * 2",
+                    "type": "utf16le",
+                    "description": "Relative path to target (Unicode)",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "StringData_WorkingDir",
+            "type": "section",
+            "description": "Working directory - only present if HasWorkingDir flag is set",
+            "condition": "$LinkFlags.4",
+            "fields": [
+                {
+                    "name": "WorkingDirLength",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Character count of the working directory"
+                },
+                {
+                    "name": "WorkingDirString",
+                    "size": "$WorkingDirLength * 2",
+                    "type": "utf16le",
+                    "description": "Working directory path (Unicode)",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "StringData_Arguments",
+            "type": "section",
+            "description": "Command line arguments - only present if HasArguments flag is set",
+            "condition": "$LinkFlags.5",
+            "fields": [
+                {
+                    "name": "ArgumentsLength",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Character count of the arguments"
+                },
+                {
+                    "name": "ArgumentsString",
+                    "size": "$ArgumentsLength * 2",
+                    "type": "utf16le",
+                    "description": "Command line arguments (Unicode)",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "StringData_IconLocation",
+            "type": "section",
+            "description": "Icon location - only present if HasIconLocation flag is set",
+            "condition": "$LinkFlags.6",
+            "fields": [
+                {
+                    "name": "IconLocationLength",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Character count of the icon location"
+                },
+                {
+                    "name": "IconLocationString",
+                    "size": "$IconLocationLength * 2",
+                    "type": "utf16le",
+                    "description": "Icon file path (Unicode)"
+                }
+            ]
+        }
+    ]
+}

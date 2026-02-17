@@ -1,0 +1,88 @@
+{
+    "$comment": "This is a template file. Copy and rename it to create your own parser.",
+    "$schema": "./parser-config.schema.json",
+    
+    "name": "MyFileFormat",
+    "description": "Description of your file format",
+    "version": "1.0",
+    "author": "Your Name",
+    
+    "magic_bytes": "00000000",
+    "magic_offset": 0,
+    "endianness": "little",
+    
+    "references": [
+        "https://link-to-format-documentation.com"
+    ],
+    
+    "fields": [
+        {
+            "name": "signature",
+            "size": 4,
+            "type": "bytes",
+            "description": "File signature/magic bytes",
+            "forensic_value": true
+        },
+        {
+            "name": "version",
+            "size": 2,
+            "type": "uint",
+            "description": "Format version number"
+        },
+        {
+            "name": "flags",
+            "size": 4,
+            "type": "bitfield",
+            "description": "Feature flags",
+            "bit_flags": {
+                "0": "Flag0 Description",
+                "1": "Flag1 Description",
+                "2": "Flag2 Description"
+            }
+        },
+        {
+            "name": "timestamp",
+            "size": 8,
+            "type": "filetime",
+            "description": "Creation timestamp (Windows FILETIME)",
+            "forensic_value": true
+        },
+        {
+            "name": "data_size",
+            "size": 4,
+            "type": "uint",
+            "description": "Size of the following data"
+        },
+        {
+            "name": "data",
+            "size": "$data_size",
+            "type": "bytes",
+            "description": "Variable-length data (size from data_size field)"
+        },
+        {
+            "name": "file_type",
+            "size": 1,
+            "type": "uint",
+            "description": "Type identifier",
+            "value_map": {
+                "0": "Unknown",
+                "1": "Type A",
+                "2": "Type B",
+                "3": "Type C"
+            }
+        },
+        {
+            "name": "optional_field",
+            "size": 16,
+            "type": "bytes",
+            "description": "Only present when flag 0 is set",
+            "condition": "$flags & 0x01"
+        },
+        {
+            "name": "remaining_data",
+            "size": 0,
+            "type": "remaining",
+            "description": "All remaining bytes in the file"
+        }
+    ]
+}

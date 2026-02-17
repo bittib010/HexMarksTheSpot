@@ -1,0 +1,8 @@
+# HexMarksTheSpot Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+tkhtmlview>=0.2.0
+
+# Development dependencies (optional, install with: pip install -r requirements-dev.txt)
+# Or use: pip install -e ".[dev]"

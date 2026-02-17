@@ -1,0 +1,96 @@
+{
+    "name": "EventLogEVTX",
+    "description": "Windows Event Log (EVTX) file header - Critical forensic artifact",
+    "version": "1.0",
+    "author": "HexMarksTheSpot",
+    "magic_bytes": "456C6646696C6500",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://github.com/libyal/libevtx/blob/main/documentation/Windows%20XML%20Event%20Log%20(EVTX).asciidoc",
+        "https://www.forensicswiki.org/wiki/Windows_XML_Event_Log_(EVTX)"
+    ],
+    "fields": [
+        {
+            "name": "signature",
+            "size": 8,
+            "type": "string",
+            "description": "File signature 'ElfFile\\x00' (0x456C6646696C6500)",
+            "forensic_value": true
+        },
+        {
+            "name": "first_chunk_number",
+            "size": 8,
+            "type": "uint",
+            "description": "First chunk number - indicates if logs were cleared/rotated",
+            "forensic_value": true
+        },
+        {
+            "name": "last_chunk_number",
+            "size": 8,
+            "type": "uint",
+            "description": "Last chunk number",
+            "forensic_value": true
+        },
+        {
+            "name": "next_record_id",
+            "size": 8,
+            "type": "uint",
+            "description": "Next record identifier - useful for timeline analysis",
+            "forensic_value": true
+        },
+        {
+            "name": "header_size",
+            "size": 4,
+            "type": "uint",
+            "description": "Header size (should be 128 bytes)"
+        },
+        {
+            "name": "minor_version",
+            "size": 2,
+            "type": "uint",
+            "description": "Minor format version"
+        },
+        {
+            "name": "major_version",
+            "size": 2,
+            "type": "uint",
+            "description": "Major format version (should be 3)"
+        },
+        {
+            "name": "header_block_size",
+            "size": 2,
+            "type": "uint",
+            "description": "Header block size (should be 4096)"
+        },
+        {
+            "name": "number_of_chunks",
+            "size": 2,
+            "type": "uint",
+            "description": "Number of chunks in the file"
+        },
+        {
+            "name": "unknown1",
+            "size": 76,
+            "type": "skip",
+            "description": "Unknown/Reserved fields"
+        },
+        {
+            "name": "flags",
+            "size": 4,
+            "type": "bitfield",
+            "description": "File flags",
+            "bit_flags": {
+                "0": "File is dirty (not properly closed)",
+                "1": "File is full"
+            },
+            "forensic_value": true
+        },
+        {
+            "name": "checksum",
+            "size": 4,
+            "type": "bytes",
+            "description": "CRC32 checksum of first 120 bytes"
+        }
+    ]
+}

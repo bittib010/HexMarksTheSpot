@@ -1,0 +1,183 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "NTFSBootSector",
+    "description": "NTFS Boot Sector / Master File Table ($MFT)",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "EB5290",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://docs.microsoft.com/en-us/windows/win32/fileio/master-file-table",
+        "https://flatcap.github.io/linux-ntfs/ntfs/files/boot.html"
+    ],
+    "fields": [
+        {
+            "name": "BootSector",
+            "type": "struct",
+            "description": "NTFS Boot Sector (512 bytes)",
+            "fields": [
+                {
+                    "name": "JumpInstruction",
+                    "size": 3,
+                    "type": "bytes",
+                    "description": "x86 JMP and NOP instructions"
+                },
+                {
+                    "name": "OEM_ID",
+                    "size": 8,
+                    "type": "string",
+                    "description": "OEM identifier - should be 'NTFS    '"
+                },
+                {
+                    "name": "BytesPerSector",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Bytes per sector (typically 512)"
+                },
+                {
+                    "name": "SectorsPerCluster",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Sectors per cluster"
+                },
+                {
+                    "name": "ReservedSectors",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Reserved sectors (unused)"
+                },
+                {
+                    "name": "Unused1",
+                    "size": 3,
+                    "type": "skip",
+                    "description": "Always 0"
+                },
+                {
+                    "name": "Unused2",
+                    "size": 2,
+                    "type": "skip",
+                    "description": "Unused by NTFS"
+                },
+                {
+                    "name": "MediaDescriptor",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Media descriptor (0xF8 for hard disks)",
+                    "value_map": {
+                        "248": "Fixed disk",
+                        "240": "Removable media"
+                    }
+                },
+                {
+                    "name": "Unused3",
+                    "size": 2,
+                    "type": "skip"
+                },
+                {
+                    "name": "SectorsPerTrack",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Sectors per track"
+                },
+                {
+                    "name": "NumberOfHeads",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "Number of heads"
+                },
+                {
+                    "name": "HiddenSectors",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Hidden sectors before partition"
+                },
+                {
+                    "name": "Unused4",
+                    "size": 4,
+                    "type": "skip"
+                },
+                {
+                    "name": "EBPB_Unused",
+                    "size": 4,
+                    "type": "skip",
+                    "description": "Extended BPB unused field"
+                },
+                {
+                    "name": "TotalSectors",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "Total sectors in volume",
+                    "forensic_value": true
+                },
+                {
+                    "name": "MFT_ClusterNumber",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "$MFT cluster number - location of Master File Table",
+                    "forensic_value": true
+                },
+                {
+                    "name": "MFTMirr_ClusterNumber",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "$MFTMirr cluster number - backup MFT location",
+                    "forensic_value": true
+                },
+                {
+                    "name": "ClustersPerFileRecord",
+                    "size": 1,
+                    "type": "int",
+                    "description": "Clusters per File Record Segment (negative means 2^|value| bytes)"
+                },
+                {
+                    "name": "Unused5",
+                    "size": 3,
+                    "type": "skip"
+                },
+                {
+                    "name": "ClustersPerIndexBuffer",
+                    "size": 1,
+                    "type": "int",
+                    "description": "Clusters per Index Buffer"
+                },
+                {
+                    "name": "Unused6",
+                    "size": 3,
+                    "type": "skip"
+                },
+                {
+                    "name": "VolumeSerialNumber",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "Volume serial number",
+                    "forensic_value": true
+                },
+                {
+                    "name": "Checksum",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Checksum (unused)"
+                },
+                {
+                    "name": "BootstrapCode",
+                    "size": 426,
+                    "type": "bytes",
+                    "description": "Bootstrap code"
+                },
+                {
+                    "name": "EndOfSectorMarker",
+                    "size": 2,
+                    "type": "bytes",
+                    "description": "End-of-sector marker - should be 55 AA"
+                }
+            ]
+        },
+        {
+            "name": "RemainingData",
+            "size": 0,
+            "type": "remaining",
+            "description": "Remaining data (MFT entries if reading $MFT file)"
+        }
+    ]
+}

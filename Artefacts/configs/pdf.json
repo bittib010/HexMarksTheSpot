@@ -1,0 +1,40 @@
+{
+    "name": "PDF",
+    "description": "PDF (Portable Document Format) file header",
+    "version": "1.0",
+    "author": "HexMarksTheSpot",
+    "magic_bytes": "255044462D",
+    "magic_offset": 0,
+    "endianness": "big",
+    "references": [
+        "https://www.adobe.com/content/dam/acom/en/devnet/pdf/pdfs/PDF32000_2008.pdf",
+        "https://www.forensicswiki.org/wiki/PDF"
+    ],
+    "fields": [
+        {
+            "name": "signature",
+            "size": 5,
+            "type": "string",
+            "description": "PDF signature '%PDF-' (0x25 50 44 46 2D)",
+            "forensic_value": true
+        },
+        {
+            "name": "version",
+            "size": 3,
+            "type": "string",
+            "description": "PDF version number (e.g., '1.4', '1.7', '2.0')"
+        },
+        {
+            "name": "line_ending",
+            "size": 1,
+            "type": "bytes",
+            "description": "Line ending character(s)"
+        },
+        {
+            "name": "remaining_content",
+            "size": 0,
+            "type": "remaining",
+            "description": "Remaining PDF content (objects, streams, xref table, trailer)"
+        }
+    ]
+}
