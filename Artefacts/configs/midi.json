@@ -1,0 +1,106 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "MIDI",
+    "description": "Standard MIDI File (SMF) Format - Forensic parser for .mid/.midi audio files with detailed header analysis and track chunk boundary parsing",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "4D546864",
+    "magic_offset": 0,
+    "endianness": "big",
+    "references": [
+        "https://www.midi.org/specifications-old/item/the-midi-1-0-specification",
+        "https://www.cs.cmu.edu/~music/cmsip/readings/Standard-MIDI-file-format-updated.pdf",
+        "https://en.wikipedia.org/wiki/MIDI#Standard_MIDI_files",
+        "https://www.sweetscape.com/010editor/repository/templates/MIDI.bt"
+    ],
+    "forensic_notes": "**MIDI File Forensic Analysis Guide**\n\n**What is a MIDI File?**\n- Standard MIDI Files (SMF) contain musical performance data, not audio waveforms\n- Three formats: Type 0 (single track), Type 1 (multiple simultaneous tracks), Type 2 (independent patterns)\n- Structure: Header chunk (MThd) followed by one or more track chunks (MTrk)\n- All multi-byte integers are big-endian\n\n**Forensic Relevance:**\n- **Copyright metadata**: MIDI files contain embedded text events for copyright notices, author names, track/instrument names, and lyrics\n- **Authorship attribution**: Sequence name, instrument names, and copyright strings can identify creators\n- **Software fingerprinting**: Sequencer-specific meta events (type 0x7F) can identify the creation software\n- **Steganography**: MIDI events can encode hidden data in note values, velocities, or SysEx messages\n- **Piracy investigations**: Copyright text events and embedded metadata for intellectual property disputes\n- **Timeline correlation**: MIDI files paired with DAW project files may establish creation timelines\n\n**Key Evidence Locations:**\n1. **Header chunk**: Format type, track count, timing resolution\n2. **Meta events in tracks**: Copyright (0x02), text (0x01), sequence name (0x03), marker (0x06)\n3. **SysEx messages**: Manufacturer-specific data that can fingerprint hardware/software\n4. **Tempo events**: BPM information that may match known compositions\n\n**Anti-Forensics Indicators:**\n- Modified or stripped copyright meta events\n- Unusual header values (invalid format type, zero tracks)\n- Corrupted track lengths not matching actual data\n- SysEx messages with non-standard manufacturer IDs (potential data hiding)\n- Track data significantly longer than expected for the musical content\n\n**Cross-Reference Points:**\n- Copyright strings → ASCAP/BMI/SESAC databases\n- Sequencer events → Software version identification\n- MIDI channel/program assignments → Standard GM instrument map\n- File metadata (filesystem timestamps) vs embedded tempo/timeline data",
+    "fields": [
+        {
+            "name": "HeaderChunk",
+            "type": "struct",
+            "description": "**MThd - MIDI Header Chunk**\n\nThe mandatory header chunk present at the start of every Standard MIDI File. Contains the file format type, number of tracks, and timing division.\n\nThe header is always exactly 14 bytes: 4-byte chunk type ('MThd'), 4-byte chunk length (always 6), and 6 bytes of header data.\n\n*Forensic Value:* The format type and track count establish the file's structural expectations. Mismatches between declared track count and actual MTrk chunks indicate corruption or manipulation.",
+            "forensic_value": true,
+            "fields": [
+                {
+                    "name": "HeaderMagic",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**Chunk Type Identifier**\n\nMust be 'MThd' (0x4D546864) - identifies this as the MIDI header chunk.\n\n*Validation:* Any other value means this is not a valid Standard MIDI File.",
+                    "forensic_value": true,
+                    "expected_values": ["MThd"]
+                },
+                {
+                    "name": "HeaderLength",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Header Data Length**\n\nLength of the header data following this field, in bytes. Always 6 for all current MIDI specifications (format + tracks + division).\n\n*Forensic Value:* A value other than 6 may indicate a non-standard MIDI variant, file corruption, or an attempt to embed extra data in the header chunk.",
+                    "expected_values": [6],
+                    "informational": true
+                },
+                {
+                    "name": "Format",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**MIDI File Format Type**\n\nSpecifies the overall organization of the MIDI file and how tracks relate to each other.\n\n- **Type 0**: Single track containing all MIDI events merged into one stream. Simplest format, commonly used for ringtones and simple playback.\n- **Type 1**: Multiple tracks played simultaneously. Track 0 typically contains tempo/time signature meta events, remaining tracks contain musical data. Most common format for sequencer output.\n- **Type 2**: Collection of independent single-track patterns. Rarely used in practice.\n\n*Forensic Value:* The format type constrains interpretation. Type 0 files must have exactly 1 track. Type 1 files with copyrights usually have the copyright in track 0.",
+                    "forensic_value": true,
+                    "expected_values": [0, 1, 2],
+                    "value_map": {
+                        "0": "Type 0 - Single track (all channels merged)",
+                        "1": "Type 1 - Multiple simultaneous tracks (most common)",
+                        "2": "Type 2 - Multiple independent patterns (rare)"
+                    }
+                },
+                {
+                    "name": "NumTracks",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Track Chunks**\n\nThe number of MTrk chunks that follow this header. For Format 0 files, this must be 1. For Format 1, track 0 is the tempo map and subsequent tracks contain musical data.\n\n*Forensic Value:* Compare with actual MTrk chunks found in the file. A mismatch indicates truncation, corruption, or intentional modification. Format 0 files with NumTracks != 1 are malformed.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "TimeDivision",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Timing Division / Resolution**\n\nDefines the default unit of delta-time for the file. The interpretation depends on bit 15:\n\n- **Bit 15 = 0** (most common): Value is ticks per quarter note (TPQN). Common values: 48, 96, 120, 192, 240, 384, 480, 960. Higher values = finer timing resolution.\n- **Bit 15 = 1**: SMPTE time code format. Bits 14-8 = negative SMPTE frames/sec (-24, -25, -29, -30). Bits 7-0 = ticks per frame.\n\n*Forensic Value:* The timing resolution can fingerprint the creation software. Professional DAWs typically use 480 or 960 TPQN. Simple tools often use 96 or 120. Unusual values may indicate custom or specialized software.\n\nTo calculate BPM from a Tempo meta event: BPM = 60,000,000 / microseconds_per_quarter_note",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "Tracks",
+            "type": "struct",
+            "description": "**MTrk - MIDI Track Chunks**\n\nEach track chunk contains a sequence of MIDI events preceded by variable-length delta times. Events include:\n\n- **MIDI events**: Note On/Off, Control Change, Program Change, Pitch Bend, etc.\n- **Meta events** (status 0xFF): Tempo (0x51), Time Signature (0x58), Key Signature (0x59), Text (0x01), Copyright (0x02), Track Name (0x03), End of Track (0x2F), etc.\n- **SysEx events** (status 0xF0/0xF7): System Exclusive manufacturer-specific data\n\n**Running Status:** MIDI uses 'running status' where the status byte can be omitted if it's the same as the previous message. This complicates byte-level parsing.\n\n**Variable-Length Quantities (VLQ):** Delta times and some lengths use a variable-length encoding where bit 7 of each byte indicates continuation (1-4 bytes total).\n\n*Note:* Individual MIDI events are not parsed at the field level due to VLQ encoding and running status requirements. The raw track data is preserved for hex-level analysis.",
+            "repeat": "$NumTracks",
+            "fields": [
+                {
+                    "name": "TrackMagic",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**Track Chunk Type Identifier**\n\nMust be 'MTrk' (0x4D54726B) - identifies this as a MIDI track chunk. Any other value at this position indicates the file structure is damaged or contains non-standard chunks.\n\n*Forensic Value:* Some MIDI files contain non-standard chunks (e.g., 'XFIH' for XF format, 'XFKM' for karaoke). These are skipped by standard players but may contain hidden or additional data.",
+                    "forensic_value": true,
+                    "expected_values": ["MTrk"]
+                },
+                {
+                    "name": "TrackLength",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Track Data Length**\n\nNumber of bytes of track data following this field. This does NOT include the 4-byte chunk type or 4-byte length field themselves.\n\n*Forensic Value:* Compare with actual remaining file data. A TrackLength that extends past EOF indicates truncation. Data appended after the declared track length is suspicious.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "TrackData",
+                    "size": "$TrackLength",
+                    "type": "bytes",
+                    "description": "**Track Event Data (Raw)**\n\nThe raw MIDI event stream for this track. Contains interleaved delta-times (VLQ-encoded) and MIDI messages.\n\n**Structure of each event:**\n1. Delta-time (1-4 bytes, VLQ): Ticks since the previous event\n2. Status byte (optional if running status): Upper nibble = message type, lower nibble = channel\n3. Data bytes: 0-2 bytes depending on message type\n\n**Common Message Types (status byte upper nibble):**\n- `0x8n`: Note Off (2 data bytes: note, velocity)\n- `0x9n`: Note On (2 data bytes: note, velocity; velocity 0 = Note Off)\n- `0xAn`: Polyphonic Key Pressure (2 data bytes)\n- `0xBn`: Control Change (2 data bytes: controller#, value)\n- `0xCn`: Program Change (1 data byte: program#)\n- `0xDn`: Channel Pressure (1 data byte)\n- `0xEn`: Pitch Bend (2 data bytes: LSB, MSB)\n- `0xFF`: Meta Event (type byte + VLQ length + data)\n- `0xF0`: SysEx Start (VLQ length + data)\n- `0xF7`: SysEx Continuation/Escape\n\n**Key Meta Events to look for in hex:**\n- `FF 01 len text` - Text event (freeform)\n- `FF 02 len text` - **Copyright notice** (forensically critical)\n- `FF 03 len text` - Sequence/track name\n- `FF 04 len text` - Instrument name\n- `FF 05 len text` - Lyric\n- `FF 06 len text` - Marker\n- `FF 2F 00` - End of Track (required, must be last event)\n- `FF 51 03 tt tt tt` - Tempo (microseconds per quarter note, 3 bytes big-endian; BPM = 60000000/value)\n- `FF 58 04 nn dd cc bb` - Time Signature\n- `FF 59 02 sf mi` - Key Signature\n- `FF 7F len data` - Sequencer-specific (software fingerprinting)\n\n*Forensic Tips:*\n- Search for `FF 02` to find copyright notices\n- Search for `FF 03` to find track/sequence names\n- Search for `FF 7F` to find sequencer-specific data (software identification)\n- The last event MUST be `FF 2F 00` (End of Track); absence indicates truncation\n- SysEx messages starting with `F0` followed by a manufacturer ID can identify hardware",
+                    "informational": true
+                }
+            ]
+        },
+        {
+            "name": "TrailingData",
+            "type": "remaining",
+            "description": "**Trailing Data After Last Track**\n\nAny bytes remaining after all declared track chunks have been read. Valid MIDI files should have no trailing data.\n\n*Forensic Value:* Trailing data may indicate:\n- Appended/concatenated files\n- Steganographic payloads hidden after the MIDI data\n- File corruption or incomplete truncation\n- Non-standard extensions or metadata blocks\n\nExamine this data carefully - it should not exist in a well-formed MIDI file.",
+            "forensic_value": "important"
+        }
+    ]
+}

@@ -371,6 +371,7 @@ class MyFileParser(FileParser):
 **JSON Config Parsers:**
 - NTFS MFT records (migrated from .bt)
 - NTFS Boot Sector
+- MIDI audio files (migrated from .bt)
 - PNG images
 - Windows Prefetch files
 - PE executables (EXE/DLL)
@@ -417,6 +418,7 @@ HexMarksTheSpot/
 │       ├── pe_exe.json                # PE executables
 │       ├── ntfs_boot.json             # NTFS Boot Sector
 │       ├── png.json                   # PNG images
+│       ├── midi.json                  # MIDI audio files
 │       ├── jpeg.json                  # JPEG images
 │       ├── pdf.json                   # PDF documents
 │       └── zip.json                   # ZIP archives
