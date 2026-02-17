@@ -72,3 +72,5 @@ desktop.ini
 
 # mypy
 .mypy_cache/
+
+*.bt
