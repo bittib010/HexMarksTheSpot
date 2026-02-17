@@ -1,0 +1,681 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "MFT",
+    "description": "NTFS Master File Table (MFT) FILE Record - Comprehensive forensic parser for NTFS $MFT entries based on Microsoft NTFS documentation",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "46494C45",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://docs.microsoft.com/en-us/windows/win32/fileio/master-file-table",
+        "https://flatcap.github.io/linux-ntfs/ntfs/concepts/file_record.html",
+        "https://github.com/EricZimmerman/MFT - Eric Zimmerman's MFT Parser",
+        "https://www.sans.org/white-papers/37302/",
+        "https://www.sweetscape.com/010editor/repository/templates/MFT.bt"
+    ],
+    "forensic_notes": "**NTFS MFT Forensic Analysis Guide**\n\n**What is the MFT?**\n- The Master File Table ($MFT) is the heart of the NTFS file system\n- Every file and directory on an NTFS volume has at least one entry (1024 bytes each)\n- The MFT is itself a file (entry 0) and can fragment across the disk\n- Even deleted files retain their MFT entry (marked as free) until overwritten\n\n**Key System MFT Entries (0-26):**\n- Entry 0: $MFT - The MFT itself\n- Entry 1: $MFTMirr - Mirror of first 4 MFT entries\n- Entry 2: $LogFile - Transaction log for crash recovery\n- Entry 3: $Volume - Volume information\n- Entry 4: $AttrDef - Attribute definitions\n- Entry 5: . (Root Directory)\n- Entry 6: $Bitmap - Cluster allocation bitmap\n- Entry 7: $Boot - Boot sector\n- Entry 8: $BadClus - Bad cluster tracking\n- Entry 9: $Secure - Security descriptors\n- Entry 10: $UpCase - Uppercase mapping table\n- Entry 11: $Extend - Extensions directory\n\n**Timestamp Analysis (Critical!):**\n- $STANDARD_INFORMATION timestamps can be easily modified by user-mode programs (timestomping)\n- $FILE_NAME timestamps are harder to modify and require raw disk access\n- Compare SI vs FN timestamps to detect timestomping:\n  - If SI timestamps are older than FN timestamps → suspicious\n  - If SI timestamps differ significantly from FN → investigate\n  - FN timestamps typically match SI at file creation, then SI diverges\n\n**Forensic Evidence:**\n1. **Sequence Numbers** - Increment each time an entry is reused (deleted file → new file)\n2. **$LogFile Sequence Numbers (LSN)** - Correlate with $LogFile for transaction history\n3. **Hard Link Count** - Multiple directory entries pointing to same file\n4. **Parent MFT Reference** - Reconstruct directory structure even from orphaned entries\n5. **Resident Data** - Small files (< ~700 bytes) stored entirely in MFT record\n6. **Alternate Data Streams** - Additional $DATA attributes with names (Zone.Identifier, etc.)\n\n**Deleted File Recovery:**\n- Deleted entries have Flags bit 0 clear (Free)\n- Data may still be resident or data runs may still point to valid clusters\n- Sequence number increments when entry is reused\n- Check for partially overwritten entries\n\n**Anti-Forensics Detection:**\n- Zero or invalid timestamps in $STANDARD_INFORMATION\n- $STANDARD_INFORMATION timestamps older than $FILE_NAME timestamps\n- Manipulated sequence numbers\n- Orphaned MFT entries (no parent directory reference)\n- $DATA attribute marked resident but contains suspicious content\n\n**Cross-Reference Points:**\n- Entry Number → $MFT and other artifacts referencing MFT entries\n- Parent Reference → Directory reconstruction\n- LSN → $LogFile analysis\n- Sequence Number → Timeline analysis and file reuse detection\n- Volume Serial → USB/drive correlation",
+    "fields": [
+        {
+            "name": "FILE_RECORD_HEADER",
+            "type": "struct",
+            "description": "**MFT FILE Record Header**\n\nThe fixed 48-byte header present at the start of every MFT FILE record. Contains the record signature, fixup information, entry metadata, and flags.\n\nStandard record size is 1024 bytes (defined in $Boot). The header is followed by the fixup array and then variable-length attributes.\n\n*Forensic Value:* The entry number, sequence number, and flags are critical for timeline reconstruction and deleted file analysis.",
+            "forensic_value": true,
+            "fields": [
+                {
+                    "name": "Signature",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**FILE Record Signature**\n\nMust be 'FILE' (0x46 0x49 0x4C 0x45) for valid MFT records. Bad sectors in the MFT use 'BAAD' (0x42 0x41 0x41 0x44) instead.\n\n*Forensic Value:* A 'BAAD' signature indicates the fixup check failed - the record was corrupted, possibly due to an incomplete write. 'FILE' confirms a valid record.",
+                    "forensic_value": true,
+                    "expected_values": ["FILE"]
+                },
+                {
+                    "name": "OffsetToFixupArray",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Offset to Update Sequence Array**\n\nByte offset from the start of the record to the fixup (update sequence) array. Typically 0x30 (48) for NTFS 3.1+.\n\n*Technical:* The fixup array protects against torn writes across disk sectors (512 bytes). The last two bytes of each sector are replaced with the fixup value and the originals stored in the fixup array.",
+                    "informational": true
+                },
+                {
+                    "name": "NumberOfFixupBytePairs",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Fixup Entries**\n\nNumber of entries in the update sequence array, including the expected value. For a 1024-byte record with 512-byte sectors, this is typically 3 (1 expected value + 2 sector fixups).\n\nCalculation: (RecordSize / SectorSize) + 1",
+                    "informational": true,
+                    "expected_values": [3]
+                },
+                {
+                    "name": "LogfileSequenceNumber",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**$LogFile Sequence Number (LSN)**\n\nIncremented each time the record is modified. Points to the last transaction in the $LogFile that modified this record.\n\n*Forensic Value:* **Critical** - Correlate with $LogFile entries to reconstruct the exact sequence of modifications. Higher LSN = more recent modification. Can detect if a record was modified outside normal NTFS operations.",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "SequenceNumber",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Sequence Number (or Generation Count)**\n\nIncremented each time the MFT entry is freed and reallocated to a new file. Starts at 1 for the first use.\n\n*Forensic Value:* **Critical** - A sequence number > 1 means this entry has been reused. Cross-reference with file references elsewhere (parent directory entries, LNK files) that include the expected sequence number. A mismatch means the reference is stale (the original file was deleted).",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "HardLinkCount",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Hard Link Count**\n\nNumber of directory entries (hard links) pointing to this file. For directories, this counts subdirectories + 2 (for '.' and '..').\n\n*Forensic Value:* Count of 0 indicates an orphaned file (deleted from all directories). A count > 1 means the file exists in multiple locations under possibly different names."
+                },
+                {
+                    "name": "OffsetToFirstAttribute",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Offset to First Attribute**\n\nByte offset from the start of the MFT record to the first attribute. Typically 0x38 (56) for NTFS 3.1+ or 0x30 (48) for older NTFS versions.\n\n*Technical:* Everything between the fixup array and this offset is padding.",
+                    "informational": true,
+                    "expected_values": [48, 56, 72]
+                },
+                {
+                    "name": "EntryFlags",
+                    "size": 2,
+                    "type": "bitfield",
+                    "description": "**MFT Entry Flags**\n\nIndicates the state of this MFT entry. The combination of flags reveals whether the entry is active and what type of filesystem object it represents.\n\n*Forensic Value:* **Critical** - Bit 0 clear means the entry is FREE (deleted). This is the primary indicator for finding deleted files. Bit 1 indicates directories.",
+                    "forensic_value": "critical",
+                    "bit_flags": {
+                        "0": {
+                            "name": "InUse",
+                            "description": "**Bit 0 - MFT_RECORD_IN_USE**\n\nWhen set, this MFT entry is allocated to an active file or directory. When clear, the entry is FREE - the file/directory has been deleted.\n\n*Forensic Value:* **Most important flag** - Finding entries with this bit clear reveals deleted files whose data may still be recoverable."
+                        },
+                        "1": {
+                            "name": "IsDirectory",
+                            "description": "**Bit 1 - MFT_RECORD_IS_DIRECTORY**\n\nWhen set, this entry represents a directory rather than a file. Directories have $INDEX_ROOT and possibly $INDEX_ALLOCATION attributes instead of $DATA."
+                        },
+                        "2": {
+                            "name": "InExtend",
+                            "description": "**Bit 2 - MFT_RECORD_IN_EXTEND**\n\nWhen set, this entry is in the $Extend directory. System metadata entries use this flag."
+                        },
+                        "3": {
+                            "name": "IsViewIndex",
+                            "description": "**Bit 3 - MFT_RECORD_IS_VIEW_INDEX**\n\nWhen set, this entry uses a view index (used for object ID, quota, and security indexes)."
+                        }
+                    }
+                },
+                {
+                    "name": "ActualRecordSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Actual Size of FILE Record (Used Bytes)**\n\nThe number of bytes actually used by this FILE record. This includes the header, attributes, and the end-of-attributes marker - but NOT the slack space.\n\n*Forensic Value:* The difference between AllocatedRecordSize and ActualRecordSize is slack space, which may contain remnants of previous file data from when this entry was used for a different file.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "AllocatedRecordSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Allocated Size of FILE Record**\n\nThe total allocated size you can use for this record. Typically 1024 bytes. Should match the cluster size defined in $Boot.\n\n*Forensic Value:* Non-standard sizes may indicate disk corruption or intentional manipulation.",
+                    "expected_values": [1024, 4096]
+                },
+                {
+                    "name": "FileReferenceToBaseRecord",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**File Reference to Base Record**\n\nIf this entry is an extension record (overflow attributes), this points to the base MFT entry. Format: lower 6 bytes = MFT entry number, upper 2 bytes = sequence number.\n\nA value of 0 means this IS the base record.\n\n*Forensic Value:* Non-zero values indicate the file has more attributes than fit in a single 1024-byte record. The base record's $ATTRIBUTE_LIST attribute maps all extension records.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "NextAvailableAttributeId",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Next Attribute ID**\n\nThe next attribute ID to assign when a new attribute is added to this entry. Each attribute in the record has a unique monotonically increasing ID.\n\n*Forensic Value:* A high value relative to the number of attributes present suggests attributes were added and removed over time.",
+                    "informational": true
+                },
+                {
+                    "name": "Reserved",
+                    "size": 2,
+                    "type": "skip",
+                    "description": "Reserved/alignment bytes (NTFS 3.1+). In older NTFS versions, the fields above end at offset 42 and the fixup array immediately follows."
+                },
+                {
+                    "name": "EntryNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**MFT Entry Number**\n\nThe index of this record in the MFT. Entry 0 is $MFT itself, entry 5 is the root directory. User files typically start at entry 27+.\n\n*Forensic Value:* **Critical** - This is the primary identifier for cross-referencing with other artifacts. LNK files, $LogFile entries, and directory indexes all reference files by MFT entry number.\n\n*Well-Known Entries:* 0=$MFT, 1=$MFTMirr, 2=$LogFile, 3=$Volume, 4=$AttrDef, 5=Root, 6=$Bitmap, 7=$Boot, 8=$BadClus, 9=$Secure, 10=$UpCase, 11=$Extend",
+                    "forensic_value": "identifier"
+                },
+                {
+                    "name": "FixupExpectedValue",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Fixup / Update Sequence Value**\n\nThe expected value that should be found at the end of each sector in this record. During a fixup check, the last 2 bytes of each 512-byte sector are compared to this value. If they match, the sector was written completely.\n\n*Forensic Value:* If the fixup check fails (expected value doesn't match), the record is marked 'BAAD' indicating a torn write or corruption.",
+                    "forensic_value": true
+                },
+                {
+                    "name": "FixupEntries",
+                    "type": "struct",
+                    "description": "**Fixup / Update Sequence Array Entries**\n\nThe original values of the last 2 bytes of each sector, preserved before the expected fixup value was written in their place. When reading the record, these values must be restored to reconstruct the true data.\n\nNumber of entries = NumberOfFixupBytePairs - 1 (one per sector in the record).",
+                    "repeat": "$NumberOfFixupBytePairs - 1",
+                    "fields": [
+                        {
+                            "name": "FixupOriginalValue",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Original value of the last 2 bytes of a sector, saved before the fixup expected value replaced it."
+                        }
+                    ]
+                },
+                {
+                    "name": "HeaderPadding",
+                    "size": "$OffsetToFirstAttribute - 48 - $NumberOfFixupBytePairs * 2",
+                    "type": "skip",
+                    "description": "Padding/alignment bytes between the fixup array and the first attribute.",
+                    "condition": "$OffsetToFirstAttribute > 48 + $NumberOfFixupBytePairs * 2"
+                }
+            ]
+        },
+        {
+            "name": "Attributes",
+            "type": "struct",
+            "description": "**MFT Attribute Chain**\n\nMFT records contain a variable-length chain of attributes, each identified by a 4-byte type code and 4-byte size. The chain terminates with an EndOfAttributes marker (0xFFFFFFFF).\n\nCommon attribute types parsed in detail:\n- $STANDARD_INFORMATION (0x10) - Timestamps, flags, security ID\n- $FILE_NAME (0x30) - Filename, parent reference, timestamps\n- $DATA (0x80) - File content (resident or non-resident)\n\nOther attributes are captured as generic byte sequences.",
+            "repeat": "until",
+            "repeat_until": "$AttrType == -1 or $AttrType == 0",
+            "fields": [
+                {
+                    "name": "AttrType",
+                    "size": 4,
+                    "type": "int",
+                    "description": "**Attribute Type Code**\n\nIdentifies the type of this attribute. Each type has a specific structure and meaning in the NTFS filesystem.\n\n*Forensic Value:* The presence or absence of certain attribute types is significant. For example, $ATTRIBUTE_LIST (0x20) indicates overflow attributes, and multiple $DATA attributes indicate Alternate Data Streams.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "-1": "End of Attributes (0xFFFFFFFF) - Terminator marker",
+                        "16": "$STANDARD_INFORMATION (0x10) - Timestamps, flags, ownership",
+                        "32": "$ATTRIBUTE_LIST (0x20) - Lists attributes spanning multiple MFT entries",
+                        "48": "$FILE_NAME (0x30) - Filename, parent directory, timestamps",
+                        "64": "$OBJECT_ID (0x40) - Unique object identifier / Volume version",
+                        "80": "$SECURITY_DESCRIPTOR (0x50) - ACLs and security information",
+                        "96": "$VOLUME_NAME (0x60) - Volume label (only on $Volume entry)",
+                        "112": "$VOLUME_INFORMATION (0x70) - NTFS version (only on $Volume entry)",
+                        "128": "$DATA (0x80) - File content or data runs",
+                        "144": "$INDEX_ROOT (0x90) - B-tree root for directory indexes",
+                        "160": "$INDEX_ALLOCATION (0xA0) - B-tree non-resident index data",
+                        "176": "$BITMAP (0xB0) - Allocation bitmap for indexes",
+                        "192": "$REPARSE_POINT (0xC0) - Symbolic links, mount points, junctions",
+                        "208": "$EA_INFORMATION (0xD0) - Extended attribute info size",
+                        "224": "$EA (0xE0) - Extended attribute data",
+                        "256": "$LOGGED_UTILITY_STREAM (0x100) - EFS encryption data"
+                    }
+                },
+                {
+                    "name": "AttrSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Attribute Record Length**\n\nTotal size of this attribute record in bytes, including the type and size fields. Must be a multiple of 8 (8-byte aligned).",
+                    "condition": "$AttrType != -1 and $AttrType != 0"
+                },
+
+                {
+                    "name": "StandardInformation",
+                    "type": "section",
+                    "description": "**$STANDARD_INFORMATION Attribute (0x10)**\n\nPresent in every MFT record. Contains the file's primary timestamps, DOS-compatible flags, ownership information, and security descriptor reference.\n\n*Forensic Value:* **Critical** - Contains 4 timestamps that are the most commonly examined in forensic analysis. However, these timestamps CAN be modified by user-mode programs (timestomping). Always compare with $FILE_NAME timestamps for validation.",
+                    "condition": "$AttrType == 16",
+                    "fields": [
+                        {
+                            "name": "SI_Resident",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "Resident flag. $STANDARD_INFORMATION is always resident (value 0).",
+                            "expected_values": [0],
+                            "value_map": {
+                                "0": "Resident - attribute data stored in MFT record",
+                                "1": "Non-Resident - unexpected for $STANDARD_INFORMATION"
+                            }
+                        },
+                        {
+                            "name": "SI_NameSize",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "Length of the attribute name in characters. Always 0 for $STANDARD_INFORMATION (unnamed attribute).",
+                            "expected_values": [0]
+                        },
+                        {
+                            "name": "SI_NameOffset",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Offset to the attribute name from the start of the attribute. Unused when NameSize is 0."
+                        },
+                        {
+                            "name": "SI_Flags",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Attribute flags (compressed, encrypted, sparse).",
+                            "informational": true
+                        },
+                        {
+                            "name": "SI_AttributeId",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Unique identifier for this attribute within the MFT entry.",
+                            "informational": true
+                        },
+                        {
+                            "name": "SI_ContentLength",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Size of the attribute content in bytes. For $STANDARD_INFORMATION: 48 bytes (NTFS 1.x) or 72 bytes (NTFS 3.x+).",
+                            "informational": true,
+                            "expected_values": [48, 72]
+                        },
+                        {
+                            "name": "SI_ContentOffset",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Offset to the attribute content from the start of the attribute record.",
+                            "informational": true
+                        },
+                        {
+                            "name": "SI_IndexedFlag",
+                            "size": 2,
+                            "type": "skip",
+                            "description": "Indexed flag / padding."
+                        },
+                        {
+                            "name": "SI_CreationTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**File Creation Time (C)**\n\nTimestamp of when the file was originally created.\n\n*Forensic Value:* **Critical** - Compare with $FILE_NAME creation time. If this timestamp is EARLIER than the $FILE_NAME timestamp, timestomping is likely. This timestamp can be freely modified by programs like SetFileTime().",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "SI_ContentModifiedTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**File Modified Time (M)**\n\nTimestamp of when the file's DATA content was last modified (written to).\n\n*Forensic Value:* **Critical** - Indicates when the actual file content last changed. Compare with the creation time - a modification time before creation time is suspicious.",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "SI_MetadataModifiedTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**MFT Entry Modified Time (E)**\n\nTimestamp of when this MFT entry's metadata was last altered (attribute changes, permission changes, rename, etc.).\n\n*Forensic Value:* This timestamp updates on ANY metadata change including permission modifications, attribute additions, and renames. Cannot be directly set by user programs via standard APIs.",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "SI_LastAccessedTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**File Last Accessed Time (A)**\n\nTimestamp of when the file was last read or executed.\n\n*Forensic Value:* On modern Windows (Vista+), this is only updated approximately every hour (NtfsDisableLastAccessUpdate). May not reflect the true last access time. Can be modified by SetFileTime().",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "SI_FileAttributeFlags",
+                            "size": 4,
+                            "type": "bitfield",
+                            "description": "**DOS-Compatible File Attribute Flags**\n\nStandard Windows file attributes as seen in Explorer and command-line tools.\n\n*Forensic Value:* The Hidden+System combination is commonly used by malware. The IsDirectory flag here should match the MFT entry flag.",
+                            "forensic_value": true,
+                            "bit_flags": {
+                                "0": {
+                                    "name": "ReadOnly",
+                                    "description": "File is read-only"
+                                },
+                                "1": {
+                                    "name": "Hidden",
+                                    "description": "File is hidden from normal directory listings"
+                                },
+                                "2": {
+                                    "name": "System",
+                                    "description": "File is a system file"
+                                },
+                                "5": {
+                                    "name": "Archive",
+                                    "description": "File has been modified since last backup"
+                                },
+                                "6": {
+                                    "name": "Device",
+                                    "description": "Reserved for device files"
+                                },
+                                "7": {
+                                    "name": "Normal",
+                                    "description": "File has no other attributes set (only valid when alone)"
+                                },
+                                "8": {
+                                    "name": "Temporary",
+                                    "description": "File is temporary and may be kept in memory"
+                                },
+                                "9": {
+                                    "name": "SparseFile",
+                                    "description": "File has sparse regions (allocated but not written)"
+                                },
+                                "10": {
+                                    "name": "ReparsePoint",
+                                    "description": "File is a reparse point (symlink, mount point, junction)"
+                                },
+                                "11": {
+                                    "name": "Compressed",
+                                    "description": "File is compressed by NTFS"
+                                },
+                                "12": {
+                                    "name": "Offline",
+                                    "description": "File data has been moved to offline storage (HSM)"
+                                },
+                                "13": {
+                                    "name": "NotContentIndexed",
+                                    "description": "File should not be indexed by the content indexing service"
+                                },
+                                "14": {
+                                    "name": "Encrypted",
+                                    "description": "File is encrypted (EFS)"
+                                },
+                                "28": {
+                                    "name": "IsDirectory",
+                                    "description": "Entry represents a directory"
+                                },
+                                "29": {
+                                    "name": "IsIndexView",
+                                    "description": "Entry is an index view"
+                                }
+                            }
+                        },
+                        {
+                            "name": "SI_MaxVersions",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Maximum number of versions for this file. Typically 0 (versioning disabled).",
+                            "informational": true
+                        },
+                        {
+                            "name": "SI_VersionNumber",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Current version number of this file. Typically 0.",
+                            "informational": true
+                        },
+                        {
+                            "name": "SI_ClassId",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Class ID from the bidirectional class ID index. Typically 0.",
+                            "informational": true
+                        },
+                        {
+                            "name": "SI_OwnerId",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Owner ID (NTFS 3.0+)**\n\nIndex into the $QUOTA file identifying the user who owns this file.\n\n*Forensic Value:* Can identify file ownership even when ACLs are modified.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "SI_SecurityId",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Security Descriptor ID (NTFS 3.0+)**\n\nIndex into the $SII (Security ID Index) in the $Secure file. More efficient than storing the full security descriptor in each MFT entry.\n\n*Forensic Value:* Cross-reference with $Secure to determine file permissions without parsing each record's $SECURITY_DESCRIPTOR attribute.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "SI_QuotaCharged",
+                            "size": 8,
+                            "type": "uint",
+                            "description": "**Quota Charged (NTFS 3.0+)**\n\nBytes charged to the user's disk quota for this file. May differ from actual file size due to compression, sparse files, or alternate data streams.",
+                            "informational": true
+                        },
+                        {
+                            "name": "SI_UpdateSequenceNumber",
+                            "size": 8,
+                            "type": "uint",
+                            "description": "**Update Sequence Number / USN (NTFS 3.0+)**\n\nThe last USN Journal ($UsnJrnl) entry number for this file. The USN Journal tracks all changes to files on the volume.\n\n*Forensic Value:* **Critical** - Cross-reference with $UsnJrnl to get a detailed change history including renames, permission changes, data modifications, and deletions.",
+                            "forensic_value": "important"
+                        },
+                        {
+                            "name": "SI_Padding",
+                            "size": "$AttrSize - 96",
+                            "type": "skip",
+                            "description": "Alignment padding to the attribute boundary.",
+                            "condition": "$AttrSize > 96"
+                        }
+                    ]
+                },
+
+                {
+                    "name": "FileName",
+                    "type": "section",
+                    "description": "**$FILE_NAME Attribute (0x30)**\n\nContains the file's name, parent directory reference, and a second set of timestamps. Files typically have two $FILE_NAME attributes: one for the Win32 long name and one for the DOS 8.3 short name.\n\n*Forensic Value:* **Critical** - $FILE_NAME timestamps are harder to modify than $STANDARD_INFORMATION timestamps because they require raw disk access. Comparing SI and FN timestamps is a key timestomping detection technique.\n\nThe ParentMFTReference allows reconstruction of the full file path even from an extracted MFT.",
+                    "condition": "$AttrType == 48",
+                    "fields": [
+                        {
+                            "name": "FN_Resident",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "Resident flag. $FILE_NAME is always resident (value 0).",
+                            "expected_values": [0],
+                            "value_map": {
+                                "0": "Resident",
+                                "1": "Non-Resident - unexpected for $FILE_NAME"
+                            }
+                        },
+                        {
+                            "name": "FN_NameSize",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "Length of the attribute name in characters. Always 0 for $FILE_NAME.",
+                            "expected_values": [0]
+                        },
+                        {
+                            "name": "FN_NameOffset",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Offset to the attribute name."
+                        },
+                        {
+                            "name": "FN_AttrFlags",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Attribute flags."
+                        },
+                        {
+                            "name": "FN_AttributeId",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Unique attribute identifier within this MFT entry.",
+                            "informational": true
+                        },
+                        {
+                            "name": "FN_ContentLength",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Size of the $FILE_NAME content in bytes.",
+                            "informational": true
+                        },
+                        {
+                            "name": "FN_ContentOffset",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Offset to the $FILE_NAME content from the start of the attribute.",
+                            "informational": true
+                        },
+                        {
+                            "name": "FN_IndexedFlag",
+                            "size": 2,
+                            "type": "skip",
+                            "description": "Indexed flag / padding."
+                        },
+                        {
+                            "name": "FN_ParentMFTReference",
+                            "size": 8,
+                            "type": "uint",
+                            "description": "**Parent Directory MFT Reference**\n\nPoints to the MFT entry of the parent directory. Format: lower 6 bytes = parent MFT entry number, upper 2 bytes = parent sequence number.\n\n*Forensic Value:* **Critical** - Allows reconstruction of the full directory path. For root directory files, this points to entry 5 (root). For deleted files, the parent reference may still be valid, revealing where the file was located before deletion.\n\n*Tip:* Extract the parent entry number: value & 0x0000FFFFFFFFFFFF. Extract the sequence number: (value >> 48) & 0xFFFF.",
+                            "forensic_value": "identifier"
+                        },
+                        {
+                            "name": "FN_CreationTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**File Creation Time ($FILE_NAME copy)**\n\nSet when the file is created. Only updated when the filename changes (rename) in some implementations.\n\n*Forensic Value:* **Critical for timestomping detection** - Compare with $STANDARD_INFORMATION CreationTime. If SI creation time is earlier than FN creation time, timestomping is highly likely.",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "FN_ContentModifiedTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**File Modified Time ($FILE_NAME copy)**\n\nCopied from $STANDARD_INFORMATION at file creation. Rarely updated afterward.\n\n*Forensic Value:* Compare with SI modification time. Significant differences indicate potential timestamp manipulation.",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "FN_MetadataModifiedTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**MFT Entry Modified Time ($FILE_NAME copy)**\n\nCopied from $STANDARD_INFORMATION. Reflects metadata changes at the time the $FILE_NAME attribute was last updated.",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "FN_LastAccessedTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "**Last Accessed Time ($FILE_NAME copy)**\n\nCopied from $STANDARD_INFORMATION. May be stale due to lazy update policies.",
+                            "forensic_value": "timestamp"
+                        },
+                        {
+                            "name": "FN_PhysicalSize",
+                            "size": 8,
+                            "type": "uint",
+                            "description": "**Allocated Size on Disk**\n\nThe total allocated space on disk for this file (cluster-aligned). For directories, this may be 0.\n\n*Forensic Value:* Compare with logical size - a significant difference may indicate sparse files, compression, or filesystem-level anomalies.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "FN_LogicalSize",
+                            "size": 8,
+                            "type": "uint",
+                            "description": "**Logical File Size (Real Size)**\n\nThe actual data size of the file in bytes. This is what Windows reports as the file size.\n\n*Forensic Value:* Cross-reference with $DATA attribute size. Discrepancies may indicate file manipulation.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "FN_Flags",
+                            "size": 4,
+                            "type": "bitfield",
+                            "description": "**File Attribute Flags ($FILE_NAME copy)**\n\nDuplicate of the flags in $STANDARD_INFORMATION, captured at the time the $FILE_NAME was created or last updated.",
+                            "bit_flags": {
+                                "0": "ReadOnly",
+                                "1": "Hidden",
+                                "2": "System",
+                                "5": "Archive",
+                                "6": "Device",
+                                "7": "Normal",
+                                "8": "Temporary",
+                                "9": "SparseFile",
+                                "10": "ReparsePoint",
+                                "11": "Compressed",
+                                "12": "Offline",
+                                "13": "NotContentIndexed",
+                                "14": "Encrypted",
+                                "28": "IsDirectory",
+                                "29": "IsIndexView"
+                            }
+                        },
+                        {
+                            "name": "FN_ExtendedAttributeSize",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Size of extended attributes or reparse point buffer. Typically 0 for normal files."
+                        },
+                        {
+                            "name": "FN_NameLength",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Filename Length**\n\nLength of the filename in Unicode characters (NOT bytes). Multiply by 2 for byte length.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "FN_NameType",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Filename Namespace**\n\nIndicates which naming convention this filename follows.\n\n*Forensic Value:* Most files have both a Win32 (type 1 or 3) and DOS 8.3 (type 2) name. POSIX names (type 0) are case-sensitive and may contain characters not allowed in Win32.",
+                            "forensic_value": true,
+                            "value_map": {
+                                "0": "POSIX - Case-sensitive, any Unicode except / and NULL",
+                                "1": "Win32 - Standard Windows long filename",
+                                "2": "DOS - Legacy 8.3 short filename",
+                                "3": "Win32+DOS - Name valid in both namespaces (most common)"
+                            }
+                        },
+                        {
+                            "name": "FN_Filename",
+                            "size": "$FN_NameLength * 2",
+                            "type": "utf16le",
+                            "description": "**Filename**\n\nThe actual filename in UTF-16LE encoding. This is the file's name as it appears in the parent directory.\n\n*Forensic Value:* **Critical** - The filename itself, including suspicious extensions, double extensions (e.g., 'document.pdf.exe'), or Unicode tricks used for obfuscation.",
+                            "forensic_value": "path"
+                        },
+                        {
+                            "name": "FN_AlignmentPadding",
+                            "size": "$AttrSize - 90 - $FN_NameLength * 2",
+                            "type": "skip",
+                            "description": "Alignment padding to the next 8-byte boundary.",
+                            "condition": "$AttrSize - 90 - $FN_NameLength * 2 > 0"
+                        }
+                    ]
+                },
+
+                {
+                    "name": "DataAttribute",
+                    "type": "section",
+                    "description": "**$DATA Attribute (0x80)**\n\nContains the file's actual content. Can be either resident (data stored inline in the MFT record for small files, typically < 700 bytes) or non-resident (data stored in clusters on disk, referenced by data runs).\n\nA file may have multiple $DATA attributes - the default unnamed one is the primary content, and named ones are Alternate Data Streams (ADS).\n\n*Forensic Value:* **Critical** - Resident data means the file content is preserved directly in the MFT. Non-resident data requires following data runs to locate the content on disk.",
+                    "condition": "$AttrType == 128",
+                    "fields": [
+                        {
+                            "name": "DATA_Resident",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Resident Flag**\n\nDetermines whether the file content is stored directly in this MFT record (resident) or in external clusters (non-resident).\n\n*Forensic Value:* **Critical** - Resident data (value 0) means the ENTIRE file content is in the MFT record and survives even if all other disk clusters are wiped. Common for very small files, Zone.Identifier ADS, and other metadata streams.",
+                            "forensic_value": "critical",
+                            "value_map": {
+                                "0": "Resident - File content stored DIRECTLY in MFT record",
+                                "1": "Non-Resident - File content in data runs on disk"
+                            }
+                        },
+                        {
+                            "name": "DATA_NameSize",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Attribute Name Length**\n\nLength of the attribute name in Unicode characters. 0 for the default (unnamed) $DATA stream. Non-zero indicates an Alternate Data Stream (ADS).\n\n*Forensic Value:* Non-zero values indicate ADS which are commonly used to hide data. The Zone.Identifier ADS (NameSize > 0) tracks file origin (downloaded from internet).",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "DATA_NameOffset",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Offset to the attribute name from the start of the attribute."
+                        },
+                        {
+                            "name": "DATA_AttrFlags",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Attribute flags (0x0001=Compressed, 0x4000=Encrypted, 0x8000=Sparse).",
+                            "informational": true
+                        },
+                        {
+                            "name": "DATA_AttributeId",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Unique attribute identifier within this MFT entry.",
+                            "informational": true
+                        },
+                        {
+                            "name": "DATA_Body",
+                            "size": "$AttrSize - 16",
+                            "type": "bytes",
+                            "description": "**DATA Attribute Body**\n\nFor resident data: Contains a small header (ContentLength, ContentOffset, padding) followed by the actual file content inline.\n\nFor non-resident data: Contains VCN ranges (StartingVCN, EndingVCN), the offset to data runs, allocated/actual/initialized sizes, and the data run list describing the on-disk cluster layout.\n\n*Forensic Value:* For resident data, the file content is directly visible in these bytes. For non-resident data, the data runs must be decoded to locate the file content on the disk.",
+                            "forensic_value": true
+                        }
+                    ]
+                },
+
+                {
+                    "name": "GenericAttrBody",
+                    "size": "$AttrSize - 8",
+                    "type": "bytes",
+                    "description": "**Generic Attribute Body**\n\nRaw bytes of an attribute type not parsed in detail. Check the AttrType value above to identify this attribute.\n\nCommon unparsed types:\n- $ATTRIBUTE_LIST (0x20): Maps attributes across extension records\n- $SECURITY_DESCRIPTOR (0x50): ACLs and ownership\n- $INDEX_ROOT (0x90): Directory B-tree data\n- $INDEX_ALLOCATION (0xA0): Extended directory index\n- $BITMAP (0xB0): Index allocation bitmap\n- $REPARSE_POINT (0xC0): Symlinks, junctions, mount points",
+                    "condition": "$AttrType != -1 and $AttrType != 0 and $AttrType != 16 and $AttrType != 48 and $AttrType != 128 and $AttrSize > 8"
+                }
+            ]
+        },
+        {
+            "name": "SlackSpace",
+            "type": "remaining",
+            "description": "**MFT Record Slack Space**\n\nUnused bytes between the end of attributes and the end of the allocated record (typically 1024 bytes total). This area is NOT zeroed when a record is allocated.\n\n*Forensic Value:* **Critical** - Slack space may contain remnants of attributes from a PREVIOUS file that used this MFT entry. This can include old filenames, timestamps, and even resident file data from deleted files. Always examine slack space during forensic analysis.",
+            "forensic_value": "important"
+        }
+    ]
+}

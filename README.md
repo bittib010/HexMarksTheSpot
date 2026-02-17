@@ -209,7 +209,99 @@ Create a JSON file in `Artefacts/configs/` with your file format definition:
 }
 ```
 
-### Method 2: Python Parser
+#### Forensic Highlighting
+
+Mark fields with forensic significance using `forensic_value`:
+
+```json
+{
+    "name": "timestamp",
+    "size": 8,
+    "type": "filetime",
+    "description": "File creation timestamp",
+    "forensic_value": "timestamp"
+}
+```
+
+Available categories: `true` (default red), `"critical"`, `"important"`, `"timestamp"`, `"identifier"`, `"path"`, `"network"`. Use `"informational": true` for green/teal descriptive fields.
+
+#### Conditional Sections
+
+```json
+{
+    "name": "OptionalData",
+    "type": "section",
+    "condition": "$flags.0",
+    "fields": [
+        {"name": "extra", "size": "$extra_size", "type": "bytes"}
+    ]
+}
+```
+
+Conditions support bitfield access (`$flags.0`), comparisons (`$type == 5`), and boolean operators (`$a == 1 or $b == 2`).
+
+#### Repeating Structures
+
+```json
+{
+    "name": "Records",
+    "type": "struct",
+    "repeat": "until",
+    "repeat_until": "$marker == -1",
+    "fields": [
+        {"name": "marker", "size": 4, "type": "int"},
+        {"name": "data", "size": "$record_size", "type": "bytes", "condition": "$marker != -1"}
+    ]
+}
+```
+
+Repeat modes: fixed count (`"repeat": 5`), field reference (`"repeat": "$count"`), until EOF (`"repeat": "eof"`), or condition-based (`"repeat": "until"` with `"repeat_until"`).
+
+#### Expected Values & Validation
+
+```json
+{
+    "name": "page_size",
+    "size": 2,
+    "type": "uint",
+    "expected_values": [512, 1024, 2048, 4096],
+    "description": "Must be a power of 2"
+}
+```
+
+Supports both lists of allowed values and `{"min": 0, "max": 255}` range constraints.
+
+---
+
+### Method 2: Converting 010 Editor Templates (.bt)
+
+The `Artefacts/` directory contains `.bt` template files from the [SweetScape 010 Editor Repository](https://www.sweetscape.com/010editor/repository/templates/). These serve as reference specifications for creating JSON configs.
+
+#### Conversion Steps
+
+1. **Read the `.bt` file** to understand the complete binary structure
+2. **Identify magic bytes** from the `ID Bytes` comment
+3. **Map data types**:
+   | 010 Editor | JSON Config |
+   |------------|-------------|
+   | `char[N]` | `"type": "string", "size": N` |
+   | `short`/`ushort` | `"type": "uint", "size": 2` |
+   | `int`/`uint` | `"type": "int"` or `"uint", "size": 4` |
+   | `int64`/`uint64` | `"type": "uint", "size": 8` |
+   | `FILETIME` | `"type": "filetime", "size": 8` |
+   | `wchar_t[N]` | `"type": "utf16le", "size": "$len * 2"` |
+   | `enum` (value-based) | `"value_map": {...}` |
+   | `enum` (flag-based) | `"type": "bitfield", "bit_flags": {...}` |
+4. **Convert conditionals**: `if (x)` → `"condition": "$x"`
+5. **Convert loops**: `while`/`for` → `"repeat"` on struct/section
+6. **Add forensic documentation**: Descriptions, `forensic_value` markers, `forensic_notes`
+7. **Verify byte accounting**: Ensure all bytes are covered; use `"type": "skip"` for padding
+
+See `Artefacts/configs/mft.json` and `Artefacts/configs/lnk_shell_link.json` for comprehensive conversion examples.
+
+---
+
+### Method 3: Python Parser
 
 Create a Python file in `Artefacts/` following this template:
 
@@ -277,6 +369,8 @@ class MyFileParser(FileParser):
 - Windows LNK shortcuts
 
 **JSON Config Parsers:**
+- NTFS MFT records (migrated from .bt)
+- NTFS Boot Sector
 - PNG images
 - Windows Prefetch files
 - PE executables (EXE/DLL)
@@ -311,17 +405,21 @@ HexMarksTheSpot/
 ├── requirements.txt       # Dependencies
 ├── requirements-dev.txt   # Development dependencies
 ├── Artefacts/
+│   ├── *.bt               # 010 Editor templates (conversion reference)
 │   └── configs/           # JSON parser definitions
-│       ├── jpeg.json
-│       ├── lnk_shell_link.json
-│       ├── sqlite.json
-│       ├── ntfs_boot.json
-│       ├── png.json
-│       ├── prefetch.json
-│       ├── pe_exe.json
-│       ├── zip.json
-│       ├── pdf.json
-│       └── evtx.json
+│       ├── parser-config.schema.json  # JSON schema for validation
+│       ├── _template.json             # Starter template
+│       ├── mft.json                   # NTFS MFT records
+│       ├── lnk_shell_link.json        # Windows LNK shortcuts
+│       ├── sqlite.json                # SQLite databases
+│       ├── evtx.json                  # Windows Event Log
+│       ├── prefetch.json              # Windows Prefetch
+│       ├── pe_exe.json                # PE executables
+│       ├── ntfs_boot.json             # NTFS Boot Sector
+│       ├── png.json                   # PNG images
+│       ├── jpeg.json                  # JPEG images
+│       ├── pdf.json                   # PDF documents
+│       └── zip.json                   # ZIP archives
 ├── images/
 └── TestFiles/
 ```
