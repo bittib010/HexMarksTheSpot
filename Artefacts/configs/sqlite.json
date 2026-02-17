@@ -27,14 +27,16 @@
                     "size": 16,
                     "type": "string",
                     "description": "SQLite format signature: 'SQLite format 3\\0'. Corruption or modification indicates tampering.",
-                    "forensic_value": true
+                    "forensic_value": true,
+                    "expected_values": ["SQLite format 3"]
                 },
                 {
                     "name": "PageSize",
                     "size": 2,
                     "type": "uint",
                     "description": "Database page size in bytes (power of 2, 512-65536). 1 means 65536. Critical for page boundary calculations.",
-                    "forensic_value": true
+                    "forensic_value": true,
+                    "expected_values": [1, 512, 1024, 2048, 4096, 8192, 16384, 32768]
                 },
                 {
                     "name": "WriteVersion",
@@ -42,6 +44,7 @@
                     "type": "uint",
                     "description": "File format write version. Indicates journal mode - check for associated -wal and -journal files.",
                     "forensic_value": true,
+                    "expected_values": [1, 2],
                     "value_map": {
                         "1": "Legacy (rollback journal) - look for .db-journal file",
                         "2": "WAL mode - look for .db-wal and .db-shm files"
@@ -53,6 +56,7 @@
                     "type": "uint",
                     "description": "File format read version. Must match WriteVersion for proper operation.",
                     "forensic_value": true,
+                    "expected_values": [1, 2],
                     "value_map": {
                         "1": "Legacy (rollback journal)",
                         "2": "WAL mode"
@@ -63,25 +67,29 @@
                     "size": 1,
                     "type": "uint",
                     "description": "Bytes of unused space at end of each page. Non-zero may indicate encryption (SQLCipher uses this).",
-                    "forensic_value": true
+                    "forensic_value": true,
+                    "expected_values": {"min": 0, "max": 255}
                 },
                 {
                     "name": "MaxPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Maximum embedded payload fraction (must be 64). Non-64 value indicates corruption or non-standard database."
+                    "description": "Maximum embedded payload fraction (must be 64). Non-64 value indicates corruption or non-standard database.",
+                    "expected_values": [64]
                 },
                 {
                     "name": "MinPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Minimum embedded payload fraction (must be 32). Non-32 value indicates corruption or non-standard database."
+                    "description": "Minimum embedded payload fraction (must be 32). Non-32 value indicates corruption or non-standard database.",
+                    "expected_values": [32]
                 },
                 {
                     "name": "LeafPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Leaf payload fraction (must be 32). Non-32 value indicates corruption or non-standard database."
+                    "description": "Leaf payload fraction (must be 32). Non-32 value indicates corruption or non-standard database.",
+                    "expected_values": [32]
                 },
                 {
                     "name": "FileChangeCounter",
@@ -124,6 +132,7 @@
                     "type": "uint",
                     "description": "Schema format number - indicates minimum SQLite version compatibility.",
                     "forensic_value": true,
+                    "expected_values": [1, 2, 3, 4],
                     "value_map": {
                         "1": "SQLite 3.0.0 (2004-06-18)",
                         "2": "SQLite 3.1.3 (2005-02-20) - added DESC index",
@@ -150,6 +159,7 @@
                     "type": "uint",
                     "description": "Database text encoding. Critical for proper string interpretation.",
                     "forensic_value": true,
+                    "expected_values": [1, 2, 3],
                     "value_map": {
                         "1": "UTF-8",
                         "2": "UTF-16le (little-endian)",
@@ -215,7 +225,8 @@
                     "size": 4,
                     "type": "uint",
                     "description": "SQLite library version that last wrote to this database. Format: major*1000000 + minor*1000 + patch (e.g., 3039004 = 3.39.4)",
-                    "forensic_value": true
+                    "forensic_value": true,
+                    "expected_values": {"min": 3000000, "max": 3999999}
                 }
             ]
         },
@@ -231,6 +242,7 @@
                     "type": "uint",
                     "description": "B-tree page type. Page 1 should be 0x0D (table leaf) or 0x05 (table interior).",
                     "forensic_value": true,
+                    "expected_values": [2, 5, 10, 13],
                     "value_map": {
                         "2": "Interior index b-tree page (0x02)",
                         "5": "Interior table b-tree page (0x05)",
