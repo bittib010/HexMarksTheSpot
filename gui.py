@@ -1216,6 +1216,15 @@ class Main:
         )
         self.export_button.grid(row=2, column=0, sticky=E+W, padx=(0, 5), pady=3)
         
+        self.export_hex_button = RoundedButton(
+            actions_frame,
+            text="📋 Export Hex",
+            command=self.export_as_hex_txt,
+            style="secondary",
+            radius=10
+        )
+        self.export_hex_button.grid(row=2, column=1, sticky=E+W, padx=(5, 0), pady=3)
+        
         self.file_info_button = RoundedButton(
             actions_frame,
             text="ℹ️ File Info",
@@ -1223,7 +1232,7 @@ class Main:
             style="secondary",
             radius=10
         )
-        self.file_info_button.grid(row=2, column=1, sticky=E+W, padx=(5, 0), pady=3)
+        self.file_info_button.grid(row=3, column=0, sticky=E+W, padx=(0, 5), pady=3)
         
         self.exit_button = RoundedButton(
             actions_frame,
@@ -1232,7 +1241,7 @@ class Main:
             style="secondary",
             radius=10
         )
-        self.exit_button.grid(row=3, column=0, columnspan=2, sticky=E+W, pady=(10, 0))
+        self.exit_button.grid(row=3, column=1, sticky=E+W, padx=(5, 0), pady=(3, 0))
         
         # ========== STATUS BAR ==========
         status_frame = Frame(master, bg=ModernTheme.BG_SECONDARY)
@@ -1336,6 +1345,51 @@ class Main:
                 for item in self.sequence_treeview.get_children():
                     item_data = self.sequence_treeview.item(item)
                     csvwriter.writerow([item_data['values'][0], item_data['values'][1], item_data['values'][2], item_data.get('value', '')])
+
+    def export_as_hex_txt(self):
+        """Export the currently loaded file as a hex dump to a .txt file.
+        
+        Format: standard hex dump with offset, hex bytes, and ASCII representation.
+        Example line: 00000000  4C 00 00 00 01 14 02 00  00 00 00 00 C0 00 00 00  |L...............|
+        """
+        if not hasattr(self, 'current_file') or not self.current_file:
+            self.update_status("No file loaded")
+            return
+        
+        default_name = os.path.splitext(os.path.basename(self.current_file))[0] + "_hexdump.txt"
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile=default_name,
+            title="Export Hex Dump"
+        )
+        if not filename:
+            return
+        
+        try:
+            with open(self.current_file, 'rb') as infile:
+                data = infile.read()
+            
+            lines = []
+            for offset in range(0, len(data), 16):
+                chunk = data[offset:offset + 16]
+                # Offset column
+                hex_offset = f"{offset:08X}"
+                # Hex bytes in two groups of 8
+                hex_left = ' '.join(f'{b:02X}' for b in chunk[:8])
+                hex_right = ' '.join(f'{b:02X}' for b in chunk[8:])
+                hex_part = f"{hex_left:<23s}  {hex_right:<23s}"
+                # ASCII representation
+                ascii_part = ''.join(chr(b) if 32 <= b < 127 else '.' for b in chunk)
+                lines.append(f"{hex_offset}  {hex_part}  |{ascii_part}|")
+            
+            with open(filename, 'w') as outfile:
+                outfile.write('\n'.join(lines))
+                outfile.write('\n')
+            
+            self.update_status(f"Hex dump exported to {os.path.basename(filename)} ({len(data):,} bytes)")
+        except Exception as e:
+            self.update_status(f"Export failed: {e}")
 
     def exit_app(self):
         """
