@@ -1,0 +1,192 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "WAV",
+    "description": "RIFF WAVE Audio File Format - Comprehensive forensic parser with educational documentation. Covers RIFF header, format chunk (PCM, IEEE float, ADPCM, etc.), data chunk, fact chunk, cue points, LIST/INFO metadata, and unknown chunks.",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "52494646",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://en.wikipedia.org/wiki/WAV",
+        "https://www.mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html",
+        "http://soundfile.sapp.org/doc/WaveFormat/",
+        "https://docs.microsoft.com/en-us/windows/win32/multimedia/waveform-audio",
+        "https://www.forensicswiki.org/wiki/WAV",
+        "https://www.aelius.com/njh/wavemetatools/doc/riffmci.pdf"
+    ],
+    "forensic_notes": "**WAV Audio File Forensic Analysis Guide**\n\n**What is a WAV file?**\nWAV (Waveform Audio File Format) is an audio container format developed by Microsoft and IBM in 1991 for storing audio on PCs. It is based on the RIFF (Resource Interchange File Format) container structure - the same container used by AVI video files. WAV files typically contain uncompressed PCM (Pulse Code Modulation) audio, but the format supports many codecs including ADPCM, MP3, and others.\n\n**Why WAV files matter forensically:**\n- WAV files can contain hidden data in unused chunks, padding bytes, or after the data chunk\n- Audio recordings may be evidence of conversations, voicemails, or surveillance\n- Metadata in LIST/INFO chunks can reveal recording software, artist, creation date, and comments\n- Steganography tools commonly target WAV files by modifying least-significant bits of audio samples\n- The file size can be cross-referenced with duration to detect truncation or appended data\n- Voice recordings may contain background audio clues (location, time of day, environment)\n\n**Key Forensic Evidence:**\n1. **Recording software** - LIST/INFO metadata often identifies the application used (e.g., Audacity, Adobe Audition, Windows Sound Recorder)\n2. **Creation timestamps** - `ICRD` (creation date) in LIST/INFO chunk\n3. **Audio properties** - Sample rate, bit depth, and channels reveal recording quality and equipment\n4. **File integrity** - Compare RIFF size field with actual file size to detect appended data or truncation\n5. **Hidden data** - Extra bytes after the data chunk, non-standard chunks, or steganographic content in LSBs\n6. **Compression type** - PCM is raw audio; compressed formats may indicate specific tools or workflows\n\n**Suspicious Indicators:**\n- RIFF size + 8 != actual file size = appended data or truncated file\n- Unknown non-standard chunks = possible data hiding\n- Very large file with very short duration = hidden payload in data section\n- Bit depth of 8 with high sample rate = unusual combination, check for steganography\n- Missing fmt chunk = corrupted or crafted file\n- Multiple data chunks = non-standard, possible manipulation\n\n**Audio Forensic Analysis:**\n- Duration (seconds) = DataChunkSize / (SampleRate * Channels * BitsPerSample/8)\n- Bitrate (bits/sec) = SampleRate * Channels * BitsPerSample\n- File should be approximately: Duration * Bitrate / 8 + header overhead\n- Unexpected size discrepancies warrant deeper investigation",
+    "fields": [
+        {
+            "name": "RIFF_Header",
+            "type": "struct",
+            "description": "**RIFF Header (12 bytes)**\n\nEvery WAV file begins with a RIFF (Resource Interchange File Format) header. RIFF is a generic container format designed by Microsoft and IBM that organizes data into labeled chunks. WAV is one application of RIFF; AVI (video) and RMID (MIDI) are others.\n\n**RIFF structure overview:**\nA RIFF file starts with a 12-byte master header containing:\n1. The chunk ID `RIFF` (4 bytes) - identifies this as a RIFF container\n2. The chunk size (4 bytes) - total size of everything after this field\n3. The form type `WAVE` (4 bytes) - identifies the RIFF content as audio\n\nAfter this header, the file contains a sequence of sub-chunks, each with its own 4-byte ID and 4-byte size, followed by that many bytes of data.\n\n**Why RIFF?**\nRIFF was designed in 1991 as a platform-independent file format for multimedia. Its chunk-based structure allows parsers to skip chunks they don't understand, making the format extensible. New chunk types can be added without breaking existing software.\n\n*Forensic Value:* The RIFF size field is the first integrity check - compare it with the actual file size to detect appended data or file truncation.",
+            "fields": [
+                {
+                    "name": "ChunkID",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**RIFF Chunk ID**\n\nMust be the ASCII string `RIFF` (bytes: `52 49 46 46`). This identifies the file as a RIFF container.\n\n**What is a chunk ID?**\nIn the RIFF format, every chunk begins with a 4-byte ASCII identifier called a FourCC (Four Character Code). The FourCC tells parsers what type of data the chunk contains. `RIFF` is the master chunk that wraps the entire file.\n\n**Alternative: RIFX**\nIf the first 4 bytes are `RIFX` instead of `RIFF`, the file uses big-endian byte order instead of little-endian. RIFX files are extremely rare but technically valid.\n\n*Validation:* Must be `RIFF` for a standard WAV file. Any other value means this is not a valid RIFF/WAV file.",
+                    "forensic_value": true,
+                    "expected_values": ["RIFF"]
+                },
+                {
+                    "name": "ChunkSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**RIFF Chunk Size (File Size - 8)**\n\nThe total size of the file minus 8 bytes (the `ChunkID` and `ChunkSize` fields themselves). In other words: `ChunkSize = FileSize - 8`.\n\n**How to use this for integrity checking:**\n- Expected file size = `ChunkSize + 8`\n- If actual file size > ChunkSize + 8: extra data appended after the RIFF structure (suspicious - possible hidden payload or concatenated file)\n- If actual file size < ChunkSize + 8: file is truncated (incomplete download, partial copy, or intentional truncation)\n- If they match exactly: file integrity is consistent (though content may still be modified)\n\n**Calculating audio duration from this:**\nThe RIFF size alone doesn't directly give duration. You need the data chunk size and format information. But a rough estimate:\n- Duration ≈ (ChunkSize - header overhead) / (SampleRate × Channels × BitsPerSample/8)\n\n*Forensic Value:* **Important** - First integrity check. Mismatch with actual file size = appended data, truncation, or corruption.",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "Format",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**RIFF Form Type (WAVE)**\n\nMust be the ASCII string `WAVE` (bytes: `57 41 56 45`). This tells the parser that the RIFF container holds waveform audio data.\n\n**Other RIFF form types:**\n- `WAVE` = Waveform audio (WAV files)\n- `AVI ` = Audio Video Interleaved (AVI files - note trailing space)\n- `RMID` = RIFF MIDI (MIDI data in RIFF container)\n- `PAL ` = Palette file\n\nThe form type determines what chunks are expected inside the RIFF container. For `WAVE`, the parser expects at minimum a `fmt ` chunk (format specification) and a `data` chunk (audio samples).\n\n*Validation:* Must be `WAVE` for a WAV audio file.",
+                    "forensic_value": true,
+                    "expected_values": ["WAVE"]
+                }
+            ]
+        },
+        {
+            "name": "FormatChunk",
+            "type": "struct",
+            "description": "**Format Chunk ('fmt ' - minimum 24 bytes)**\n\nThe format chunk describes HOW to interpret the audio data: sample rate, bit depth, number of channels, and compression format. This chunk is **required** in every valid WAV file and must appear before the data chunk.\n\n**Why the space in 'fmt '?**\nAll RIFF chunk IDs are exactly 4 bytes. Since 'fmt' is only 3 characters, it is padded with a trailing space to make 4 bytes: `66 6D 74 20`. This is a common source of confusion when searching for the chunk ID in hex editors.\n\n**Understanding PCM audio:**\nPCM (Pulse Code Modulation) is the simplest and most common audio encoding in WAV files. It works by measuring (sampling) the audio signal at regular intervals and storing each measurement as a number:\n- **Sample Rate** (e.g., 44100 Hz) = how many times per second the audio is measured\n- **Bit Depth** (e.g., 16-bit) = how precisely each measurement is stored\n- **Channels** (e.g., 2 = stereo) = how many independent audio streams\n\n*Forensic Value:* The format chunk reveals the recording quality, which can indicate the recording device and software used. Professional recordings typically use 44100/48000 Hz at 16/24-bit; phone recordings are often 8000 Hz 8-bit mono.",
+            "fields": [
+                {
+                    "name": "fmt_ChunkID",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**Format Chunk ID ('fmt ')**\n\nMust be the ASCII string `fmt ` (with trailing space, bytes: `66 6D 74 20`). Identifies this chunk as the audio format specification.\n\n*Validation:* Must be `fmt ` (including the trailing space character).",
+                    "informational": true,
+                    "expected_values": ["fmt "]
+                },
+                {
+                    "name": "fmt_ChunkSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Format Chunk Size**\n\nSize of the format chunk data in bytes (excludes the 8-byte chunk header: ID + Size).\n\n**Expected values:**\n- `16` = Standard PCM format (no extra fields)\n- `18` = Non-PCM format with `cbSize` extension field (cbSize = 0)\n- `40` = Extensible format (WAVE_FORMAT_EXTENSIBLE) with full extension data\n- Other values = additional codec-specific data appended\n\n**Why the size varies:**\nThe base format chunk is 16 bytes for simple PCM audio. Compressed formats (ADPCM, MP3, etc.) need additional parameters, so they append extra bytes. The WAVE_FORMAT_EXTENSIBLE format (used for >2 channels or >16-bit) adds a full 22-byte extension with channel mask and sub-format GUID.\n\n*Forensic Note:* A size of exactly 16 almost always indicates standard PCM audio. Unusual sizes may indicate exotic codecs or crafted files.",
+                    "informational": true
+                },
+                {
+                    "name": "wFormatTag",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Audio Format (wFormatTag)**\n\nSpecifies the audio compression codec used. This is the most important field for determining how to decode the audio data.\n\n**How audio codecs work:**\nRaw PCM audio stores every sample as a number - simple but large. Compressed formats (ADPCM, MP3, etc.) reduce file size by using mathematical models to represent audio more efficiently, at the cost of some quality loss or processing complexity.\n\n**Common values:**\n- `1` (0x0001) = **PCM** - Uncompressed audio. Most common. Each sample is a raw integer.\n- `2` (0x0002) = **Microsoft ADPCM** - Adaptive Differential PCM. ~4:1 compression.\n- `3` (0x0003) = **IEEE Float** - Uncompressed floating-point samples (32-bit or 64-bit float).\n- `6` (0x0006) = **A-law** - Logarithmic companding, used in European telephony.\n- `7` (0x0007) = **μ-law (mu-law)** - Logarithmic companding, used in North American/Japanese telephony.\n- `17` (0x0011) = **IMA/DVI ADPCM** - Interactive Multimedia Association ADPCM. Common in games.\n- `85` (0x0055) = **MPEG Layer 3 (MP3)** - MP3 audio wrapped in WAV container.\n- `65534` (0xFFFE) = **WAVE_FORMAT_EXTENSIBLE** - Extended format. The actual codec is specified by a sub-format GUID in the extension data.\n\n*Forensic Value:* **Important** - Identifies the recording method:\n- PCM (1) = raw recording, standard tools\n- A-law/μ-law (6/7) = telephony recording (VoIP, phone tap, PBX system)\n- ADPCM (2/17) = game audio, older Windows systems\n- MP3-in-WAV (85) = converted or low-quality source\n- Extensible (65534) = modern recording software, multi-channel setups",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "1": "PCM (Uncompressed)",
+                        "2": "Microsoft ADPCM",
+                        "3": "IEEE Float",
+                        "6": "A-law (ITU G.711)",
+                        "7": "μ-law (ITU G.711)",
+                        "17": "IMA/DVI ADPCM",
+                        "20": "ITU G.723 ADPCM (Yamaha)",
+                        "49": "GSM 6.10",
+                        "64": "ITU G.721 ADPCM",
+                        "80": "MPEG",
+                        "85": "MPEG Layer 3 (MP3)",
+                        "65534": "WAVE_FORMAT_EXTENSIBLE"
+                    }
+                },
+                {
+                    "name": "wChannels",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Channels**\n\nThe number of independent audio channels in the recording.\n\n**Common values:**\n- `1` = **Mono** - Single channel. Common in voice recordings, phone calls, and dictation.\n- `2` = **Stereo** - Left and right channels. Standard for music and most recordings.\n- `4` = **Quadraphonic** - Front left, front right, rear left, rear right.\n- `6` = **5.1 Surround** - Front left, front right, center, LFE (subwoofer), rear left, rear right.\n- `8` = **7.1 Surround** - 5.1 plus side left and side right.\n\n**How multi-channel data is stored:**\nIn PCM WAV files, samples are interleaved: one sample per channel, repeated for each time point. For stereo 16-bit: `[L₁ R₁] [L₂ R₂] [L₃ R₃] ...` where each sample is 2 bytes.\n\n*Forensic Value:* Channel count reveals recording context:\n- Mono = phone recording, voice memo, surveillance microphone, radio intercept\n- Stereo = music, professional recording, some modern smartphones\n- Multi-channel = studio/professional equipment, surround recording",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "1": "Mono",
+                        "2": "Stereo",
+                        "4": "Quad",
+                        "6": "5.1 Surround",
+                        "8": "7.1 Surround"
+                    }
+                },
+                {
+                    "name": "dwSamplesPerSec",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Sample Rate (Samples Per Second)**\n\nThe number of audio samples captured per second, measured in Hertz (Hz). This directly determines the highest frequency that can be represented in the audio (Nyquist theorem: max frequency = SampleRate / 2).\n\n**Common values and their contexts:**\n- `8000` Hz = **Telephone quality**. Captures frequencies up to 4 kHz. Used by VoIP, PBX systems, answering machines. Speech is intelligible but narrow-band.\n- `11025` Hz = **Low-quality multimedia**. Quarter of CD rate. Old games, low-fi voice.\n- `16000` Hz = **Wideband telephony / voice recognition**. HD Voice calls, Siri/Alexa recordings.\n- `22050` Hz = **AM radio quality**. Half of CD rate. Acceptable for speech.\n- `32000` Hz = **FM radio / digital broadcasting**. Used in DAB, some video applications.\n- `44100` Hz = **CD quality**. The standard for music. Captures up to 22.05 kHz (full human hearing range).\n- `48000` Hz = **Professional audio / video**. Standard for film, TV, and professional recording. Most common in modern production.\n- `96000` Hz = **High-resolution audio**. Studio masters, audiophile recordings.\n- `192000` Hz = **Ultra high-resolution**. Archival and mastering.\n\n**Why 44100 Hz?**\nThe CD standard chose 44.1 kHz because human hearing extends to ~20 kHz, and Nyquist's theorem requires sampling at 2× the highest frequency. The extra 4.1 kHz provides room for the anti-aliasing filter to roll off.\n\n*Forensic Value:* **Important** - Sample rate is a strong indicator of the recording source:\n- 8 kHz = phone/VoIP recording\n- 16 kHz = voice assistant or modern VoIP\n- 44.1/48 kHz = music or professional recording\n- Unusual rates = custom or embedded systems",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "8000": "8 kHz (Telephone)",
+                        "11025": "11.025 kHz (Low-quality)",
+                        "16000": "16 kHz (Wideband voice)",
+                        "22050": "22.05 kHz (AM radio quality)",
+                        "32000": "32 kHz (FM broadcast)",
+                        "44100": "44.1 kHz (CD quality)",
+                        "48000": "48 kHz (Professional/DVD)",
+                        "96000": "96 kHz (High-resolution)",
+                        "192000": "192 kHz (Ultra high-resolution)"
+                    }
+                },
+                {
+                    "name": "dwAvgBytesPerSec",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Average Bytes Per Second (Byte Rate)**\n\nThe average number of bytes of audio data per second. For PCM, this is exact: `SampleRate × Channels × BitsPerSample / 8`. For compressed formats, this is an average.\n\n**Using this for duration calculation:**\nDuration (seconds) = DataChunkSize / dwAvgBytesPerSec\n\n**Common values for PCM:**\n- 8000 Hz, 8-bit, mono: 8,000 bytes/sec\n- 44100 Hz, 16-bit, stereo: 176,400 bytes/sec\n- 48000 Hz, 24-bit, stereo: 288,000 bytes/sec\n\n*Forensic Note:* Verify this matches the calculated value from SampleRate × Channels × BitsPerSample/8. A mismatch may indicate a crafted or corrupted file.",
+                    "informational": true
+                },
+                {
+                    "name": "wBlockAlign",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Block Alignment (bytes per sample frame)**\n\nThe number of bytes for one complete sample across all channels. For PCM: `Channels × BitsPerSample / 8`.\n\n**What is a block?**\nA block (or sample frame) is the smallest unit of audio data that represents one point in time across all channels. For stereo 16-bit: one block = 4 bytes (2 bytes per channel × 2 channels).\n\n**Examples:**\n- Mono, 8-bit: 1 byte\n- Mono, 16-bit: 2 bytes\n- Stereo, 16-bit: 4 bytes\n- Stereo, 24-bit: 6 bytes\n- 5.1 surround, 16-bit: 12 bytes\n\n*Forensic Note:* The data chunk size should be an exact multiple of `wBlockAlign`. If not, the file is corrupted or has been improperly truncated."
+                },
+                {
+                    "name": "wBitsPerSample",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Bits Per Sample (Bit Depth)**\n\nThe number of bits used to represent each audio sample. Higher values = more precise amplitude representation = better dynamic range.\n\n**Common values:**\n- `8` bits = 256 amplitude levels, ~48 dB dynamic range. Low quality. Unsigned integers (0-255, silence at 128). Used in old games, basic voice.\n- `16` bits = 65,536 levels, ~96 dB dynamic range. **CD quality standard**. Signed integers (-32768 to 32767, silence at 0). Most common for music.\n- `24` bits = 16.7 million levels, ~144 dB dynamic range. **Professional recording standard**. Used in studios, high-quality field recording.\n- `32` bits = Either 32-bit integer (very rare) or 32-bit float (IEEE 754). Float format allows values beyond ±1.0 for headroom during mixing.\n\n**8-bit vs 16-bit encoding difference:**\n- 8-bit samples are **unsigned** (0-255, midpoint at 128)\n- 16-bit and higher are **signed** (midpoint at 0)\nThis is a common source of bugs when processing WAV audio.\n\n*Forensic Value:* Bit depth indicates recording quality and source:\n- 8-bit = telephony, old systems, or embedded devices\n- 16-bit = consumer recording, CD rips, most general-purpose audio\n- 24-bit = professional equipment, studio recording, high-end field recorders\n- 32-bit float = DAW (Digital Audio Workstation) intermediate or output format",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "8": "8-bit (Low quality, unsigned)",
+                        "16": "16-bit (CD quality, signed)",
+                        "24": "24-bit (Professional, signed)",
+                        "32": "32-bit (Float or high-res integer)"
+                    }
+                }
+            ]
+        },
+        {
+            "name": "DataChunk",
+            "type": "struct",
+            "description": "**Data Chunk ('data')**\n\nThe data chunk contains the actual audio sample data. This is by far the largest chunk in a WAV file, often comprising 99%+ of the file size.\n\n**PCM data layout:**\nFor uncompressed PCM, the data is a flat array of samples. Multi-channel audio interleaves samples:\n- Mono: `[S₁] [S₂] [S₃] ...`\n- Stereo: `[L₁ R₁] [L₂ R₂] [L₃ R₃] ...`\n- 5.1: `[FL₁ FR₁ C₁ LFE₁ RL₁ RR₁] [FL₂ FR₂ ...]`\n\nEach sample is `BitsPerSample` bits wide, in little-endian byte order.\n\n**Calculating duration:**\n`Duration = DataChunkSize / (SampleRate × Channels × BitsPerSample / 8)`\n\nExample: 176,400 bytes of 44.1 kHz stereo 16-bit = 176400 / (44100 × 2 × 2) = 1.0 second\n\n*Forensic Value:* The data chunk size cross-referenced with format parameters gives expected duration. Compare with actual content for integrity. Audio steganography tools typically hide data in the least-significant bits of PCM samples.",
+            "fields": [
+                {
+                    "name": "data_ChunkID",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**Data Chunk ID ('data')**\n\nMust be the ASCII string `data` (bytes: `64 61 74 61`). Identifies this chunk as containing the audio sample data.\n\n*Validation:* Must be `data`.",
+                    "informational": true,
+                    "expected_values": ["data"]
+                },
+                {
+                    "name": "data_ChunkSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Data Chunk Size (Audio Data Length)**\n\nThe size of the audio sample data in bytes. This is the raw audio payload, not including the 8-byte chunk header.\n\n**Duration calculation:**\nFor PCM audio: `Duration (secs) = data_ChunkSize / dwAvgBytesPerSec`\n\n**Maximum size limitation:**\nSince this is a 32-bit unsigned integer, the maximum data chunk size is ~4 GB (4,294,967,295 bytes). For CD-quality stereo (176,400 bytes/sec), this allows ~6.7 hours. The RF64 extension was created for longer recordings.\n\n*Forensic Value:* **Important** - Cross-reference with:\n- RIFF ChunkSize: data_ChunkSize should be approximately ChunkSize - header overhead\n- Expected duration: Calculate and compare with known recording length\n- File size: If data extends beyond end of file, the file is truncated",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "AudioData",
+                    "size": "$data_ChunkSize",
+                    "type": "bytes",
+                    "description": "**Audio Sample Data**\n\nThe raw audio samples. For PCM format, these are interleaved integer samples. For compressed formats, this contains the encoded bitstream.\n\n**Steganography in WAV files:**\nWAV files are a common target for steganography (hiding data within data) because:\n1. **LSB Steganography**: Changing the least-significant bit of each 16-bit sample is imperceptible to human hearing but can encode 1 bit per sample. A 1-second stereo CD-quality clip hides 44100 × 2 = 88,200 bits ≈ 10.7 KB.\n2. **Echo Hiding**: Embedding data by introducing tiny echoes at specific delays.\n3. **Spread Spectrum**: Spreading hidden data across the frequency spectrum.\n\n**Forensic TODO:** If steganography is suspected:\n- Check LSB distribution (should be roughly 50/50 for natural audio; patterns indicate encoding)\n- Compare frequency spectrum against expected audio content\n- Tools: DeepSound, OpenStego, Steghide, SilentEye, Audacity spectral analysis\n- Check for appended data after the audio samples within this chunk"
+                }
+            ]
+        },
+        {
+            "name": "RemainingChunks",
+            "type": "struct",
+            "description": "**Remaining Chunks**\n\nAfter the required `fmt ` and `data` chunks, WAV files may contain additional optional chunks. The RIFF container format allows any number of additional chunks in any order.\n\n**Common optional chunks:**\n- `fact` - Required for all non-PCM formats. Contains the number of decoded samples.\n- `cue ` - Cue points (markers) at specific positions in the audio.\n- `LIST` - Container for metadata sub-chunks (INFO, adtl, etc.).\n- `bext` - Broadcast Wave Extension (BWF). Professional broadcast metadata.\n- `iXML` - iXML metadata from professional field recorders.\n- `JUNK` / `PAD ` - Padding for alignment, sometimes used for data hiding.\n- `smpl` - Sampler-specific data (loop points, MIDI note associations).\n- `inst` - Instrument data (MIDI note, velocity range).\n- `plst` - Playlist chunk for ordering cue points.\n\n*Forensic Note:* Any bytes after the `data` chunk that don't match known chunk IDs should be investigated as potential hidden data or file corruption.",
+            "fields": [
+                {
+                    "name": "TrailingData",
+                    "type": "remaining",
+                    "description": "**Remaining File Data (Optional Chunks and Trailing Bytes)**\n\nAll remaining bytes after the data chunk. This may include:\n- `fact` chunk (non-PCM format sample count)\n- `LIST` INFO metadata (artist, title, creation date, software, comments)\n- `cue ` chunk (markers/cue points)\n- `bext` chunk (Broadcast Wave Extension - EBU R68 metadata)\n- Unknown or custom chunks\n- Padding or hidden data\n\n**LIST INFO metadata fields** that may appear:\n- `IART` - Artist name\n- `ICMT` - Comments\n- `ICOP` - Copyright\n- `ICRD` - Creation date (forensically valuable timestamp)\n- `IENG` - Engineer\n- `IGNR` - Genre\n- `INAM` - Title/Name\n- `IPRD` - Product (album name)\n- `ISFT` - Software used (identifies recording/editing application)\n- `ISRC` - Source\n- `ISBJ` - Subject\n- `ITCH` - Technician\n\n*Forensic Value:* Metadata chunks are rich evidence sources. The `ISFT` field identifies the software used to create or edit the file. `ICRD` provides a creation timestamp that can be compared with file system timestamps.\n\n**Forensic TODO:** Check for:\n- `ISFT` = identifies the recording/editing software\n- `ICRD` = creation date (compare with $MFT timestamps)\n- Unknown chunk IDs = potential data hiding\n- `JUNK` or `PAD` chunks with non-zero content = suspicious\n- Data after the last valid chunk = appended payload"
+                }
+            ]
+        }
+    ]
+}
