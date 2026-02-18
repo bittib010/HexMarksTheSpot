@@ -1,0 +1,331 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "ELF64",
+    "description": "ELF (Executable and Linkable Format) - 64-bit Little-Endian. The standard binary format for executables, shared libraries, object files, and core dumps on Linux, Android, BSD, Solaris, and many other Unix-like operating systems. This parser targets ELF64 LE binaries (x86_64, AArch64, etc.).",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "7F454C460201",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://refspecs.linuxfoundation.org/elf/elf.pdf",
+        "https://www.uclibc.org/docs/elf-64-gen.pdf",
+        "https://en.wikipedia.org/wiki/Executable_and_Linkable_Format",
+        "https://man7.org/linux/man-pages/man5/elf.5.html",
+        "https://docs.oracle.com/cd/E19683-01/816-1386/chapter6-83432/index.html",
+        "https://lwn.net/Articles/631631/"
+    ],
+    "forensic_notes": "**ELF Forensic Analysis Guide**\n\n**What is ELF?**\nThe Executable and Linkable Format (ELF) is the standard binary file format on Linux, Android, BSD, Solaris, and most Unix-like operating systems. It was designed by Unix System Laboratories and adopted as the standard for System V ABI. ELF replaced older formats like a.out and COFF.\n\n**ELF is used for:**\n- **Executables** — compiled programs ready to run\n- **Shared objects (.so)** — dynamic libraries loaded at runtime\n- **Relocatable objects (.o)** — compiler output before linking\n- **Core dumps** — process memory snapshots after crashes\n\n**Why ELF is forensically important:**\nELF binaries are the primary executable format on Linux and Android — the two most common server and mobile operating systems. Malware, exploitation tools, backdoors, rootkits, and legitimate binaries all use ELF. Analyzing ELF files is essential for:\n\n1. **Malware Analysis**\n   - Linux malware (cryptominers, ransomware, botnets like Mirai)\n   - Android native libraries (NDK malware, rooting exploits)\n   - IoT malware (ARM/MIPS embedded device attacks)\n   - Backdoors and rootkits (LD_PRELOAD hijacking, kernel modules)\n\n2. **Incident Response**\n   - Identifying unknown binaries found on compromised servers\n   - Determining if system binaries have been replaced (rootkit detection)\n   - Analyzing core dumps from crashed processes (exploitation evidence)\n   - Checking binary integrity against package manager checksums\n\n3. **Reverse Engineering**\n   - Understanding binary capabilities before execution\n   - Identifying compiler, linker, and build environment\n   - Finding indicators of compromise (IoCs) like hardcoded IPs, domains, C2 URLs\n   - Anti-analysis detection (stripped symbols, packed binaries, anti-debug)\n\n**Key Forensic Analysis Points:**\n\n1. **File Type (e_type)**\n   - ET_EXEC (2): Statically-linked executable — runs without shared libraries, common for malware wanting to be self-contained\n   - ET_DYN (3): Position-independent executable or shared library — most modern binaries use this (ASLR-compatible). All PIE executables show as ET_DYN\n   - ET_REL (1): Relocatable — not directly executable, may be a kernel module (.ko) or compiler output\n   - ET_CORE (4): Core dump — contains process memory at crash time, may include credentials, keys, or exploitation evidence\n\n2. **Machine Architecture (e_machine)**\n   - Reveals the target platform: x86_64, ARM, AArch64, MIPS, PowerPC, RISC-V, etc.\n   - Cross-compiled malware (e.g., x86 binary compiled for ARM) suggests IoT targeting\n   - Mismatch with the system it was found on = copied from another architecture\n\n3. **Entry Point (e_entry)**\n   - The virtual address where execution begins\n   - Unusual entry points (not in `.text` or `_start`) may indicate packing, code injection, or modification\n   - Entry point of 0 in a shared library is normal\n\n4. **Program Headers (Segments)**\n   - **PT_LOAD**: Memory-mapped segments. Check permissions:\n     - RWX (read-write-execute) segments are suspicious — self-modifying code, unpacking, or exploitation\n     - Normal: R-X for code (`.text`), RW- for data (`.data`, `.bss`)\n   - **PT_INTERP**: Path to the dynamic linker (e.g., `/lib64/ld-linux-x86-64.so.2`). Custom or unusual interpreter paths = suspicious\n   - **PT_DYNAMIC**: Links to the dynamic section — shared library dependencies, symbol tables\n   - **PT_GNU_STACK**: Stack executability. An executable stack (PF_X) is a security weakness or exploitation indicator\n   - **PT_GNU_RELRO**: Read-only relocations after loading — security hardening measure\n\n5. **Section Headers (for non-stripped binaries)**\n   - `.text` — executable code\n   - `.rodata` — read-only data (hardcoded strings, constants)\n   - `.data` / `.bss` — initialized and uninitialized data\n   - `.symtab` / `.dynsym` — symbol tables (function and variable names)\n   - `.strtab` / `.dynstr` — string tables (symbol names)\n   - `.debug_*` — DWARF debug info (source file paths, line numbers)\n   - `.note.gnu.build-id` — unique build identifier (can link to build systems)\n   - `.comment` — compiler version string\n\n**Suspicious Indicators:**\n- **Stripped symbols** (no `.symtab`/`.strtab`): Common for release builds, but also for malware hiding function names\n- **UPX or custom packing**: Sections named `UPX0`, `UPX1`; single PT_LOAD with RWX permissions; high entropy in code sections\n- **No section headers** (e_shnum = 0, e_shoff = 0): Sections are optional for execution — malware may strip them entirely to hinder analysis. The program headers are sufficient for loading.\n- **Statically linked** (no PT_INTERP, no PT_DYNAMIC): Self-contained binary that doesn't need shared libraries — portable and harder to hook with LD_PRELOAD\n- **Anti-debug techniques**: `ptrace(PTRACE_TRACEME)` calls, `/proc/self/status` checks, timing-based detection\n- **Modified timestamps**: `stat()` on the binary vs $MFT or filesystem journal timestamps\n\n**Common Investigation Workflow:**\n1. Check file type, architecture, and entry point\n2. Examine program headers — look for RWX segments, unusual interpreters\n3. Check if symbols are present or stripped\n4. Extract strings (`strings -a binary`) for IoCs: IPs, URLs, file paths, error messages\n5. Check dynamic dependencies (`readelf -d binary`) for unusual shared libraries\n6. Compute hash (SHA-256) and check against threat intelligence feeds\n7. Compare against package manager database (`rpm -qf` or `dpkg -S`) to verify legitimacy\n8. Analyze with `readelf`, `objdump`, Ghidra, IDA Pro, or Rizin/Cutter for deeper inspection",
+    "fields": [
+        {
+            "name": "ELF_Identification",
+            "type": "struct",
+            "description": "**ELF Identification (e_ident - 16 bytes)**\n\nThe first 16 bytes of every ELF file contain the identification array (`e_ident`). This fixed-size header identifies the file as ELF and specifies the class (32/64-bit), data encoding (endianness), version, and OS/ABI. These bytes are intentionally architecture-independent — all fields are single bytes, so they can be read without knowing the file's endianness.\n\n**Why is e_ident separate from the rest of the header?**\nThe ELF designers needed a way to identify the file format, class, and endianness before parsing the rest of the header, whose field sizes and byte order depend on these values. The e_ident array solves this bootstrap problem.",
+            "fields": [
+                {
+                    "name": "ei_mag",
+                    "size": 4,
+                    "type": "bytes",
+                    "description": "**ELF Magic Number**\n\nThe 4-byte magic number identifying this as an ELF file: `7F 45 4C 46` — the byte `0x7F` followed by the ASCII letters `ELF`.\n\n**Why 0x7F?**\nThe value `0x7F` was chosen as the first byte because it's the DEL (delete) character in ASCII, which is non-printable and unlikely to appear as the first byte of a text file. This helps distinguish binary ELF files from scripts and text, and prevents accidental interpretation by text-based tools.\n\n*Forensic Value:* If these bytes are corrupted, the file may be damaged or deliberately modified to evade file type detection. Search for `\\x7FELF` to carve ELF files from disk images or memory dumps.",
+                    "forensic_value": true,
+                    "expected_values": ["7f454c46"]
+                },
+                {
+                    "name": "ei_class",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**ELF Class (32-bit vs 64-bit)**\n\nDetermines whether this is a 32-bit or 64-bit ELF binary, which affects the size of many subsequent header fields.\n\n*Forensic Value:* Reveals target architecture word size. Modern systems predominantly use 64-bit. A 32-bit binary on a 64-bit system may be legacy software, a compatibility layer binary, or deliberately targeting 32-bit for exploitation (different memory layout, different syscall numbers).\n\n**Note:** This parser targets ELF64 (class 2). ELF32 binaries have different field sizes in the ELF header and program/section headers.",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "0": "ELFCLASSNONE - Invalid class",
+                        "1": "ELFCLASS32 - 32-bit objects",
+                        "2": "ELFCLASS64 - 64-bit objects"
+                    },
+                    "expected_values": [2]
+                },
+                {
+                    "name": "ei_data",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**Data Encoding (Endianness)**\n\nSpecifies the byte order for multi-byte fields in the file:\n- **Little-endian (LSB)**: Least significant byte first. Used by x86, x86_64, AArch64 (default), RISC-V.\n- **Big-endian (MSB)**: Most significant byte first. Used by some MIPS, SPARC, PowerPC (older), network appliances.\n\n*Forensic Value:* Reveals target platform. Little-endian is dominant in modern computing. Big-endian binaries suggest network equipment, embedded systems, or older Unix systems.\n\n**Note:** This parser targets little-endian (data encoding 1).",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "0": "ELFDATANONE - Invalid data encoding",
+                        "1": "ELFDATA2LSB - Little-endian (x86, ARM, RISC-V)",
+                        "2": "ELFDATA2MSB - Big-endian (SPARC, MIPS BE, PowerPC)"
+                    },
+                    "expected_values": [1]
+                },
+                {
+                    "name": "ei_version",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**ELF Version**\n\nMust be `EV_CURRENT` (1). This field exists for future extensibility but has never been incremented beyond 1 since the original ELF specification.",
+                    "informational": true,
+                    "expected_values": [1],
+                    "value_map": {
+                        "0": "EV_NONE - Invalid version",
+                        "1": "EV_CURRENT - Current version"
+                    }
+                },
+                {
+                    "name": "ei_osabi",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**OS/ABI Identification**\n\nIdentifies the target operating system and ABI (Application Binary Interface). Most Linux binaries use `ELFOSABI_NONE` (0) which means System V / unspecified, relying on other mechanisms (like the PT_NOTE `.note.gnu.build-id` or `.note.ABI-tag` sections) for OS identification.\n\n*Forensic Value:* Helps identify the target OS. However, most Linux binaries use 0 (NONE/System V). Non-zero values narrow the target:\n- 3 (Linux): Explicitly Linux-targeted\n- 9 (FreeBSD): BSD system\n- 97 (ARM): Bare-metal ARM embedded\n- 255 (Standalone): Embedded/RTOS firmware\n\n**Forensic TODO:** Cross-reference with architecture (e_machine) and dynamic section libraries to confirm the target platform.",
+                    "forensic_value": "identifier",
+                    "value_map": {
+                        "0": "ELFOSABI_NONE / System V (Linux default)",
+                        "1": "ELFOSABI_HPUX - HP-UX",
+                        "2": "ELFOSABI_NETBSD - NetBSD",
+                        "3": "ELFOSABI_LINUX - Linux (GNU extensions)",
+                        "6": "ELFOSABI_SOLARIS - Sun Solaris",
+                        "7": "ELFOSABI_AIX - IBM AIX",
+                        "8": "ELFOSABI_IRIX - SGI IRIX",
+                        "9": "ELFOSABI_FREEBSD - FreeBSD",
+                        "10": "ELFOSABI_TRU64 - Compaq TRU64 UNIX",
+                        "11": "ELFOSABI_MODESTO - Novell Modesto",
+                        "12": "ELFOSABI_OPENBSD - OpenBSD",
+                        "13": "ELFOSABI_OPENVMS - OpenVMS",
+                        "14": "ELFOSABI_NSK - HP Non-Stop Kernel",
+                        "15": "ELFOSABI_AROS - Amiga Research OS",
+                        "64": "ELFOSABI_ARM_AEABI - ARM EABI",
+                        "97": "ELFOSABI_ARM - ARM bare-metal",
+                        "255": "ELFOSABI_STANDALONE - Standalone (embedded)"
+                    }
+                },
+                {
+                    "name": "ei_abiversion",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**ABI Version**\n\nFurther identifies the version of the ABI specified by `ei_osabi`. For `ELFOSABI_NONE`, this should be 0. The interpretation depends on the OS/ABI field.\n\n*Forensic Note:* Non-zero values are rare and may indicate a very specific target platform or toolchain."
+                },
+                {
+                    "name": "ei_pad",
+                    "size": 7,
+                    "type": "bytes",
+                    "description": "**Padding Bytes**\n\nReserved bytes that pad the e_ident array to 16 bytes. Should be zero.\n\n*Forensic Note:* Non-zero padding bytes could indicate:\n- Custom toolchain or manual modification\n- Data hiding (steganography in binary headers)\n- Specific compiler/linker quirks\n\nMost analysis tools ignore these bytes, making them a potential covert channel."
+                }
+            ]
+        },
+        {
+            "name": "ELF_Header",
+            "type": "struct",
+            "description": "**ELF64 Header (48 bytes after e_ident)**\n\nThe main ELF header follows the 16-byte identification array. For ELF64, fields use 64-bit addresses and offsets. The header describes the type of binary, target architecture, entry point, and locations of the program header table and section header table.\n\n**ELF64 header total size:** 64 bytes (16 e_ident + 48 header fields)\n\nThis is the **road map** of the entire binary — it tells loaders and analysis tools where everything is located.",
+            "fields": [
+                {
+                    "name": "e_type",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Object File Type**\n\nIdentifies what kind of ELF file this is.\n\n*Forensic Value:* **Critical** — Determines how to interpret the binary:\n- **ET_EXEC (2):** Traditional executable with fixed virtual addresses. Increasingly rare on modern systems due to ASLR. Statically linked malware often uses this type.\n- **ET_DYN (3):** Position-independent executable (PIE) or shared library (.so). **Most modern Linux executables are ET_DYN** for ASLR support. Check for an entry point to distinguish PIE executables from shared libraries.\n- **ET_REL (1):** Relocatable object file (.o) or kernel module (.ko). Not directly executable but may contain malicious code for injection or kernel exploitation.\n- **ET_CORE (4):** Core dump from a crashed process. Contains process memory — may hold credentials, encryption keys, exploitation payloads, or evidence of what caused the crash.\n\n**Forensic TODO:**\n- ET_EXEC on a modern system = suspicious (why not PIE?), or Go/Rust static binary\n- ET_DYN with entry point 0 = shared library; non-zero = PIE executable\n- ET_CORE in unexpected location = potential data exfiltration or attacker tool output",
+                    "forensic_value": "critical",
+                    "value_map": {
+                        "0": "ET_NONE - No file type",
+                        "1": "ET_REL - Relocatable file (.o, .ko kernel module)",
+                        "2": "ET_EXEC - Executable (fixed address, no ASLR)",
+                        "3": "ET_DYN - Shared object / PIE executable",
+                        "4": "ET_CORE - Core dump"
+                    }
+                },
+                {
+                    "name": "e_machine",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Target Architecture**\n\nSpecifies the required processor architecture for this binary.\n\n*Forensic Value:* **Critical** — Reveals what platform this binary was compiled for:\n- **EM_X86_64 (62):** The most common architecture for Linux servers, desktops, and cloud infrastructure.\n- **EM_AARCH64 (183):** ARM 64-bit — Android phones/tablets, Apple Silicon (Linux), AWS Graviton, Raspberry Pi 4+.\n- **EM_ARM (40):** ARM 32-bit — older Android, embedded systems, IoT devices.\n- **EM_MIPS (8) / EM_MIPS_RS3_LE (10):** MIPS — routers, network equipment, embedded systems. Common target for IoT botnets (Mirai variants).\n- **EM_386 (3):** x86 32-bit — legacy systems, some embedded, sometimes chosen by malware for compatibility.\n- **EM_PPC64 (21):** PowerPC 64-bit — IBM servers, some network equipment.\n- **EM_RISCV (243):** RISC-V — emerging architecture for embedded and general computing.\n\n**Forensic TODO:** If the architecture doesn't match the system the binary was found on, it was copied from or compiled for a different platform (cross-compilation, lateral movement).",
+                    "forensic_value": "critical",
+                    "value_map": {
+                        "0": "EM_NONE - No machine",
+                        "2": "EM_SPARC - Sun SPARC",
+                        "3": "EM_386 - Intel 80386 (x86 32-bit)",
+                        "4": "EM_68K - Motorola 68000",
+                        "5": "EM_88K - Motorola 88000",
+                        "7": "EM_860 - Intel 80860",
+                        "8": "EM_MIPS - MIPS I (big-endian)",
+                        "9": "EM_S370 - IBM System/370",
+                        "10": "EM_MIPS_RS3_LE - MIPS RS3000 LE",
+                        "15": "EM_PARISC - HP PA-RISC",
+                        "20": "EM_PPC - PowerPC 32-bit",
+                        "21": "EM_PPC64 - PowerPC 64-bit",
+                        "22": "EM_S390 - IBM System/390",
+                        "40": "EM_ARM - ARM 32-bit",
+                        "41": "EM_ALPHA - Digital Alpha",
+                        "42": "EM_SH - Hitachi SuperH",
+                        "43": "EM_SPARCV9 - SPARC v9 64-bit",
+                        "50": "EM_IA_64 - Intel Itanium (IA-64)",
+                        "62": "EM_X86_64 - AMD x86-64 (Intel 64)",
+                        "83": "EM_AVR - Atmel AVR 8-bit",
+                        "92": "EM_OPENRISC - OpenRISC",
+                        "94": "EM_XTENSA - Tensilica Xtensa",
+                        "106": "EM_BLACKFIN - Analog Devices Blackfin DSP",
+                        "183": "EM_AARCH64 - ARM 64-bit (AArch64)",
+                        "243": "EM_RISCV - RISC-V"
+                    }
+                },
+                {
+                    "name": "e_version",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Object File Version**\n\nMust be `EV_CURRENT` (1). Identifies the object file version as current.\n\n*Forensic Note:* A value other than 1 is invalid and may indicate corruption or a hand-crafted binary.",
+                    "informational": true,
+                    "expected_values": [1],
+                    "value_map": {
+                        "0": "EV_NONE - Invalid version",
+                        "1": "EV_CURRENT - Current version"
+                    }
+                },
+                {
+                    "name": "e_entry",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Entry Point Virtual Address**\n\nThe virtual memory address where the system transfers control to start process execution. For executables, this is the first instruction that runs after the dynamic linker finishes.\n\n*Forensic Value:* **Critical** — The entry point reveals where execution begins:\n- For most C/C++ executables, this points to `_start` (not `main`!) which calls `__libc_start_main` then `main()`\n- For Go binaries, this points to `_rt0_amd64_linux` or similar runtime entry\n- For shared libraries (ET_DYN used as .so), this is typically 0\n- For PIE executables (ET_DYN used as executable), this is a small offset (not a full virtual address)\n\n**Suspicious indicators:**\n- Entry point in an unusual segment (not in the first PT_LOAD with execute permission)\n- Entry point = 0 for an executable (not shared library) = corrupted or manually crafted\n- Entry point in a writable segment = self-modifying code, unpacker, or exploitation\n- Compare with standard entry points for the platform's toolchain",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "e_phoff",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Program Header Table Offset**\n\nFile offset (in bytes) to the start of the program header table. For ELF64, this is almost always `64` (0x40) — immediately after the 64-byte ELF header.\n\n*Forensic Note:* A value of 0 means no program header table (valid for relocatable objects, suspicious for executables). Non-standard offsets may indicate manual binary modification.",
+                    "informational": true
+                },
+                {
+                    "name": "e_shoff",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Section Header Table Offset**\n\nFile offset (in bytes) to the start of the section header table. Typically near the end of the file.\n\n*Forensic Value:* A value of 0 means no section header table. Section headers are **not required for execution** — the kernel and dynamic linker use program headers only. Malware often strips section headers to hinder static analysis.\n\n**Forensic TODO:**\n- e_shoff = 0 on an executable = sections stripped (anti-analysis, or just `strip --strip-all`)\n- Mismatch between section headers and program headers = possible manipulation\n- Very large offset = possible appended data after normal binary content",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "e_flags",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Processor-Specific Flags**\n\nArchitecture-dependent flags. For x86_64, this is typically 0. For ARM, it encodes ABI version and floating-point conventions (hard-float vs soft-float). For MIPS, it encodes ISA level and ABI.\n\n*Forensic Note:* On ARM, check for:\n- EF_ARM_ABI_VER5 (0x05000000): Current ARM EABI version\n- EF_ARM_SOFT_FLOAT vs EF_ARM_HARD_FLOAT: Floating point convention"
+                },
+                {
+                    "name": "e_ehsize",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**ELF Header Size**\n\nSize of the ELF header in bytes. For ELF64, this is always 64 bytes. For ELF32, it's 52 bytes.\n\n*Forensic Note:* Should be 64 for ELF64. A different value indicates a non-standard or corrupted header.",
+                    "informational": true,
+                    "expected_values": [64]
+                },
+                {
+                    "name": "e_phentsize",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Program Header Entry Size**\n\nSize of each entry in the program header table. For ELF64, this is always 56 bytes.\n\n*Forensic Note:* Should be 56 for ELF64. A non-standard value may indicate binary corruption or crafting.",
+                    "informational": true,
+                    "expected_values": [56]
+                },
+                {
+                    "name": "e_phnum",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Program Header Entries**\n\nThe count of entries in the program header table (segments). Typical executables have 7-13 program headers.\n\n*Forensic Value:* Extremely low counts (1-2) may indicate packing or custom linking. A value of 0 with ET_EXEC/ET_DYN type is suspicious. Very high counts could indicate binary manipulation.",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "e_shentsize",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Section Header Entry Size**\n\nSize of each entry in the section header table. For ELF64, this is always 64 bytes.\n\n*Forensic Note:* Should be 64 for ELF64 (or 0 if no section headers).",
+                    "informational": true
+                },
+                {
+                    "name": "e_shnum",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Section Header Entries**\n\nThe count of entries in the section header table. Typical executables have 25-35 sections. Stripped binaries may have fewer.\n\n*Forensic Value:* A value of 0 means no section headers — the binary has been deliberately stripped of section information. This is common for:\n- Release builds (normal)\n- Malware trying to hinder reverse engineering\n- Packed/encrypted binaries\n- Manually crafted minimal ELF files\n\n**Forensic TODO:** Compare with `e_shoff` — if e_shoff is non-zero but e_shnum is 0, the actual count is in the first section header entry's `sh_size` field (extended numbering for >65535 sections, extremely rare).",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "e_shstrndx",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Section Name String Table Index**\n\nIndex of the section header table entry that contains the section name string table (`.shstrtab`). This string table holds the names of all sections.\n\n*Forensic Note:* A value of `SHN_UNDEF` (0) means no section name string table — section names are unavailable. This is another indicator of a stripped binary."
+                }
+            ]
+        },
+        {
+            "name": "ProgramHeaders",
+            "type": "struct",
+            "repeat": "$e_phnum",
+            "description": "**Program Header Table (Phdr64 - 56 bytes each)**\n\nThe program header table describes the **segments** of the binary — contiguous regions that are mapped into memory by the kernel and dynamic linker at load time. Unlike section headers (which are for linkers and debuggers), program headers are **required for execution**.\n\n**Segment vs Section:**\n- **Segments** (program headers) = runtime view. The kernel uses these to load the binary into memory.\n- **Sections** (section headers) = link-time view. The linker and debugger use these for symbol resolution, relocation, and debugging.\n\nMultiple sections may be grouped into a single segment. For example, `.text`, `.rodata`, and `.eh_frame` often share a single read-execute PT_LOAD segment.\n\n*Forensic Value:* Program headers reveal the binary's memory layout, permissions, dependencies, and security features. They cannot be stripped without making the binary non-executable.",
+            "fields": [
+                {
+                    "name": "p_type",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Segment Type**\n\nIdentifies the kind of segment described by this program header entry.\n\n*Forensic Value:* **Critical** — The segment type reveals binary capabilities:\n- **PT_LOAD (1):** Memory-mapped data. Every executable has at least one. Check permissions (p_flags).\n- **PT_DYNAMIC (2):** Dynamic linking information — shared library dependencies, symbol resolution.\n- **PT_INTERP (3):** Path to the dynamic linker/interpreter. Unusual paths (not `/lib64/ld-linux-x86-64.so.2`) are suspicious.\n- **PT_NOTE (4):** Auxiliary information — build IDs, ABI tags, core dump info.\n- **PT_GNU_STACK (0x6474e551):** Stack executability. `PF_X` flag = executable stack = security weakness or exploitation.\n- **PT_GNU_RELRO (0x6474e552):** Read-only after relocation. Presence indicates security hardening.",
+                    "forensic_value": "critical",
+                    "value_map": {
+                        "0": "PT_NULL - Unused entry",
+                        "1": "PT_LOAD - Loadable segment",
+                        "2": "PT_DYNAMIC - Dynamic linking information",
+                        "3": "PT_INTERP - Interpreter path",
+                        "4": "PT_NOTE - Auxiliary information",
+                        "5": "PT_SHLIB - Reserved (unspecified)",
+                        "6": "PT_PHDR - Program header table itself",
+                        "7": "PT_TLS - Thread-local storage",
+                        "1685382480": "PT_GNU_EH_FRAME - Exception handling frame",
+                        "1685382481": "PT_GNU_STACK - Stack executability",
+                        "1685382482": "PT_GNU_RELRO - Read-only after relocation"
+                    }
+                },
+                {
+                    "name": "p_flags",
+                    "size": 4,
+                    "type": "bitfield",
+                    "description": "**Segment Permissions (Flags)**\n\nBitfield specifying the memory protection flags for this segment.\n\n*Forensic Value:* **Critical** for security analysis:\n- **PF_X (Execute):** Segment contains executable code. Should only be set on code segments.\n- **PF_W (Write):** Segment is writable. Should NOT be set on code segments.\n- **PF_R (Read):** Segment is readable. Almost always set.\n\n**Expected combinations:**\n- `R-X` (5): Code segment — normal for `.text`\n- `RW-` (6): Data segment — normal for `.data`, `.bss`\n- `R--` (4): Read-only data — normal for `.rodata`, RELRO\n\n**Suspicious combinations:**\n- `RWX` (7): Read-Write-Execute — **highly suspicious**. Indicates self-modifying code, packing, JIT compilation, or exploitation payload.\n- `--X` (1): Execute-only — unusual, may indicate hardened binary or hand-crafted segment.\n- Any writable + executable combination warrants investigation.",
+                    "forensic_value": "critical",
+                    "bit_flags": [
+                        {"bit": 0, "name": "PF_X", "description": "Execute permission"},
+                        {"bit": 1, "name": "PF_W", "description": "Write permission"},
+                        {"bit": 2, "name": "PF_R", "description": "Read permission"}
+                    ]
+                },
+                {
+                    "name": "p_offset",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Segment File Offset**\n\nOffset from the beginning of the file to the first byte of this segment's data.\n\n*Forensic Note:* Compare with segment size — segments extending beyond the file size indicate corruption or truncation."
+                },
+                {
+                    "name": "p_vaddr",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Segment Virtual Address**\n\nVirtual memory address where this segment should be mapped. For PIE executables (ET_DYN), these are relative offsets rather than absolute addresses — ASLR randomizes the actual load address.\n\n*Forensic Note:* For ET_EXEC binaries, this is the fixed load address. Non-standard base addresses may indicate custom linker scripts or binary modification."
+                },
+                {
+                    "name": "p_paddr",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Segment Physical Address**\n\nPhysical memory address for systems where physical addressing is relevant. On Linux, this is typically the same as `p_vaddr` and ignored by the kernel (virtual memory is always used).\n\n*Forensic Note:* Relevant for embedded systems, firmware, and bare-metal binaries where physical addresses matter."
+                },
+                {
+                    "name": "p_filesz",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Segment Size in File**\n\nNumber of bytes of this segment that exist in the file. May be zero for segments like BSS that only exist in memory.\n\n*Forensic Note:* Compare with `p_memsz`. If `p_memsz > p_filesz`, the extra bytes are zero-filled at load time (BSS-like behavior). Very large sizes or sizes exceeding file size indicate corruption."
+                },
+                {
+                    "name": "p_memsz",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Segment Size in Memory**\n\nNumber of bytes this segment occupies in memory. May be larger than `p_filesz` — the difference is zero-initialized (used for `.bss` section: uninitialized global variables).\n\n*Forensic Note:* `p_memsz` much larger than `p_filesz` indicates significant BSS / uninitialized data, or a packed binary that inflates in memory."
+                },
+                {
+                    "name": "p_align",
+                    "size": 8,
+                    "type": "uint",
+                    "description": "**Segment Alignment**\n\nAlignment requirement for this segment. Values of 0 and 1 mean no alignment. Otherwise, must be a power of 2, and `p_vaddr ≡ p_offset (mod p_align)`.\n\n**Common value:** `0x200000` (2MB) for PT_LOAD segments on x86_64 Linux, matching the default large page size.\n\n*Forensic Note:* Non-standard alignment may indicate custom linker scripts or binary modification."
+                }
+            ]
+        },
+        {
+            "name": "RemainingData",
+            "size": 0,
+            "type": "remaining",
+            "description": "**Remaining Binary Data (Sections, Symbols, and String Tables)**\n\nThe rest of the ELF file after the program header table. This typically contains:\n\n1. **Segment data** — The actual code (`.text`) and data (`.data`, `.rodata`) referenced by PT_LOAD program headers\n2. **Section header table** — Located at `e_shoff`, describes sections for debuggers and analysis tools\n3. **String tables** — `.strtab`, `.dynstr`, `.shstrtab` holding symbol and section names\n4. **Symbol tables** — `.symtab`, `.dynsym` mapping addresses to function/variable names\n5. **Relocation tables** — `.rela.dyn`, `.rela.plt` for dynamic linking fixups\n6. **Dynamic section** — `.dynamic` with shared library dependencies and linking metadata\n7. **Note sections** — `.note.gnu.build-id`, `.note.ABI-tag` with metadata\n8. **Debug info** — `.debug_*` DWARF sections (if not stripped)\n\n**Key data to extract with specialized tools:**\n- `readelf -a binary` — Complete header and section dump\n- `readelf -d binary` — Dynamic section (shared library dependencies)\n- `readelf -s binary` — Symbol tables\n- `readelf -n binary` — Note sections (build ID, ABI tag)\n- `objdump -d binary` — Disassembly\n- `strings -a binary` — Printable strings (IoCs: IPs, URLs, paths, commands)\n- `file binary` — Quick type identification\n- `checksec --file=binary` — Security features (RELRO, stack canary, NX, PIE)\n\n*Forensic Value:* Raw segment data contains all executable code, string constants, and potentially encoded/encrypted payloads. Use Ghidra, IDA Pro, Rizin, or Binary Ninja for deep analysis."
+        }
+    ]
+}

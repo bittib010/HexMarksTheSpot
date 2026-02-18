@@ -3,7 +3,7 @@
     "name": "JPEG",
     "description": "JPEG/JFIF Image File Format. JPEG (Joint Photographic Experts Group) is the most common lossy image compression format. Files are structured as a sequence of marker segments, each starting with a 0xFF byte followed by a type byte.",
     "author": "HexMarksTheSpot",
-    "version": "2.0",
+    "version": "2.1",
     "magic_bytes": "FFD8",
     "magic_offset": 0,
     "endianness": "big",
@@ -15,6 +15,7 @@
         "https://people.cs.umass.edu/~liberato/courses/2017-spring-compsci365/assignments/05-jpeg-and-exif/",
         "https://asecuritysite.com/forensics/jpeg"
     ],
+    "forensic_notes": "**JPEG Forensic Analysis Guide**\n\n**What is JPEG?**\nJPEG (Joint Photographic Experts Group) is the most widely used lossy image compression format, found on nearly every digital camera, smartphone, and website. JPEG files use the JFIF (JPEG File Interchange Format) or Exif (Exchangeable Image File Format) container to store compressed image data alongside metadata.\n\n**Why JPEG is forensically important:**\nJPEG images are among the most commonly encountered digital evidence. They appear in:\n- Digital camera and smartphone photos (crime scenes, surveillance, child exploitation)\n- Screenshots and document scans\n- Web downloads and social media\n- Email attachments\n- USB drives, cloud storage, and messaging apps\n\n**Key Forensic Analysis Areas:**\n\n1. **Exif Metadata (APP1 segment)**\n   - **Camera identification:** Make, model, serial number, lens info\n   - **GPS coordinates:** Latitude/longitude embedded by smartphones and GPS-enabled cameras\n   - **Timestamps:** DateTimeOriginal (shutter press), DateTimeDigitized, DateTime (last save)\n   - **Software field:** Reveals editing tools (Photoshop, GIMP, etc.)\n   - **Thumbnail:** May retain the ORIGINAL image even after the main image was cropped or edited\n   - *Forensic tip:* Compare the Exif thumbnail with the main image — differences prove editing\n\n2. **Quantization Tables (DQT segment)**\n   - Act as a **fingerprint** for the encoding software or camera\n   - Standard tables can identify: Photoshop, ImageMagick, libjpeg, specific camera models\n   - Double compression artifacts: If an image is opened and re-saved, the quantization tables change\n   - Tools: `JPEGsnoop` can identify the source application from DQT tables\n\n3. **Image Manipulation Detection**\n   - **Error Level Analysis (ELA):** Re-saving at a known quality and comparing error levels reveals edited regions\n   - **Chroma subsampling mismatch:** Different subsampling between Exif data and SOF header suggests re-encoding\n   - **Missing or stripped metadata:** Social media platforms strip Exif (Facebook, Twitter) — presence/absence reveals sharing history\n   - **Inconsistent compression:** Different quality levels in different parts of an image suggest splicing\n\n4. **Steganography Detection**\n   - **After-EOI data:** Any data appended after the `FF D9` End of Image marker is suspicious (appended ZIPs, hidden messages)\n   - **Comment segments (COM):** May contain hidden messages or tool signatures\n   - **LSB steganography:** Tools like StegDetect, OutGuess, and F5 embed data in DCT coefficients\n   - **Unusual APP segments:** Non-standard application markers may carry hidden payloads\n\n5. **Metadata Stripping and Anti-Forensics**\n   - Exif removal tools: `exiftool -all=`, Metadata Anonymisation Toolkit\n   - Re-encoding strips original quantization tables\n   - Screenshot conversion: Taking a screenshot of an image creates a 'clean' copy with new metadata\n   - *Forensic tip:* Even stripped images retain quantization table fingerprints from the LAST encoder used\n\n**Common Investigation Workflow:**\n1. Check SOI marker integrity (file not truncated at start?)\n2. Extract and analyze all Exif metadata (timestamps, GPS, device info)\n3. Compare Exif thumbnail with main image\n4. Identify encoding software from quantization tables\n5. Check for data after EOI marker (steganography, appended files)\n6. Look for evidence of re-compression (double quantization artifacts)\n7. Cross-reference timestamps with file system metadata ($MFT, $UsnJrnl)",
     "fields": [
         {
             "name": "SOI_Marker",
@@ -52,6 +53,9 @@
                         "65482": "SOF10 - Progressive DCT (Arithmetic)",
                         "65483": "SOF11 - Lossless (Arithmetic)",
                         "65484": "DAC - Define Arithmetic Coding",
+                        "65485": "SOF13 - Differential Sequential DCT (Arithmetic)",
+                        "65486": "SOF14 - Differential Progressive DCT (Arithmetic)",
+                        "65487": "SOF15 - Differential Lossless (Arithmetic)",
                         "65497": "EOI - End of Image",
                         "65498": "SOS - Start of Scan",
                         "65499": "DQT - Define Quantization Table",
@@ -318,11 +322,11 @@
                     ]
                 },
                 {
-                    "_comment": "===== SOF0 / Start of Frame Baseline (marker 0xFFC0 = 65472) =====",
+                    "_comment": "===== SOF0/SOF1 / Start of Frame Sequential (markers 0xFFC0-0xFFC1) =====",
                     "name": "SOF0_Data",
                     "type": "section",
-                    "condition": "$SegmentMarker == 65472",
-                    "description": "**SOF0 — Start of Frame (Baseline DCT)**\n\nDefines the image dimensions, color depth, and component configuration for baseline JPEG compression.",
+                    "condition": "$SegmentMarker == 65472 or $SegmentMarker == 65473",
+                    "description": "**SOF0/SOF1 — Start of Frame (Sequential DCT)**\n\nDefines the image dimensions, color depth, and component configuration.\n\n- **SOF0** (0xFFC0) — Baseline DCT: The most common JPEG compression. 8-bit precision, Huffman coding.\n- **SOF1** (0xFFC1) — Extended Sequential DCT: Supports 8-bit or 12-bit precision. Used by some scanners and medical imaging devices.\n\n*Forensic Value:* SOF1 (extended) is uncommon in consumer photos — its presence may indicate medical imaging, scanning, or specialized capture equipment.",
                     "fields": [
                         {
                             "name": "SOF_Precision",
@@ -368,11 +372,11 @@
                     ]
                 },
                 {
-                    "_comment": "===== SOF2 / Progressive DCT (marker 0xFFC2 = 65474) =====",
+                    "_comment": "===== SOF2/SOF3 / Start of Frame Progressive/Lossless (markers 0xFFC2-0xFFC3) =====",
                     "name": "SOF2_Data",
                     "type": "section",
-                    "condition": "$SegmentMarker == 65474",
-                    "description": "**SOF2 — Start of Frame (Progressive DCT)**\n\nSame structure as SOF0 but indicates progressive JPEG encoding (image loads in multiple passes).",
+                    "condition": "$SegmentMarker == 65474 or $SegmentMarker == 65475",
+                    "description": "**SOF2/SOF3 — Start of Frame (Progressive / Lossless)**\n\n- **SOF2** (0xFFC2) — Progressive DCT: Image data is stored in multiple scans of increasing detail, allowing progressive rendering. Common in web-optimized JPEGs (Photoshop 'Save for Web').\n- **SOF3** (0xFFC3) — Lossless: Predictive coding without DCT, preserving exact pixel values. Used in medical imaging (DICOM) and scientific applications.\n\n*Forensic Value:* Progressive encoding (SOF2) suggests web optimization or specific software. Lossless (SOF3) is rare and strongly indicates medical/scientific origin.",
                     "fields": [
                         {
                             "name": "SOF2_Precision",
@@ -494,7 +498,7 @@
                     "_comment": "===== Generic APP segment fallback (APP3-APP11, APP15) =====",
                     "name": "GenericAPP_Data",
                     "type": "section",
-                    "condition": "65507 <= $SegmentMarker <= 65515 or $SegmentMarker == 65519 or $SegmentMarker == 65508",
+                    "condition": "65507 <= $SegmentMarker <= 65515 or $SegmentMarker == 65519",
                     "description": "**Application-Specific Segment**\n\nContains application-specific data not covered by the known APP segment handlers.\n\n*Forensic Value:* May contain proprietary metadata from cameras, editing software, or steganography tools.",
                     "fields": [
                         {
@@ -510,7 +514,7 @@
                     "_comment": "===== Fallback for any unhandled segment =====",
                     "name": "UnknownSegment_Data",
                     "type": "section",
-                    "condition": "not ($SegmentMarker == 65504 or $SegmentMarker == 65505 or $SegmentMarker == 65506 or $SegmentMarker == 65516 or $SegmentMarker == 65517 or $SegmentMarker == 65518 or $SegmentMarker == 65534 or $SegmentMarker == 65499 or $SegmentMarker == 65472 or $SegmentMarker == 65474 or $SegmentMarker == 65476 or $SegmentMarker == 65501 or $SegmentMarker == 65498 or (65507 <= $SegmentMarker <= 65515) or $SegmentMarker == 65519 or $SegmentMarker == 65508)",
+                    "condition": "not ($SegmentMarker == 65504 or $SegmentMarker == 65505 or $SegmentMarker == 65506 or $SegmentMarker == 65516 or $SegmentMarker == 65517 or $SegmentMarker == 65518 or $SegmentMarker == 65534 or $SegmentMarker == 65499 or $SegmentMarker == 65472 or $SegmentMarker == 65473 or $SegmentMarker == 65474 or $SegmentMarker == 65475 or $SegmentMarker == 65476 or $SegmentMarker == 65501 or $SegmentMarker == 65498 or (65507 <= $SegmentMarker <= 65515) or $SegmentMarker == 65519)",
                     "description": "**Unknown / Unhandled Segment**\n\nA JPEG marker segment not specifically parsed by this configuration.",
                     "fields": [
                         {
