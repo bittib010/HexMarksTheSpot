@@ -373,10 +373,10 @@ class MyFileParser(FileParser):
 - NTFS Boot Sector
 - MIDI audio files (migrated from .bt)
 - PNG images
-- Windows Prefetch files
+- Windows Prefetch files (enhanced from .bt — all versions XP through Win11, full metrics/chains/volume parsing)
 - PE executables (EXE/DLL)
 - ZIP archives
-- PDF documents
+- PDF documents (enhanced from .bt with forensic keyword reference)
 - Windows Event Log (EVTX)
 
 ### Known Limitations

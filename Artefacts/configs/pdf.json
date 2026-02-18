@@ -1,40 +1,88 @@
 {
+    "$schema": "./parser-config.schema.json",
     "name": "PDF",
-    "description": "PDF (Portable Document Format) file header",
-    "version": "1.0",
+    "description": "PDF (Portable Document Format) file parser - parses the file header, version, and binary indicator with comprehensive forensic documentation. Based on the 010 Editor PDF.bt template by Didier Stevens, Christian Mehlmauer, and Peter Wyatt (PDF Association). PDF is a text-based format with variable-length keyword-delimited structures; the header is the only strictly fixed binary structure.",
+    "version": "2.0",
     "author": "HexMarksTheSpot",
     "magic_bytes": "255044462D",
     "magic_offset": 0,
     "endianness": "big",
     "references": [
         "https://www.adobe.com/content/dam/acom/en/devnet/pdf/pdfs/PDF32000_2008.pdf",
-        "https://www.forensicswiki.org/wiki/PDF"
+        "https://pdfa.org/resource/iso-32000-2/",
+        "https://www.iso.org/standard/75839.html",
+        "https://www.forensicswiki.org/wiki/PDF",
+        "https://blog.didierstevens.com/programs/pdf-tools/",
+        "https://www.sweetscape.com/010editor/repository/templates/PDF.bt"
     ],
+    "forensic_notes": "**PDF Forensic Analysis Guide**\n\n**Format Overview:**\nPDF (Portable Document Format) is one of the most common document formats and a **frequent vehicle for malware delivery**. PDF has a text-based internal structure with embedded binary streams, making it both human-readable and machine-parseable.\n\nA conforming PDF file has four main sections:\n1. **Header** - Version declaration (`%PDF-x.y`), parsed by this config\n2. **Body** - Indirect objects containing document content, fonts, images, JavaScript, etc.\n3. **Cross-Reference Table** - Byte offset index for random access to all objects\n4. **Trailer** - Document root reference, metadata pointer, encryption info\n\n**Version History & Feature Availability:**\n- **PDF 1.0** (1993) - Basic text, graphics, fonts\n- **PDF 1.1** (1994) - Passwords, encryption, device-independent color\n- **PDF 1.2** (1996) - Interactive forms (AcroForms), Unicode, multimedia annotations\n- **PDF 1.3** (2000) - **JavaScript support**, digital signatures, embedded files, logical structure\n- **PDF 1.4** (2001) - Transparency, JBIG2 compression, 128-bit encryption, tagged PDF\n- **PDF 1.5** (2003) - Object streams, cross-reference streams → objects can be hidden inside compressed streams\n- **PDF 1.6** (2004) - AES encryption, 3D content, OpenType fonts, NChannel color spaces\n- **PDF 1.7** (2006) - ISO 32000-1, XFA forms (deprecated later), geospatial features\n- **PDF 2.0** (2017) - ISO 32000-2, removed XFA/Flash/3D, 256-bit AES, improved accessibility\n\n**Key Forensic Indicators to Search For:**\n\n1. **Malicious Action Keywords** (search hex view for ASCII):\n   - `/OpenAction` (`2F 4F 70 65 6E 41 63 74 69 6F 6E`) - Auto-execute on document open\n   - `/AA` (`2F 41 41`) - Additional Actions (auto-trigger on events like page open/close)\n   - `/Launch` (`2F 4C 61 75 6E 63 68`) - Launch external application or command\n   - `/SubmitForm` (`2F 53 75 62 6D 69 74 46 6F 72 6D`) - Submit form data to external URL\n   - `/ImportData` (`2F 49 6D 70 6F 72 74 44 61 74 61`) - Import data from external source\n\n2. **Scripting & Code Execution:**\n   - `/JavaScript` (`2F 4A 61 76 61 53 63 72 69 70 74`) - JavaScript action type\n   - `/JS` (`2F 4A 53`) - Short form JavaScript reference\n   - `/RichMedia` (`2F 52 69 63 68 4D 65 64 69 61`) - Embedded Flash/multimedia\n   - `/XFA` (`2F 58 46 41`) - XML Forms Architecture (removed in PDF 2.0, frequent exploit vector)\n\n3. **Embedded Content:**\n   - `/EmbeddedFile` (`2F 45 6D 62 65 64 64 65 64 46 69 6C 65`) - File embedded inside PDF stream\n   - `/EmbeddedFiles` (`2F 45 6D 62 65 64 64 65 64 46 69 6C 65 73`) - File attachment collection\n   - `/URI` (`2F 55 52 49`) - External URL reference\n   - `/GoToR` (`2F 47 6F 54 6F 52`) - Go to remote document\n   - `/GoToE` (`2F 47 6F 54 6F 45`) - Go to embedded document\n\n4. **Stream Filters (Encoding/Compression):**\n   - `/FlateDecode` - zlib/deflate compression (most common)\n   - `/ASCIIHexDecode` - Hex-encoded data\n   - `/ASCII85Decode` - ASCII85 encoded data\n   - `/LZWDecode` - LZW compression\n   - `/RunLengthDecode` - Run-length encoding\n   - `/CCITTFaxDecode` - CCITT fax encoding\n   - `/JBIG2Decode` - **Historically exploitable** (CVE-2009-0658, CVE-2009-4324, CVE-2013-0641)\n   - `/DCTDecode` - JPEG encoding\n   - `/JPXDecode` - JPEG 2000 encoding\n   - `/Crypt` - Encryption filter\n   - Multiple chained filters = possible obfuscation\n\n5. **Obfuscation Techniques:**\n   - Name obfuscation: `#xx` hex encoding in names (e.g., `/J#61vaScript` = `/JavaScript`)\n   - Object streams (`/ObjStm`) hiding objects inside compressed streams\n   - Multiple layers of encoding filters chained together\n   - Excessive whitespace, comments, or null bytes between keywords\n   - Content split across multiple indirect objects with references\n\n6. **Structural Anomalies:**\n   - Data before `%PDF-` header - possible **polyglot file** (valid in two formats)\n   - Data after final `%%EOF` (`25 25 45 4F 46`) - **appended payload** or steganography\n   - Multiple `%%EOF` markers - incremental updates (legitimate) or manipulation\n   - Mismatched `obj`/`endobj` counts - corruption or deliberate obfuscation\n   - Mismatched `stream`/`endstream` counts - broken stream boundaries\n   - Invalid cross-reference table entries - object hiding technique\n   - Linearized header (`/Linearized`) at start - optimized for web, check for manipulation\n\n7. **Metadata & Attribution:**\n   - `/Author` - Document author name (attribution)\n   - `/Creator` - Application that created the original document\n   - `/Producer` - Application that converted to PDF\n   - `/CreationDate` - When document was created (format: `D:YYYYMMDDHHmmSSOHH'mm'`)\n   - `/ModDate` - When document was last modified\n   - `/Title`, `/Subject`, `/Keywords` - Document metadata\n   - XMP metadata in streams (XML-based extended metadata)\n\n8. **Encryption & Security:**\n   - `/Encrypt` in trailer dictionary - encryption is active\n   - `/Filter /Standard` - password-based encryption\n   - `/V` value: 1=40-bit RC4, 2=40+ bit RC4, 3=unpublished, 4=AES-128, 5=AES-256\n   - `/R` (revision): determines key derivation algorithm\n   - `/P` (permissions): bit flags for allowed operations\n   - Password-protected PDFs may hide malicious content from scanners\n\n**Cross-Reference Table Entry Format (20 bytes each):**\n`nnnnnnnnnn ggggg f \\r\\n`\n- `nnnnnnnnnn` = 10-digit byte offset\n- `ggggg` = 5-digit generation number\n- `f`/`n` = free or in-use\n\nEntries can be validated: in-use (`n`) entries should point to valid `X Y obj` at the given offset.\n\n**FDF Files:**\nForms Data Format files use signature `%FDF-` (`25 46 44 46 2D`) instead of `%PDF-` and share much of the same structure. They contain form field values exported from PDF forms.\n\n**Recommended Analysis Tools:**\n- `pdfid.py` / `pdf-parser.py` (Didier Stevens) - Quick triage and keyword identification\n- `peepdf` - Interactive PDF analysis with JavaScript de-obfuscation\n- `qpdf` - PDF transformation and inspection\n- `mutool` (MuPDF) - PDF rendering and inspection\n- `pdftotext` / `pdfinfo` (Poppler) - Text extraction and metadata\n- `exiftool` - Metadata extraction including XMP\n- YARA rules for PDF malware signatures",
     "fields": [
         {
-            "name": "signature",
-            "size": 5,
-            "type": "string",
-            "description": "PDF signature '%PDF-' (0x25 50 44 46 2D)",
-            "forensic_value": true
+            "name": "PDFFileHeader",
+            "type": "section",
+            "description": "**PDF File Header**\n\nThe file header is the first line of a PDF file and identifies both the format and the version. It must begin with `%PDF-` followed by a version number in the format `major.minor`.\n\nPer the PDF specification (ISO 32000), the header should appear at byte offset 0. If it does not, bytes before the header may indicate a **polyglot file** — a file crafted to be valid in multiple formats simultaneously. This is a known malware delivery technique.\n\nThe .bt template uses regex `%[PF]DF-\\d\\.\\d` to match both PDF and FDF headers.",
+            "fields": [
+                {
+                    "name": "Signature",
+                    "size": 5,
+                    "type": "string",
+                    "description": "**PDF File Signature**\n\nThe 5-byte magic number `%PDF-` (hex: `25 50 44 46 2D`). This ASCII string uniquely identifies the file as a Portable Document Format file.\n\nAlternatively, FDF (Forms Data Format) files use `%FDF-` (hex: `25 46 44 46 2D`). FDF files share PDF structure but carry form field data.\n\n*Forensic Note:* Verify the signature appears at offset 0. A displaced signature or non-standard bytes before it may indicate:\n- A polyglot file (also valid as a different format)\n- File packaging or wrapping\n- Stream-based delivery artifacts\n- Potential exploitation attempts targeting parsers that skip to find the header",
+                    "expected_values": ["%PDF-"],
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "Version",
+                    "size": 3,
+                    "type": "string",
+                    "description": "**PDF Version Number**\n\nThe version string in `major.minor` format (e.g., `1.7`, `2.0`). Valid versions are `1.0` through `1.7` and `2.0`.\n\n**Version Significance for Forensics:**\n- `1.0`-`1.2`: No JavaScript, no encryption beyond basic password - older/simpler documents\n- `1.3`: **JavaScript introduced** - first version capable of script-based attacks\n- `1.4`: Transparency, 128-bit encryption - more complex rendering\n- `1.5`: Object streams, cross-ref streams - objects can be hidden inside compressed streams\n- `1.6`: AES encryption - stronger encryption support\n- `1.7`: Last version before ISO standardization, XFA forms (deprecated)\n- `2.0`: Modern standard, AES-256, removed legacy features (XFA, Flash, 3D)\n\n*Forensic Note:* The version declared here may differ from the actual features used in the file body. A common indicator of a crafted/malicious PDF is declaring a low version (e.g., `1.0`) while using features from higher versions (e.g., JavaScript from 1.3+). The `/Version` key in the document catalog can also override this header version.\n\n*Note:* The .bt template validates: `(Version[0] == '1' && Version[2] >= '0' && Version[2] <= '7') || (Version[0] == '2' && Version[2] == '0')`",
+                    "expected_values": ["1.0", "1.1", "1.2", "1.3", "1.4", "1.5", "1.6", "1.7", "2.0"],
+                    "forensic_value": "important"
+                }
+            ]
         },
         {
-            "name": "version",
-            "size": 3,
-            "type": "string",
-            "description": "PDF version number (e.g., '1.4', '1.7', '2.0')"
-        },
-        {
-            "name": "line_ending",
+            "name": "HeaderLineEnding",
             "size": 1,
-            "type": "bytes",
-            "description": "Line ending character(s)"
+            "type": "uint",
+            "description": "**Header Line Ending (first byte)**\n\nThe line ending byte after the version string. Expected values:\n- `0x0A` (10) = Line Feed (Unix/Linux/macOS style `\\n`)\n- `0x0D` (13) = Carriage Return (old Mac style `\\r`, or first byte of Windows `\\r\\n`)\n- `0x20` (32) = Space (some PDF generators add a space before extra comment text on the header line)\n- `0x25` (37) = Percent sign (some minimal PDFs omit line ending and the next comment follows immediately)\n\nPer the PDF specification, the header comment extends to the end of the line. Some generators append additional comment text after the version (e.g., `%PDF-1.7 Generated by...`).\n\n*Forensic Note:* Non-standard line endings or unexpected bytes here may indicate file manipulation or unusual PDF generators. The line ending style can also indicate the operating system used to create the PDF (Unix=LF, Windows=CRLF, old Mac=CR).",
+            "expected_values": [10, 13, 32, 37],
+            "informational": true
         },
         {
-            "name": "remaining_content",
-            "size": 0,
+            "name": "WindowsCRLF",
+            "size": 1,
+            "type": "uint",
+            "condition": "$HeaderLineEnding == 13",
+            "description": "**Windows Line Feed**\n\nIf the header line ends with `\\r\\n` (Windows-style, hex: `0D 0A`), this is the `\\n` (0x0A) following the `\\r`. Present only when the header uses Windows-style line endings.\n\n*Forensic Note:* Windows-style line endings suggest the PDF was generated on a Windows system.",
+            "expected_values": [10],
+            "informational": true
+        },
+        {
+            "name": "BinaryIndicatorSection",
+            "type": "section",
+            "description": "**Binary Indicator Comment Detection**\n\nThe PDF specification (ISO 32000-1 section 7.5.2) recommends that the second line of a PDF file be a comment (`%`) containing at least four bytes with values >= 128 (0x80). This tells text-processing applications (email gateways, FTP clients, etc.) that the file contains binary data and should not be modified as text.\n\nCommon binary indicator: `%` followed by four non-ASCII bytes, e.g., `%\\xE2\\xE3\\xCF\\xD3` (hex: `25 E2 E3 CF D3`).\n\nThis section reads the next byte after the header line ending. If it is `0x25` (`%`), the binary indicator data follows. Otherwise, this byte is the start of the first object body or another structure.",
+            "fields": [
+                {
+                    "name": "BinaryIndicatorCheck",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**Next byte after header line ending**\n\nIf this is `0x25` (37, the `%` character), the second line is a comment — most likely the recommended binary indicator. If it is any other value, it is the start of the first indirect object or another structure.\n\nCommon values:\n- `0x25` (37, `%`) — Comment line follows (binary indicator or other comment)\n- `0x30`-`0x39` (48-57, `0`-`9`) — First digit of an object number (body starts immediately)\n- `0x0A` (10) or `0x0D` (13) — Extra blank line before body",
+                    "informational": true
+                },
+                {
+                    "name": "BinaryIndicatorData",
+                    "size": 4,
+                    "type": "bytes",
+                    "condition": "$BinaryIndicatorCheck == 37",
+                    "description": "**Binary Indicator Bytes**\n\nFour bytes from the binary indicator comment line (after the `%` detected above). Per the PDF specification, each byte should have a value >= 128 (0x80) to force binary transfer mode.\n\nCommon patterns:\n- `E2 E3 CF D3` — Used by Adobe Acrobat\n- `C4 E5 F2 E5` — Less common variant\n- `C3 A4 C3 BC` — UTF-8 encoded variant\n\n*Forensic Note:* If all four bytes are < 0x80, the comment exists but does not serve as a proper binary indicator, suggesting an unusual or minimal PDF generator. Absence of the binary indicator line altogether is technically valid but uncommon in modern PDFs.",
+                    "forensic_value": "identifier"
+                }
+            ]
+        },
+        {
+            "name": "PDFBodyAndTrailer",
             "type": "remaining",
-            "description": "Remaining PDF content (objects, streams, xref table, trailer)"
+            "description": "**PDF Body, Cross-Reference Table, Trailer, and End-of-File**\n\nThe remainder of the PDF file contains the document body (indirect objects with optional streams), cross-reference table(s), trailer dictionaries, startxref pointers, and `%%EOF` markers.\n\nPDF uses a **text-based structure** with variable-length keyword-delimited sections, which cannot be parsed sequentially by this fixed-field engine. Use the hex view with the keyword reference below for manual analysis.\n\n---\n\n**Indirect Object Structure** (from .bt `PDFObject`):\n```\nX Y obj            <- Object number (X), Generation number (Y), 'obj' keyword\n  << ... >>        <- Dictionary body (key-value pairs)\n  stream           <- Optional: 'stream' keyword (hex: 73 74 72 65 61 6D)\n  [binary data]    <- Stream data (length specified by /Length in dictionary)\n  endstream        <- 'endstream' keyword (hex: 65 6E 64 73 74 72 65 61 6D)\nendobj             <- 'endobj' keyword (hex: 65 6E 64 6F 62 6A)\n```\n\nSearch for `6F 62 6A` ('obj') to locate objects. Each object body can contain dictionaries `<< >>`, arrays `[ ]`, strings `( )` or `< >`, names `/Name`, numbers, booleans, and null.\n\n---\n\n**Cross-Reference Table** (from .bt `PDFXRef` + `PDFXRefEntry`):\n```\nxref                           <- Keyword (hex: 78 72 65 66)\nfirst_obj_num entry_count      <- Subsection header (e.g., '0 125')\nnnnnnnnnnn ggggg f \\r\\n        <- 20-byte entries\nnnnnnnnnnn ggggg n \\r\\n        <- n=10-digit offset, g=5-digit generation\n...                            <- f=free, n=in-use\n```\n\nThe first entry is always `0000000000 65535 f \\r\\n` (head of free list). In-use entries ('n') give byte offsets to `X Y obj` keywords. Validate these offsets to detect manipulation.\n\nSearch for `78 72 65 66` ('xref') to locate cross-reference tables. PDF 1.5+ may use **cross-reference streams** (stream objects with `/Type /XRef`) instead of text-based xref tables.\n\n---\n\n**Trailer Dictionary** (from .bt `PDFTrailer`):\n```\ntrailer              <- Keyword (hex: 74 72 61 69 6C 65 72)\n<< /Size N           <- Total number of entries in combined xref\n   /Root X Y R       <- Reference to document catalog (REQUIRED)\n   /Info X Y R       <- Reference to document info dictionary\n   /ID [<hex> <hex>] <- Two-part file identifier\n   /Encrypt X Y R    <- Encryption dictionary (if encrypted)\n   /Prev offset      <- Byte offset to previous xref (incremental updates)\n>>\n```\n\nSearch for `74 72 61 69 6C 65 72` ('trailer'). The `/Root` entry is mandatory.\n\n---\n\n**Startxref** (from .bt `PDFStartxref`):\n```\nstartxref            <- Keyword (hex: 73 74 61 72 74 78 72 65 66)\n12345                <- Byte offset to the most recent xref section\n```\n\nSearch for `73 74 61 72 74 78 72 65 66` ('startxref'). The offset should point to a valid `xref` keyword or cross-reference stream. Invalid offsets indicate corruption or deliberate manipulation.\n\n---\n\n**%%EOF Marker** (from .bt `PDFEOF`):\n```\n%%EOF                <- End marker (hex: 25 25 45 4F 46)\n```\n\nSearch for `25 25 45 4F 46` ('%%EOF'). This marks the logical end of a PDF revision. Multiple `%%EOF` markers indicate incremental updates. **Data after the FINAL `%%EOF` is suspicious** and could be an appended payload, steganographic content, or exploitation data.\n\n---\n\n**Quick Hex Keyword Reference for Manual Analysis:**\n\n| Keyword | Hex Bytes |\n|---------|----------|\n| `%PDF-` (header) | `25 50 44 46 2D` |\n| `%FDF-` (FDF header) | `25 46 44 46 2D` |\n| `obj` | `6F 62 6A` |\n| `endobj` | `65 6E 64 6F 62 6A` |\n| `stream` | `73 74 72 65 61 6D` |\n| `endstream` | `65 6E 64 73 74 72 65 61 6D` |\n| `xref` | `78 72 65 66` |\n| `trailer` | `74 72 61 69 6C 65 72` |\n| `startxref` | `73 74 61 72 74 78 72 65 66` |\n| `%%EOF` | `25 25 45 4F 46` |\n| `/JavaScript` | `2F 4A 61 76 61 53 63 72 69 70 74` |\n| `/JS` | `2F 4A 53` |\n| `/OpenAction` | `2F 4F 70 65 6E 41 63 74 69 6F 6E` |\n| `/AA` | `2F 41 41` |\n| `/Launch` | `2F 4C 61 75 6E 63 68` |\n| `/EmbeddedFile` | `2F 45 6D 62 65 64 64 65 64 46 69 6C 65` |\n| `/Encrypt` | `2F 45 6E 63 72 79 70 74` |\n| `/Linearized` | `2F 4C 69 6E 65 61 72 69 7A 65 64` |\n| `/ObjStm` | `2F 4F 62 6A 53 74 6D` |\n| `/XRef` | `2F 58 52 65 66` |\n\n---\n\n**Validation Checklist** (from .bt `PrintPDFDataAndValidate()`):\n- Exactly one `%PDF-x.y` header should exist\n- Count of `obj` keywords must equal count of `endobj`\n- Count of `stream` must equal count of `endstream`\n- Number of streams should not exceed number of objects\n- Count of `xref` should equal count of `trailer` (conventional xref)\n- Count of `startxref` should equal count of `%%EOF`\n- In-use xref entries ('n') should point to valid object offsets\n- No non-whitespace data before header or after final `%%EOF`"
         }
     ]
 }

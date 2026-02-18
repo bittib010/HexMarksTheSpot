@@ -1,66 +1,629 @@
 {
+    "$schema": "./parser-config.schema.json",
     "name": "WindowsPrefetch",
-    "description": "Windows Prefetch file (.pf) - Evidence of program execution",
-    "version": "1.0",
+    "description": "Windows Prefetch file (.pf) parser - comprehensive evidence of program execution. Parses the file header, file information (offsets, timestamps, run count), file metrics array (per-file load timing and MFT references), trace chains, file name strings, and volume information. Based on the 010 Editor PF.bt template by Changhwan Ji, Hyunjin Kim, Heo Songyi, and Yogesh Khatri. Supports Windows XP/2003 (v17), Vista/7 (v23), 8.x (v26), 10 (v30), and 11 (v31).",
+    "version": "2.0",
     "author": "HexMarksTheSpot",
-    "magic_bytes": "11000000534341",
-    "magic_offset": 0,
+    "magic_bytes": "53434341",
+    "magic_offset": 4,
     "endianness": "little",
     "references": [
         "https://github.com/libyal/libscca/blob/main/documentation/Windows%20Prefetch%20File%20(PF)%20format.asciidoc",
-        "https://www.forensicswiki.org/wiki/Prefetch"
+        "https://www.forensicswiki.org/wiki/Prefetch",
+        "https://www.sweetscape.com/010editor/repository/templates/PF.bt",
+        "https://forensics.wiki/prefetch/",
+        "https://www.sans.org/blog/digital-forensics-prefetch-artifacts/"
     ],
+    "forensic_notes": "**Windows Prefetch Forensic Analysis Guide**\n\n**What is Prefetch?**\nWindows Prefetch is a performance optimization feature that monitors application startup and caches frequently accessed files to reduce launch time. Each application execution creates or updates a `.pf` file in `C:\\Windows\\Prefetch\\`.\n\n**Forensic Significance:**\nPrefetch files are one of the most valuable artifacts for proving **program execution** on a Windows system. They provide:\n- **Evidence that a program ran** - mere existence of a .pf file proves execution\n- **Last execution time(s)** - up to 8 timestamps on Win8+ (1 on XP/Vista/7)\n- **Total run count** - how many times the application was executed\n- **Files and directories accessed** during launch (first ~10 seconds)\n- **Volume information** - serial number, creation time, device path\n- **MFT references** (Win7+) - file system entry indices for loaded files\n\n**File Naming Convention:**\nPrefetch files are named: `EXECUTABLE_NAME-XXXXXXXX.pf`\nWhere `XXXXXXXX` is a hash of the executable path. The same executable running from different paths produces different .pf files.\n\n**Hash Algorithm:**\n- Windows XP: SCCA XP hash\n- Windows Vista/7/8/10: Modified hash incorporating path length and partial path data\n\n**Key Forensic Indicators:**\n\n1. **Suspicious Executables:** Look for .pf files matching:\n   - `CMD.EXE-*.pf`, `POWERSHELL.EXE-*.pf` - Command-line usage\n   - `WSCRIPT.EXE-*.pf`, `CSCRIPT.EXE-*.pf` - Script execution\n   - `MSHTA.EXE-*.pf` - HTML Application execution (common malware vector)\n   - `REGSVR32.EXE-*.pf` - DLL registration (living-off-the-land technique)\n   - `RUNDLL32.EXE-*.pf` - DLL execution\n   - `CERTUTIL.EXE-*.pf` - Certificate utility (used for download/decode)\n   - `BITSADMIN.EXE-*.pf` - BITS transfer (used for download)\n   - `NET.EXE-*.pf`, `NET1.EXE-*.pf` - Network enumeration\n   - `PSEXEC.EXE-*.pf` - Remote execution tool\n   - `RAR.EXE-*.pf`, `7Z.EXE-*.pf` - Data staging/exfiltration\n   - Tools with random-looking names or executed from `%TEMP%`\n\n2. **Timestamp Analysis:**\n   - Last run time(s) establish when the executable was used\n   - Win8+ stores last 8 run times - useful for pattern analysis\n   - Compare with file system timestamps, event logs, and other artifacts\n   - Prefetch file $MFT created timestamp = first execution time\n\n3. **Run Count:**\n   - High run count for unusual tools may indicate persistent malware\n   - Run count of 1 for system tools may indicate one-off reconnaissance\n   - Compare run count with timeline to detect counter-forensic resets\n\n4. **Referenced Files:**\n   - Files loaded during first 10 seconds of execution are recorded\n   - Can reveal DLLs loaded (including malicious ones)\n   - May show configuration files or data files accessed\n   - File name strings list full paths of loaded resources\n\n5. **Volume Serial Number:**\n   - Identifies the specific volume the executable was run from\n   - Can correlate with USB device forensics\n   - Different serial numbers may indicate execution from removable media\n\n**Prefetch Locations:**\n- `C:\\Windows\\Prefetch\\` - Standard location\n- Requires `HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Memory Management\\PrefetchParameters\\EnablePrefetch` = 1, 2, or 3\n- Values: 0=Disabled, 1=Application only, 2=Boot only, 3=Both (default)\n\n**Windows Version Differences:**\n- **XP/2003 (v17):** 128 max entries, 1 last run timestamp, no MFT refs in metrics\n- **Vista/7 (v23):** 128 max entries, 1 last run timestamp, MFT refs added\n- **Win8/8.1 (v26):** 1024 max entries, 8 last run timestamps, SuperFetch integration\n- **Win10 (v30):** 1024 max entries, 8 timestamps, **MAM compressed** on disk\n- **Win11 (v31):** Same as Win10 but version 31\n\n**Win10/11 Compression:**\nPrefetch files on Windows 10+ are compressed using MAM (Microsoft Appx Manager) compression. The raw .pf file starts with `MAM\\x04` header. This parser expects **decompressed** Prefetch data (after the SCCA header). Use tools like `CyberChef`, `PECmd.exe`, or `prefetchruncounts.py` to decompress first.\n\n**Anti-Forensics:**\n- Prefetch can be disabled via registry or Group Policy\n- `.pf` files can be individually deleted\n- Timestomping the .pf file hides execution timing\n- SSD TRIM may affect prefetch file recovery\n- Clearing the Prefetch folder removes all execution evidence\n- Run count can be misleading if .pf file was deleted and recreated\n\n**Cross-Reference Points:**\n- Correlate with ShimCache/AppCompatCache for additional execution evidence\n- Compare with AmCache.hve entries\n- Match volume serials with USB device logs (USBSTOR)\n- Cross-reference MFT entry indices with $MFT analysis\n- Timeline against Windows Event Logs (Security 4688, Sysmon 1)\n- Compare with UserAssist, BAM/DAM, SRUM database",
     "fields": [
         {
-            "name": "format_version",
-            "size": 4,
-            "type": "uint",
-            "description": "Prefetch format version. Indicates Windows version.",
-            "forensic_value": true,
-            "value_map": {
-                "17": "Windows XP/2003",
-                "23": "Windows Vista/7",
-                "26": "Windows 8/8.1",
-                "30": "Windows 10 (v1607+)"
-            }
+            "name": "FileHeader",
+            "type": "section",
+            "description": "**Prefetch File Header (84 bytes)**\n\nThe common header present at the start of every (decompressed) Prefetch file. Contains format version, SCCA signature, executable name, path hash, and boot/application flag. This structure is identical across all Windows versions.\n\nFrom .bt `FileHeader` struct: Version (int) + Signature (char[4]) + Unknown (byte[4]) + FileSize (int) + FileName (wchar_t[30]) + Hash (int) + Flag (int) = 84 bytes.",
+            "fields": [
+                {
+                    "name": "PFVersion",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Prefetch Format Version**\n\nIdentifies the Windows version that created this Prefetch file. Each Windows generation uses a different format version with varying structure sizes and features.\n\nFrom .bt `Version` enum: Windows11=0x1F(31), Windows10=0x1E(30), Windows8x=0x1A(26), Windows7orVista=0x17(23), WindowsXPor2003=0x11(17).\n\n*Forensic Note:* The version number directly identifies the Windows generation of the source system. If you find prefetch files with mixed versions, it may indicate files copied from different machines or OS upgrades.",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "17": "Windows XP / Server 2003 (v17)",
+                        "23": "Windows Vista / 7 (v23)",
+                        "26": "Windows 8 / 8.1 (v26)",
+                        "30": "Windows 10 (v30)",
+                        "31": "Windows 11 (v31)"
+                    },
+                    "expected_values": [17, 23, 26, 30, 31]
+                },
+                {
+                    "name": "PFSignature",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**SCCA Signature**\n\nMust be `SCCA` (hex: `53 43 43 41`) — the \"Superfetch Client Cache Analysis\" marker identifying this as a valid Prefetch file.\n\nFrom .bt: `char Signature[4]; //SCCA`\n\n*Forensic Note:* If this is not `SCCA`, the file may be corrupted, compressed (Win10+ MAM format), or deliberately modified.",
+                    "expected_values": ["SCCA"],
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "PFUnknown1",
+                    "size": 4,
+                    "type": "bytes",
+                    "description": "**Unknown Header Field**\n\nPer libscca documentation, this value is always `0x0F000000` (15 as little-endian uint32). Purpose is unknown but consistent across all versions.\n\nFrom .bt: `byte Unknown[4]`"
+                },
+                {
+                    "name": "PFFileSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Prefetch File Size**\n\nThe total size of the (decompressed) Prefetch file in bytes. Should match actual file size.\n\nFrom .bt: `int FileSize`\n\n*Forensic Note:* If this doesn't match the actual file size, the file may be truncated, corrupted, or tampered with. For Win10+ compressed files, this is the decompressed size.",
+                    "informational": true
+                },
+                {
+                    "name": "ExecutableName",
+                    "size": 60,
+                    "type": "utf16le",
+                    "description": "**Executable Name (29 chars + null)**\n\nThe name of the executable that was prefetched, stored as a null-terminated UTF-16LE string. Maximum 29 characters plus null terminator = 60 bytes.\n\nFrom .bt: `wchar_t FileName[30]` (30 wide chars = 60 bytes)\n\n*Forensic Note:* **This is the primary artifact** — it identifies which program ran. The name is uppercase and includes the extension (e.g., `CMD.EXE`, `POWERSHELL.EXE`). Check against known-suspicious executables listed in the forensic notes. The path is NOT included here — only the filename. The full path can be found in the File Name Strings section.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "PrefetchHash",
+                    "size": 4,
+                    "type": "bytes",
+                    "description": "**Prefetch Path Hash**\n\nA hash of the full executable path. This hash is also used in the .pf filename: `EXECUTABLE_NAME-XXXXXXXX.pf`.\n\nFrom .bt: `int Hash <format=hex>`\n\n*Forensic Note:* The same executable launched from different directories produces different hash values and therefore different .pf files. This allows you to distinguish between, for example, `C:\\Windows\\System32\\cmd.exe` and `C:\\Temp\\cmd.exe`. Known hash algorithms:\n- XP: SCCA XP hash\n- Vista+: Path hashing incorporating directory path components\n\nCompare the hash in the filename with this value — mismatches suggest file renaming.",
+                    "forensic_value": "identifier"
+                },
+                {
+                    "name": "PFFlags",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Prefetch Flags**\n\nIndicates whether this is a boot prefetch or application prefetch file.\n\nFrom .bt `Flag` enum: Boot=0x01, Application=0x00.\n\n*Forensic Note:* Boot prefetch (`NTOSBOOT-B00DFAAD.pf`) records files loaded during the boot process. Application prefetch records files loaded during program launch. A boot flag on a non-boot file name would be anomalous.",
+                    "value_map": {
+                        "0": "Application launch",
+                        "1": "Boot prefetch",
+                        "2": "Application launch (SuperFetch)"
+                    },
+                    "informational": true
+                }
+            ]
         },
         {
-            "name": "signature",
-            "size": 4,
-            "type": "string",
-            "description": "Signature - should be 'SCCA' (0x53, 0x43, 0x43, 0x41)"
+            "name": "FileInfoOffsets",
+            "type": "section",
+            "description": "**File Information - Section Offsets & Counts (36 bytes)**\n\nThe first 9 fields of the File Information structure are common across all Windows versions. They provide byte offsets (from file start) and entry counts for all major data sections: File Metrics, Trace Chains, File Name Strings, and Volume Information.\n\nThese offsets are absolute (relative to file start) and used by the .bt template with `FSeek()` to navigate to each section.\n\nFrom .bt: First 9 `uint` fields in `Win10_FileInfomation`, `Win8_FileInfomation`, `Win7_FileInfomation`, and `Winxp_FileInformation` — identical across all versions.",
+            "fields": [
+                {
+                    "name": "MetricsOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Metrics Array Offset**\n\nAbsolute byte offset from file start to the File Metrics Array. Each metrics entry describes a file loaded during application startup, including load timing dataand MFT references (Win7+).\n\nTypical values: 0x0098 (XP), 0x00F0 (Win7), 0x0130 (Win8), 0x012C (Win10/11).",
+                    "informational": true
+                },
+                {
+                    "name": "MetricsCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Metrics Entry Count**\n\nNumber of entries in the File Metrics Array. Each entry corresponds to a file or resource loaded during the first ~10 seconds of application startup.\n\n*Forensic Note:* A high metrics count indicates many files were loaded — typical for complex applications. An unusually low count for a known-complex application may indicate the prefetch data was cleared and is rebuilding.",
+                    "informational": true
+                },
+                {
+                    "name": "ChainsOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Trace Chains Array Offset**\n\nAbsolute byte offset to the Trace Chains Array. Trace chains record disk block access patterns during application loading, used by the prefetcher to optimize future loads.",
+                    "informational": true
+                },
+                {
+                    "name": "ChainsCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Trace Chain Entry Count**\n\nNumber of entries in the Trace Chains Array.",
+                    "informational": true
+                },
+                {
+                    "name": "NameStringOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Name Strings Offset**\n\nAbsolute byte offset to the File Name Strings section, containing UTF-16LE null-terminated strings of all files and directories referenced during application startup.\n\n*Forensic Note:* The file name strings section contains full paths of every file loaded, which can reveal DLLs loaded (including injected or malicious ones), configuration files accessed, and data files opened.",
+                    "informational": true
+                },
+                {
+                    "name": "NameStringSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Name Strings Size (bytes)**\n\nTotal size of the File Name Strings section in bytes.",
+                    "informational": true
+                },
+                {
+                    "name": "VolumesInfoOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Volume Information Offset**\n\nAbsolute byte offset to the Volume Information section, containing volume device path, serial number, creation time, file references, and directory strings for each volume involved in the prefetch operation.",
+                    "informational": true
+                },
+                {
+                    "name": "VolumesCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Volume Count**\n\nNumber of volumes referenced during application startup. Usually 1 (the system volume), but may be higher if the application loaded files from multiple drives.\n\n*Forensic Note:* Multiple volumes may indicate file access from removable media or network drives.",
+                    "informational": true
+                },
+                {
+                    "name": "VolumesInfoSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Volume Information Size (bytes)**\n\nTotal size of the Volume Information section in bytes.",
+                    "informational": true
+                }
+            ]
         },
         {
-            "name": "unknown1",
-            "size": 4,
-            "type": "uint",
-            "description": "Unknown field"
+            "name": "FileInfo_XP",
+            "type": "section",
+            "condition": "$PFVersion == 17",
+            "description": "**File Information - Windows XP/2003 Specific (32 bytes)**\n\nVersion-specific portion of the File Information structure for Windows XP/Server 2003 (format version 17). Contains a single last run timestamp and run count.\n\nFrom .bt `Winxp_FileInformation`: FILETIME LastRunTime + uint64 unknown[2] + uint RunCount + uint Unknown = 32 bytes after the 36-byte common offsets.",
+            "fields": [
+                {
+                    "name": "LastRunTime",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "**Last Execution Timestamp**\n\nWindows FILETIME indicating when the application was last run. This is the single most important timestamp in XP/2003 prefetch files.\n\n*Forensic Note:* Correlate with file system timestamps, Event Logs, and other time-based artifacts. Only the most recent execution is recorded on XP/2003.",
+                    "forensic_value": "timestamp"
+                },
+                {
+                    "name": "FI_XP_Reserved1",
+                    "size": 16,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (16 bytes)"
+                },
+                {
+                    "name": "RunCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Execution Run Count**\n\nTotal number of times this application has been launched since the prefetch file was created.\n\n*Forensic Note:* **Critical evidence of execution frequency.** A run count of 1 may indicate a first-time or one-off execution (reconnaissance, lateral movement tool). A persistently high run count for an unusual tool suggests ongoing malicious activity. Note: if the .pf file was deleted and recreated, the run count resets.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "FI_XP_Reserved2",
+                    "size": 4,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (4 bytes)"
+                }
+            ]
         },
         {
-            "name": "file_size",
-            "size": 4,
-            "type": "uint",
-            "description": "Size of the prefetch file"
+            "name": "FileInfo_Win7",
+            "type": "section",
+            "condition": "$PFVersion == 23",
+            "description": "**File Information - Windows Vista/7 Specific (124 bytes)**\n\nVersion-specific portion for Windows Vista/7 (format version 23). Contains a single last run timestamp and run count, plus additional unknown/reserved fields.\n\nFrom .bt `Win7_FileInfomation`: uint64 Unknown1 + FILETIME LastRunTime + uint64 Unknown2[2] + uint RunCount + uint Unknown3 + uint Unknown4 + uint64 Unknown5[10] = 124 bytes.",
+            "fields": [
+                {
+                    "name": "FI_Win7_Reserved1",
+                    "size": 8,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (8 bytes)"
+                },
+                {
+                    "name": "LastRunTime",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "**Last Execution Timestamp**\n\nWindows FILETIME indicating when the application was last run. Vista and Windows 7 only store the single most recent execution time.\n\n*Forensic Note:* This is the primary temporal evidence. Cross-reference with ShimCache last modified timestamps, AmCache timestamps, and Security Event 4688 process creation events.",
+                    "forensic_value": "timestamp"
+                },
+                {
+                    "name": "FI_Win7_Reserved2",
+                    "size": 16,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (16 bytes)"
+                },
+                {
+                    "name": "RunCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Execution Run Count**\n\nTotal number of times this application has been launched.\n\n*Forensic Note:* See XP RunCount description for forensic significance.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "FI_Win7_Reserved3",
+                    "size": 8,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (8 bytes)"
+                },
+                {
+                    "name": "FI_Win7_Reserved4",
+                    "size": 80,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (80 bytes — 10 x uint64)"
+                }
+            ]
         },
         {
-            "name": "executable_name",
-            "size": 60,
-            "type": "utf16le",
-            "description": "Name of the executable (up to 29 characters + null terminator)",
-            "forensic_value": true
+            "name": "FileInfo_Win8",
+            "type": "section",
+            "condition": "$PFVersion == 26",
+            "description": "**File Information - Windows 8.x Specific (188 bytes)**\n\nVersion-specific portion for Windows 8/8.1 (format version 26). Introduces 8 last run timestamps (recording the 8 most recent executions) instead of just one.\n\nFrom .bt `Win8_FileInfomation`: uint64 Unknown1 + FILETIME LastRunTime[8] + uint64 Unknown2[2] + uint RunCount + uint Unknown3 + uint Unknown4 + uint64 Unknown5[11] = 188 bytes.",
+            "fields": [
+                {
+                    "name": "FI_Win8_Reserved1",
+                    "size": 8,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (8 bytes)"
+                },
+                {
+                    "name": "LastRunTimes_Win8",
+                    "type": "struct",
+                    "repeat": 8,
+                    "description": "**Last 8 Execution Timestamps**\n\nEight FILETIME values recording the 8 most recent application execution times. The first is the most recent. Unused entries are zeroed.\n\n*Forensic Note:* **Major improvement over XP/Vista/7** — up to 8 execution times allow pattern analysis. Look for regular intervals (scheduled tasks/persistence), clustered executions (incident activity burst), or single entries (one-off reconnaissance). Zero timestamps indicate fewer than 8 total executions.",
+                    "fields": [
+                        {
+                            "name": "LastRunTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "Execution timestamp (FILETIME). Zero = unused slot.",
+                            "forensic_value": "timestamp"
+                        }
+                    ]
+                },
+                {
+                    "name": "FI_Win8_Reserved2",
+                    "size": 16,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (16 bytes — 2 x uint64)"
+                },
+                {
+                    "name": "RunCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Execution Run Count**\n\nTotal number of times this application has been launched.\n\n*Forensic Note:* Compare with the number of non-zero LastRunTime entries. If run count is much higher than 8, only the 8 most recent runs are timestamped.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "FI_Win8_Reserved3",
+                    "size": 8,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (8 bytes)"
+                },
+                {
+                    "name": "FI_Win8_Reserved4",
+                    "size": 88,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (88 bytes — 11 x uint64)"
+                }
+            ]
         },
         {
-            "name": "prefetch_hash",
-            "size": 4,
+            "name": "FileInfo_Win10",
+            "type": "section",
+            "condition": "$PFVersion == 30 or $PFVersion == 31",
+            "description": "**File Information - Windows 10/11 Specific (180 bytes)**\n\nVersion-specific portion for Windows 10 (v30) and Windows 11 (v31). Same 8 timestamps as Win8, but the unknown field sizes differ slightly.\n\nFrom .bt `Win10_FileInfomation`: uint64 Unknown1 + FILETIME LastRunTime[8] + uint64 Unknown2 + uint RunCount + uint Unknown3 + uint Unknown4 + uint64 Unknown5[11] = 180 bytes.",
+            "fields": [
+                {
+                    "name": "FI_Win10_Reserved1",
+                    "size": 8,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (8 bytes)"
+                },
+                {
+                    "name": "LastRunTimes_Win10",
+                    "type": "struct",
+                    "repeat": 8,
+                    "description": "**Last 8 Execution Timestamps**\n\nEight FILETIME values recording the 8 most recent application execution times. The first is the most recent. Unused entries are zeroed.\n\n*Forensic Note:* Same 8-timestamp capability as Windows 8. Look for execution patterns, correlate with incident timelines, and identify persistence mechanisms through regular execution intervals.",
+                    "fields": [
+                        {
+                            "name": "LastRunTime",
+                            "size": 8,
+                            "type": "filetime",
+                            "description": "Execution timestamp (FILETIME). Zero = unused slot.",
+                            "forensic_value": "timestamp"
+                        }
+                    ]
+                },
+                {
+                    "name": "FI_Win10_Reserved2",
+                    "size": 8,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (8 bytes — 1 x uint64)"
+                },
+                {
+                    "name": "RunCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Execution Run Count**\n\nTotal number of times this application has been launched.\n\n*Forensic Note:* Compare with the number of non-zero LastRunTime entries. Run count persists across .pf file updates.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "FI_Win10_Reserved3",
+                    "size": 8,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (8 bytes)"
+                },
+                {
+                    "name": "FI_Win10_Reserved4",
+                    "size": 88,
+                    "type": "skip",
+                    "description": "Reserved/Unknown (88 bytes — 11 x uint64)"
+                }
+            ]
+        },
+        {
+            "name": "GapToMetrics_XP",
+            "type": "skip",
+            "condition": "$PFVersion == 17",
+            "size": "$MetricsOffset - 152",
+            "description": "Padding between File Information and File Metrics Array (XP: FileInfo ends at offset 152)"
+        },
+        {
+            "name": "GapToMetrics_Win7",
+            "type": "skip",
+            "condition": "$PFVersion == 23",
+            "size": "$MetricsOffset - 244",
+            "description": "Padding between File Information and File Metrics Array (Win7: FileInfo ends at offset 244)"
+        },
+        {
+            "name": "GapToMetrics_Win8",
+            "type": "skip",
+            "condition": "$PFVersion == 26",
+            "size": "$MetricsOffset - 308",
+            "description": "Padding between File Information and File Metrics Array (Win8: FileInfo ends at offset 308)"
+        },
+        {
+            "name": "GapToMetrics_Win10",
+            "type": "skip",
+            "condition": "$PFVersion == 30 or $PFVersion == 31",
+            "size": "$MetricsOffset - 300",
+            "description": "Padding between File Information and File Metrics Array (Win10/11: FileInfo ends at offset 300)"
+        },
+        {
+            "name": "FileMetrics_XP",
+            "type": "struct",
+            "condition": "$PFVersion == 17",
+            "repeat": "$MetricsCount",
+            "description": "**File Metrics Array — Windows XP/2003 (20 bytes per entry)**\n\nEach entry describes a file loaded during application startup. XP metrics do not include MFT file references.\n\nFrom .bt `Winxp_Entry_1`: PrefetchStartTime (uint) + PrefetchDuration (uint) + FileNameStringOffset (uint) + FileNameStringNumber (uint) + Flags (uint) = 20 bytes.",
+            "fields": [
+                {
+                    "name": "FM_StartTime",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Prefetch Start Time**\n\nRelative time offset (in 100ns units?) when this file started being fetched during application launch."
+                },
+                {
+                    "name": "FM_Duration",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Prefetch Duration**\n\nDuration of the prefetch operation for this file."
+                },
+                {
+                    "name": "FM_NameOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Name String Offset**\n\nCharacter offset into the File Name Strings section where this file's path starts."
+                },
+                {
+                    "name": "FM_NameChars",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Name String Length (characters)**\n\nNumber of UTF-16 characters in this file's path string."
+                },
+                {
+                    "name": "FM_Flags",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Metrics Flags**\n\nFlags for this file metrics entry."
+                }
+            ]
+        },
+        {
+            "name": "FileMetrics",
+            "type": "struct",
+            "condition": "$PFVersion != 17",
+            "repeat": "$MetricsCount",
+            "description": "**File Metrics Array — Windows Vista+ (32 bytes per entry)**\n\nEach entry describes a file loaded during application startup. Vista and later include average prefetch duration and NTFS MFT file reference data.\n\nFrom .bt `Win10_Entry_1` / `Win8_Entry_1` / `Win7_Entry_1`: PrefetchStartTime + PrefetchDuration + AveragePrefetchDuration + FileNameStringOffset + FileNameStringNumber + Flags + FileReference (MFT entry 6 bytes + sequence 2 bytes) = 32 bytes.",
+            "fields": [
+                {
+                    "name": "FM_StartTime",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Prefetch Start Time**\n\nRelative time when this file started being fetched during application launch."
+                },
+                {
+                    "name": "FM_Duration",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Prefetch Duration**\n\nDuration of the prefetch operation for this file."
+                },
+                {
+                    "name": "FM_AvgDuration",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Average Prefetch Duration**\n\nAverage duration across multiple executions."
+                },
+                {
+                    "name": "FM_NameOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Name String Offset**\n\nCharacter offset into the File Name Strings section."
+                },
+                {
+                    "name": "FM_NameChars",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Name String Length (characters)**\n\nNumber of UTF-16 characters in this file's path string."
+                },
+                {
+                    "name": "FM_Flags",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Metrics Flags**\n\nFlags for this file metrics entry."
+                },
+                {
+                    "name": "FM_MFTEntryIndex",
+                    "size": 6,
+                    "type": "bytes",
+                    "description": "**NTFS MFT Entry Index (6 bytes)**\n\nThe 48-bit MFT entry number for this file. This is the index into the $MFT table.\n\nFrom .bt `FileReference`: `byte FileReferenceMFTEntryIndex[6]`\n\n*Forensic Note:* Cross-reference with $MFT analysis to get full file metadata, timestamps, and alternate data streams. The MFT entry persists even for deleted files until overwritten.",
+                    "forensic_value": "identifier"
+                },
+                {
+                    "name": "FM_MFTSeqNum",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**NTFS MFT Sequence Number**\n\nThe MFT entry sequence number. Incremented each time the entry is reused for a new file.\n\nFrom .bt `FileReference`: `byte SequenceNumber[2]`\n\n*Forensic Note:* If the current MFT entry at this index has a higher sequence number, the original file has been deleted and the entry reallocated."
+                }
+            ]
+        },
+        {
+            "name": "GapToChains_XP",
+            "type": "skip",
+            "condition": "$PFVersion == 17",
+            "size": "$ChainsOffset - $MetricsOffset - $MetricsCount * 20",
+            "description": "Padding between File Metrics and Trace Chains (XP: 20 bytes per metric entry)"
+        },
+        {
+            "name": "GapToChains",
+            "type": "skip",
+            "condition": "$PFVersion != 17",
+            "size": "$ChainsOffset - $MetricsOffset - $MetricsCount * 32",
+            "description": "Padding between File Metrics and Trace Chains (Win7+: 32 bytes per metric entry)"
+        },
+        {
+            "name": "TraceChains_Win10",
+            "type": "struct",
+            "condition": "$PFVersion == 30 or $PFVersion == 31",
+            "repeat": "$ChainsCount",
+            "description": "**Trace Chains Array — Windows 10/11 (8 bytes per entry)**\n\nRecords disk block access patterns during application loading. Win10/11 entries are 8 bytes (no NextArrayEntryIndex field).\n\nFrom .bt `Win10_Entry_2`: TotalBlockLoadCount (uint) + Unknown (uint) = 8 bytes.",
+            "fields": [
+                {
+                    "name": "TC_BlockLoadCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Total Block Load Count**\n\nNumber of times this disk block was loaded during application startup."
+                },
+                {
+                    "name": "TC_Unknown",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Unknown field."
+                }
+            ]
+        },
+        {
+            "name": "TraceChains",
+            "type": "struct",
+            "condition": "$PFVersion == 17 or $PFVersion == 23 or $PFVersion == 26",
+            "repeat": "$ChainsCount",
+            "description": "**Trace Chains Array — Windows XP/Vista/7/8 (12 bytes per entry)**\n\nRecords disk block access patterns. Pre-Win10 entries include a NextArrayEntryIndex field forming a linked list.\n\nFrom .bt `Win7_Entry_2` / `Win8_Entry_2` / `Winxp_Entry_2`: NextArrayEntryIndex (uint) + TotalBlockLoadCount (uint) + Unknown (uint) = 12 bytes.",
+            "fields": [
+                {
+                    "name": "TC_NextEntry",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Next Array Entry Index**\n\nIndex of the next trace chain entry in the linked list."
+                },
+                {
+                    "name": "TC_BlockLoadCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Total Block Load Count**\n\nNumber of times this disk block was loaded."
+                },
+                {
+                    "name": "TC_Unknown",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Unknown field."
+                }
+            ]
+        },
+        {
+            "name": "GapToNames_Win10",
+            "type": "skip",
+            "condition": "$PFVersion == 30 or $PFVersion == 31",
+            "size": "$NameStringOffset - $ChainsOffset - $ChainsCount * 8",
+            "description": "Padding between Trace Chains and File Name Strings (Win10/11: 8 bytes per chain entry)"
+        },
+        {
+            "name": "GapToNames",
+            "type": "skip",
+            "condition": "$PFVersion == 17 or $PFVersion == 23 or $PFVersion == 26",
+            "size": "$NameStringOffset - $ChainsOffset - $ChainsCount * 12",
+            "description": "Padding between Trace Chains and File Name Strings (XP/7/8: 12 bytes per chain entry)"
+        },
+        {
+            "name": "FileNameStrings",
+            "size": "$NameStringSize",
             "type": "bytes",
-            "description": "Prefetch hash - hash of the executable path",
-            "forensic_value": true
+            "description": "**File Name Strings Block**\n\nA contiguous block of null-terminated UTF-16LE strings representing the full paths of all files and directories loaded during the first ~10 seconds of application startup.\n\nFrom .bt: `Win10_FileNameStrings` / `Win8_FileNameStrings` / `Win7_FileNameStrings` / `Winxp_FileNameStrings` — each reads wstring entries until the block is consumed.\n\nThe block size is specified by `NameStringSize`. Individual strings are referenced by the `FM_NameOffset` field in File Metrics entries.\n\n*Forensic Note:* **Extremely valuable for malware analysis.** Examine the full paths of loaded files for:\n- DLLs loaded from unusual locations (`%TEMP%`, `%APPDATA%`, user Desktop)\n- Configuration files that reveal tool parameters\n- Data files accessed during execution\n- Network paths (`\\\\server\\share\\...`) indicating lateral movement\n- Missing files that have since been deleted\n\nTo decode: interpret this block as consecutive UTF-16LE null-terminated strings. Each string is a full device path (e.g., `\\DEVICE\\HARDDISKVOLUME2\\WINDOWS\\SYSTEM32\\NTDLL.DLL`).",
+            "forensic_value": "path"
         },
         {
-            "name": "unknown2",
-            "size": 4,
-            "type": "bytes",
-            "description": "Unknown/Flags field"
+            "name": "GapToVolumes",
+            "type": "skip",
+            "size": "$VolumesInfoOffset - $NameStringOffset - $NameStringSize",
+            "description": "Padding between File Name Strings and Volume Information"
+        },
+        {
+            "name": "VolumeInformation",
+            "type": "section",
+            "description": "**Volume Information — First Volume Entry Header**\n\nThe Volume Information section contains per-volume data including the device path, creation timestamp, serial number, file references, and directory strings. This parser extracts the common fixed-header fields from the first volume entry.\n\nThe first 36 bytes of the volume entry are common to all versions (9 uint fields). Subsequent fields are version-specific. Sub-data (device path string, file reference array, directory strings) are at offsets relative to the volume entry start and are captured in the remaining data.\n\nFrom .bt: `Win10_VolumeInformationEntry` / `Win8_VolumeInformationEntry` / `Win7_VolumeInformationEntry` / `VolumeInformationEntry` (XP).",
+            "fields": [
+                {
+                    "name": "Vol_DevicePathOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Volume Device Path Offset**\n\nOffset (relative to volume entry start) to the volume device path UTF-16LE string, e.g., `\\DEVICE\\HARDDISKVOLUME2`."
+                },
+                {
+                    "name": "Vol_DevicePathChars",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Volume Device Path Character Count**\n\nNumber of UTF-16 characters in the volume device path."
+                },
+                {
+                    "name": "Vol_CreateTime",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "**Volume Creation Timestamp**\n\nWindows FILETIME when the volume was created (formatted). This is the creation time of the NTFS volume, not the drive.\n\n*Forensic Note:* Volume creation time can correlate with OS installation date or volume re-imaging events. Compare across multiple prefetch files for consistency — a mismatch may indicate files from different systems.",
+                    "forensic_value": "timestamp"
+                },
+                {
+                    "name": "Vol_SerialNumber",
+                    "size": 4,
+                    "type": "bytes",
+                    "description": "**Volume Serial Number**\n\nThe NTFS volume serial number (displayed as hex). This uniquely identifies the specific volume.\n\nFrom .bt: `uint VolumeSerialNumber <format=hex>`\n\n*Forensic Note:* **Key correlation artifact.** Match this serial number with:\n- Other prefetch files (same system confirmation)\n- LNK files (Shell Link volume serial field)\n- USB device forensics (USBSTOR registry entries)\n- $MFT volume serial in boot sector\n- Registry MountedDevices entries",
+                    "forensic_value": "identifier"
+                },
+                {
+                    "name": "Vol_FileRefsOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File References Offset**\n\nOffset (relative to volume entry start) to the file references array. Contains MFT entry references for files accessed from this volume."
+                },
+                {
+                    "name": "Vol_FileRefsSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File References Data Size (bytes)**\n\nTotal size of the file references data block."
+                },
+                {
+                    "name": "Vol_DirStringsOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Directory Strings Offset**\n\nOffset (relative to volume entry start) to the directory strings list."
+                },
+                {
+                    "name": "Vol_DirStringsCount",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Number of Directory Strings**\n\nCount of directory path strings. Each represents a directory that was accessed during application startup.\n\n*Forensic Note:* The directory list reveals which folders were traversed during application loading. Look for non-standard directories, temp folders, or user profile paths that may indicate malware activity."
+                },
+                {
+                    "name": "Vol_Unknown1",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "Unknown field."
+                }
+            ]
+        },
+        {
+            "name": "RemainingVolumeAndTrailingData",
+            "type": "remaining",
+            "description": "**Remaining Volume Data and Trailing Data**\n\nThe remainder of the file contains:\n\n1. **Volume-specific extended fields** — Version-specific additional fields in the volume entry header:\n   - XP: No additional fields (entry header is 36 bytes)\n   - Win7/8: Unknown2[7] (28 bytes) + CopyNumberDirectoryStrings (4) + Unknown3[7] (28) + Unknown4 (4) = 64 additional bytes\n   - Win10/11: Unknown2[3] (24 bytes as uint64) + CopyNumberDirectoryStrings (4) + Unknown3[3] (24) + Unknown (4) = 56 additional bytes\n\n2. **Volume Device Path** — UTF-16LE string at Vol_DevicePathOffset (relative to volume entry start), e.g., `\\DEVICE\\HARDDISKVOLUME2`\n\n3. **File References Array** — At Vol_FileRefsOffset. Header: Unknown (uint) + NumberOfFileReferences (uint) + Unknown (uint64), followed by 8-byte MFT file reference entries (6-byte entry index + 2-byte sequence number)\n\n4. **Directory Strings** — At Vol_DirStringsOffset. Each entry: uint16 character count + UTF-16LE string. Lists all directories accessed during application startup.\n\n5. **Additional Volume Entries** — If VolumesCount > 1, additional volume entries follow.\n\n6. **Trailing Data** — Any data after the volume information block. From .bt: `Trailing Data` parsed as additional DirectoryStrings. May also contain additional data structures added by Windows updates."
         }
     ]
 }
