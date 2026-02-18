@@ -186,7 +186,8 @@ def setup_modern_style():
         foreground=ModernTheme.TEXT_PRIMARY,
         relief="flat",
         font=('Segoe UI', 10, 'bold'),
-        padding=(10, 8)
+        padding=(10, 8),
+        anchor='w'
     )
     style.map(
         "Modern.Treeview",
@@ -659,13 +660,13 @@ class Main:
             style="Modern.Treeview",
             show="headings"
         )
-        self.sequence_treeview.heading('Offset', text='Offset')
-        self.sequence_treeview.heading('Name', text='Name')
-        self.sequence_treeview.heading('Value', text='Value')
+        self.sequence_treeview.heading('Offset', text='Offset', anchor=W)
+        self.sequence_treeview.heading('Name', text='Name', anchor=W)
+        self.sequence_treeview.heading('Value', text='Value', anchor=W)
         
-        self.sequence_treeview.column('Offset', width=60, minwidth=50)
-        self.sequence_treeview.column('Name', width=120, minwidth=80)
-        self.sequence_treeview.column('Value', width=150, minwidth=100)
+        self.sequence_treeview.column('Offset', width=60, minwidth=50, anchor=W)
+        self.sequence_treeview.column('Name', width=120, minwidth=80, anchor=W)
+        self.sequence_treeview.column('Value', width=150, minwidth=100, anchor=W)
         
         self.sequence_treeview.grid(row=0, column=0, sticky=N+S+E+W)
         
@@ -676,7 +677,7 @@ class Main:
             style="Modern.Vertical.TScrollbar"
         )
         self.sequence_vscrollbar.grid(row=0, column=1, sticky=N+S)
-        self.sequence_treeview.configure(yscrollcommand=self.sequence_vscrollbar.set)
+        self.sequence_treeview.configure(yscrollcommand=self._treeview_yscroll_callback)
         self.sequence_vscrollbar.config(command=self.sequence_treeview.yview)
         
         # Horizontal scrollbar for treeview
@@ -808,6 +809,11 @@ class Main:
         self.offset_to_tag = {}          # offset -> tag (first tag at that offset)
         self.current_highlight_tag = None  # Currently highlighted tag
         
+        # Treeview border highlight (4 thin frames forming a black border)
+        self._highlight_item_id = None
+        self._border_frames = []
+        self._from_hex_click = False  # Flag to prevent scroll loop on hex click
+        
         # Don't start in fullscreen by default for better usability
         # self.master.attributes("-fullscreen", True)
         
@@ -820,6 +826,10 @@ class Main:
         
         # Bind treeview selection
         self.sequence_treeview.bind("<<TreeviewSelect>>", self.listbox_item_selected)
+        
+        # Bind scroll/resize events to update treeview highlight border position
+        self.sequence_treeview.bind('<Configure>', lambda e: self.master.after_idle(self._update_treeview_border_position))
+        self.sequence_treeview.bind('<MouseWheel>', lambda e: self.master.after(10, self._update_treeview_border_position))
 
     def export_to_csv(self):
         # Ask the user where to save the CSV file
@@ -892,6 +902,54 @@ class Main:
         self.open_button.config(state="normal")
         self.stop_button.config(state="disabled")
 
+    def _treeview_yscroll_callback(self, *args):
+        """Wrapper for treeview yscrollcommand that also updates the highlight border."""
+        self.sequence_vscrollbar.set(*args)
+        self.master.after_idle(self._update_treeview_border_position)
+
+    def _create_highlight_border(self):
+        """Create 4 thin Frame widgets to form a black border around treeview items."""
+        if self._border_frames:
+            return
+        for _ in range(4):  # top, bottom, left, right
+            f = Frame(self.sequence_treeview, bg='black')
+            self._border_frames.append(f)
+
+    def _show_treeview_border(self, item_id):
+        """Show a black border around the specified treeview item."""
+        self._create_highlight_border()
+        self._highlight_item_id = item_id
+        # Use after_idle so bbox reflects the current layout
+        self.master.after_idle(self._update_treeview_border_position)
+
+    def _update_treeview_border_position(self):
+        """Update the border frame positions based on current item bbox."""
+        if not self._highlight_item_id or not self._border_frames:
+            return
+        try:
+            bbox = self.sequence_treeview.bbox(self._highlight_item_id)
+        except TclError:
+            self._hide_treeview_border()
+            return
+        if not bbox:
+            # Item scrolled out of view - hide border
+            for f in self._border_frames:
+                f.place_forget()
+            return
+        x, y, w, h = bbox
+        bw = 2  # border width
+        top, bottom, left, right = self._border_frames
+        top.place(x=x, y=y, width=w, height=bw)
+        bottom.place(x=x, y=y + h - bw, width=w, height=bw)
+        left.place(x=x, y=y, width=bw, height=h)
+        right.place(x=x + w - bw, y=y, width=bw, height=h)
+
+    def _hide_treeview_border(self):
+        """Hide the treeview item border."""
+        for f in self._border_frames:
+            f.place_forget()
+        self._highlight_item_id = None
+
     def listbox_item_selected(self, event):
         """
         Handle the selection event in the sequence treeview.
@@ -914,18 +972,25 @@ class Main:
                 else:
                     tag = str(tags)
             
-            # Use display position (byte_counter at time of insertion) for scroll calc
-            # This correctly maps to where the bytes are in the hex widget
-            display_pos = self.tag_to_display_pos.get(tag, offset) if tag else offset
+            # Only scroll hex view if the selection came from treeview click,
+            # not from a hex viewer click (avoids scroll jump loop)
+            if not self._from_hex_click:
+                # Use display position (byte_counter at time of insertion) for scroll calc
+                # This correctly maps to where the bytes are in the hex widget
+                display_pos = self.tag_to_display_pos.get(tag, offset) if tag else offset
+                
+                # Calculate the corresponding row and column in the Text widget
+                row = display_pos // 16 + 1  # Text widget indices start from 1
+                col_hex = (display_pos % 16) * 3
+                col_ascii = display_pos % 16
+                
+                # Scroll both views to the selected position
+                self.text_widget.textWidget.see(f"{row}.{col_hex}")
+                self.text_widget.asciiText.see(f"{row}.{col_ascii}")
+            self._from_hex_click = False
             
-            # Calculate the corresponding row and column in the Text widget
-            row = display_pos // 16 + 1  # Text widget indices start from 1
-            col_hex = (display_pos % 16) * 3
-            col_ascii = display_pos % 16
-            
-            # Scroll both views to the selected position
-            self.text_widget.textWidget.see(f"{row}.{col_hex}")
-            self.text_widget.asciiText.see(f"{row}.{col_ascii}")
+            # Show black border around the selected treeview item
+            self._show_treeview_border(selected[0])
             
             # Highlight the corresponding hex bytes
             if tag:
@@ -1593,6 +1658,8 @@ class Main:
         self.offset_to_tag = {}
         self.tag_to_display_pos = {}   # tag -> display byte position in hex widget
         self.current_highlight_tag = None
+        self._hide_treeview_border()
+        self._from_hex_click = False
         
         # Collect all node data first (can be done in background thread)
         self.collected_nodes = []
@@ -1839,12 +1906,15 @@ class Main:
         if tag in self.tag_to_treeview_item:
             item_id = self.tag_to_treeview_item[tag]
             try:
-                # Clear previous selection and select this item
+                # Set flag so listbox_item_selected won't scroll hex view back
+                self._from_hex_click = True
+                # Select and scroll treeview to show the item
                 self.sequence_treeview.selection_set(item_id)
-                # Scroll treeview to show the selected item
                 self.sequence_treeview.see(item_id)
+                # Show black border around the treeview item
+                self._show_treeview_border(item_id)
             except TclError:
-                # Item may have been removed (e.g., after re-parsing)
+                self._from_hex_click = False
                 pass
 
         self.status_bar.config(
