@@ -1,0 +1,235 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "RegistryHive",
+    "description": "Windows Registry Hive File Format - Comprehensive forensic parser with educational documentation. Covers the regf base block header and hbin (hive bin) block headers. Registry hives are the on-disk storage format for the Windows Registry.",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "72656766",
+    "magic_offset": 0,
+    "endianness": "little",
+    "references": [
+        "https://github.com/msuhanov/regf/blob/master/Windows%20registry%20file%20format%20specification.md",
+        "https://learn.microsoft.com/en-us/windows/win32/sysinfo/registry",
+        "https://www.forensicswiki.org/wiki/Windows_Registry",
+        "https://binaryforay.blogspot.com/2015/01/registry-hive-basics.html",
+        "https://github.com/EricZimmerman/Registry"
+    ],
+    "forensic_notes": "**Windows Registry Hive Forensic Analysis Guide**\n\n**What is a registry hive?**\nThe Windows Registry is a hierarchical database that stores configuration settings for the operating system, installed software, hardware, and user preferences. A **registry hive** is a single file on disk that contains one branch (subtree) of the registry. When Windows boots, it loads these hive files into memory and presents them as a unified registry tree.\n\n**Why registry hives matter forensically:**\nThe Windows Registry is one of the **single most important forensic artifacts** on a Windows system. It records:\n- Every program ever installed (and many that were uninstalled)\n- Every USB device ever connected\n- Every file and folder recently opened\n- Network connections, Wi-Fi passwords, and IP configurations\n- User account details and login history\n- Application settings, MRU (Most Recently Used) lists\n- Malware persistence mechanisms (Run keys, services, scheduled tasks)\n- System timezone, computer name, OS install date\n\n**Key Hive Files and Their Locations:**\n\n1. **SAM** (`C:\\Windows\\System32\\config\\SAM`)\n   - Security Accounts Manager - local user accounts and password hashes\n   - Contains: usernames, SIDs, password hashes (NTLM), last login times, account creation dates, login count, failed logins\n   - *Forensic gold:* User enumeration, password cracking, detecting hidden/disabled accounts\n\n2. **SYSTEM** (`C:\\Windows\\System32\\config\\SYSTEM`)\n   - System configuration and hardware\n   - Contains: ControlSets, mounted devices, services, drivers, computer name, timezone, USB device history, last shutdown time\n   - *Forensic gold:* `MountedDevices` for all volumes ever mounted, `Enum\\USB` for USB device history, `Select\\Current` for active control set\n\n3. **SOFTWARE** (`C:\\Windows\\System32\\config\\SOFTWARE`)\n   - Machine-wide software settings\n   - Contains: installed programs, OS version, network profiles, SharedDLLs, persistence keys (Run, RunOnce)\n   - *Forensic gold:* `Microsoft\\Windows\\CurrentVersion\\Run` for auto-start programs, `Microsoft\\Windows NT\\CurrentVersion` for OS details\n\n4. **SECURITY** (`C:\\Windows\\System32\\config\\SECURITY`)\n   - Security policies and cached credentials\n   - Contains: audit policies, user rights, LSA secrets, cached domain credentials\n   - *Forensic gold:* Cached domain passwords, service account credentials in LSA secrets\n\n5. **NTUSER.DAT** (`C:\\Users\\<username>\\NTUSER.DAT`)\n   - Per-user settings (HKCU)\n   - Contains: RecentDocs, TypedPaths, TypedURLs, RunMRU, UserAssist, Shellbags, ComDlg32 (last browsed folders)\n   - *Forensic gold:* Everything the user did - programs run (UserAssist), files opened (RecentDocs), folders browsed (Shellbags), URLs typed\n\n6. **UsrClass.dat** (`C:\\Users\\<username>\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat`)\n   - User-specific COM and shell settings\n   - Contains: Shellbags (folder access history with timestamps)\n   - *Forensic gold:* Proves which folders a user browsed, even on external/network drives, even if the folders no longer exist\n\n7. **Amcache.hve** (`C:\\Windows\\AppCompat\\Programs\\Amcache.hve`)\n   - Application compatibility cache\n   - Contains: SHA1 hashes of executables, full paths, timestamps, publisher info\n   - *Forensic gold:* Proves program execution with hashes, even for deleted files\n\n**Header Analysis Points:**\n1. **Sequence numbers** - Primary and secondary should match. Mismatch = dirty hive (not properly flushed to disk, crash recovery needed)\n2. **LastWriteTime** - When the hive was last modified (written to disk)\n3. **EmbeddedFilename** - Original path of the hive file. Reveals the source system and user profile\n4. **Checksum** - Validates header integrity. Invalid = header corruption or tampering\n5. **Version** - Determines which features are available (minor version 3-6)\n\n**Suspicious Indicators:**\n- Sequence number mismatch with no corresponding transaction logs = potential manipulation\n- EmbeddedFilename doesn't match the file's current location = hive was copied/moved from another system\n- Very recent LastWriteTime on a seized/imaged system = activity after seizure\n- Checksum invalid but hive otherwise loads = header was manually edited\n- Minor version downgraded = possible attempt to disable security features",
+    "fields": [
+        {
+            "name": "RegistryHeader",
+            "type": "struct",
+            "description": "**Registry Hive Base Block (regf Header - 4096 bytes)**\n\nThe first 4096 bytes (one memory page) of every registry hive file contain the base block, also called the regf header. This block holds metadata about the hive file itself: its signature, version, timestamps, the original file path, and pointers to the root of the key tree.\n\n**Why 4096 bytes?**\nThe Windows Registry uses page-aligned I/O for performance. The base block is always exactly one page (4 KB), regardless of how much actual data is in the header. The unused space after the header fields is zero-padded.\n\n**The base block is critical for:**\n1. Identifying the file as a registry hive (signature `regf`)\n2. Determining hive version and capabilities\n3. Validating hive consistency (sequence numbers, checksum)\n4. Finding the root key (RootKeyOffset)\n5. Identifying the source system (EmbeddedFilename)\n\n*Forensic Value:* The base block is the first thing to examine when analyzing a registry hive. It tells you which hive this is, when it was last written, whether it was cleanly shut down, and where it came from.",
+            "fields": [
+                {
+                    "name": "HeaderSignature",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**Registry Hive Signature ('regf')**\n\nMust be the ASCII string `regf` (bytes: `72 65 67 66`). This identifies the file as a Windows Registry hive.\n\n**What does 'regf' stand for?**\nIt stands for **Registry File**. This signature was chosen during the development of Windows NT in the early 1990s. The 4-byte signature allows quick identification of registry hive files regardless of their filename or extension.\n\n**Registry hives have no standard file extension.** The main system hives (SAM, SYSTEM, SOFTWARE, SECURITY, DEFAULT) have no extension at all. User hives use `.DAT` (NTUSER.DAT) or `.hve` (Amcache.hve). This makes the magic bytes particularly important for identification.\n\n*Validation:* If these bytes are not `regf`, the file is not a valid registry hive. However, some forensic tools can still parse hives with corrupted headers by seeking directly to offset 4096 for the first hbin block.\n\n**Forensic TODO:** If the header is corrupted:\n- Check if hbin blocks start at offset 4096 (may still be parseable)\n- Look for corresponding .LOG1 and .LOG2 transaction log files for recovery\n- A zeroed-out header with valid hbin data may indicate anti-forensic wiping",
+                    "forensic_value": true,
+                    "expected_values": ["regf"]
+                },
+                {
+                    "name": "PrimarySequenceNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Primary Sequence Number**\n\nA monotonically increasing counter that is incremented each time the hive is written to disk. The primary sequence number is updated at the **beginning** of a write operation.\n\n**How sequence numbers work:**\nWhen Windows writes changes to a registry hive, it follows this process:\n1. Increment `PrimarySequenceNumber`\n2. Write the registry data and transaction logs\n3. Update `LastWriteTime`\n4. Increment `SecondarySequenceNumber` to match Primary\n5. Update `Checksum`\n\nIf the system crashes during step 2-3, the primary and secondary sequence numbers will NOT match. This tells the recovery process that the hive is 'dirty' and needs repair using the transaction logs.\n\n*Forensic Value:* **Important** - Compare with `SecondarySequenceNumber`:\n- **Match:** Hive was cleanly written. Last write operation completed successfully.\n- **Mismatch:** Hive is 'dirty' - the system crashed or lost power during a write. Transaction logs (.LOG1, .LOG2) may contain the incomplete changes.\n\n**Forensic TODO:** Check for:\n- Mismatch with Secondary = crash, power loss, or forced shutdown during write\n- Very high sequence numbers = heavily used hive (many writes)\n- Sequence number of 0 = freshly created or reset hive",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "SecondarySequenceNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Secondary Sequence Number**\n\nUpdated at the **end** of a successful write operation to match the Primary Sequence Number.\n\n**Interpreting the comparison:**\n- `Primary == Secondary`: Clean state. All writes completed successfully. The hive is consistent.\n- `Primary > Secondary`: Dirty state. A write operation started (Primary incremented) but didn't finish (Secondary not yet updated). The hive may be inconsistent and requires recovery from transaction logs.\n- `Primary < Secondary`: Should never occur in a legitimate hive. May indicate manual tampering with the header.\n\n*Forensic Value:* Together with `PrimarySequenceNumber`, this is a key consistency indicator. A dirty hive on a properly shut-down system is suspicious.",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "LastWriteTime",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "**Last Write Timestamp (FILETIME)**\n\nThe date and time the hive was last successfully written to disk. Stored as a Windows FILETIME (100-nanosecond intervals since January 1, 1601 UTC).\n\n**What triggers a hive write?**\nThe registry is a memory-mapped file. Changes are first made in memory and periodically flushed to disk:\n- **Lazy writer:** Windows flushes dirty hives approximately every 5 seconds\n- **Explicit flush:** Applications can call `RegFlushKey()` to force a write\n- **System shutdown:** All hives are flushed during orderly shutdown\n- **Hive unload:** When a user logs off, their NTUSER.DAT is flushed and unloaded\n\n**Interpreting the timestamp:**\n- For system hives (SAM, SYSTEM, SOFTWARE): Updated every few seconds while Windows is running\n- For user hives (NTUSER.DAT): Updated while the user is logged in, frozen when logged out\n- Timestamp significantly before the system was imaged = hive was not recently modified\n- Timestamp very close to seizure/imaging time = recent activity\n\n*Forensic Value:* **Critical** - This is the most reliable indicator of when the registry (and thus the system) was last active. Compare with:\n- $MFT timestamps for the hive file itself\n- System shutdown time (from SYSTEM hive EventLog or shutdown records)\n- Last login times (from SAM hive)\n\n**Forensic TODO:** Cross-reference this timestamp with:\n- NTFS $MFT $SI timestamps for the hive file\n- If LastWriteTime > $MFT Modified = normal (registry timestamps are more recent than file metadata)\n- If LastWriteTime is far in the past compared to other system activity = hive may have been restored from backup",
+                    "forensic_value": "timestamp"
+                },
+                {
+                    "name": "MajorVersion",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Major Version**\n\nThe major version of the registry hive format. Always `1` for all known Windows versions.\n\n*Forensic Note:* A value other than 1 would be highly unusual and may indicate file corruption or a non-Windows registry file.",
+                    "informational": true,
+                    "expected_values": [1]
+                },
+                {
+                    "name": "MinorVersion",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Minor Version**\n\nThe minor version determines which hive features are available:\n\n**Version history:**\n- `3` = Windows NT 3.1 through Windows XP / Server 2003. Uses old cell format.\n- `4` = Windows XP (later) / Server 2003. Adds big data (db) cells for values >16 KB.\n- `5` = Windows Vista / Server 2008 through Windows 8.1 / Server 2012 R2. Adds new security descriptors.\n- `6` = Windows 10 / Server 2016+. Adds layered keys for application hives.\n\n**Why version matters:**\nNewer versions support features that older parsers may not understand. For forensic analysis, the version helps determine:\n- What format features to expect in the hive\n- What Windows version likely created this hive\n- Whether the hive may have been created on a different system\n\n*Forensic Value:* Helps narrow down the Windows version that created the hive. A version 6 hive was created on Windows 10 or later.",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "3": "v1.3 (Windows NT 3.1 - Windows XP/2003)",
+                        "4": "v1.4 (Windows XP/2003 - adds big data cells)",
+                        "5": "v1.5 (Windows Vista/7/8 - adds new security)",
+                        "6": "v1.6 (Windows 10/11 - adds layered keys)"
+                    }
+                },
+                {
+                    "name": "FileType",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Hive File Type**\n\nIndicates the type of hive file:\n- `0` = **Primary hive file** - The main registry hive\n- `1` = **Transaction log** (.LOG file)\n- `6` = **Transaction log** (.LOG file, newer format)\n\nThe primary hive is the actual registry data. Transaction logs (.LOG1, .LOG2) record pending changes for crash recovery.\n\n*Forensic Note:* If this value is not 0, the file is a transaction log, not the primary hive. Transaction logs contain recent changes that may not yet be committed to the primary hive.",
+                    "informational": true,
+                    "value_map": {
+                        "0": "Primary hive file",
+                        "1": "Transaction log (.LOG)",
+                        "6": "Transaction log (newer format)"
+                    }
+                },
+                {
+                    "name": "Format",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Hive Format**\n\nSpecifies the storage format of the hive:\n- `1` = **Direct memory load** - The hive can be mapped directly into memory. This is the only format used by all modern Windows versions.\n\n*Forensic Note:* Should always be 1. Other values would indicate an unknown or corrupted format.",
+                    "informational": true,
+                    "expected_values": [1]
+                },
+                {
+                    "name": "RootKeyOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Root Key Cell Offset**\n\nOffset to the root key cell, relative to the start of the hive bins data (offset 4096 in the file). The root key cell is a Named Key (NK) record that represents the top-level key of this hive.\n\n**How to find the root key:**\nThe root key's file offset = 4096 (base block size) + RootKeyOffset.\n\n**What is the root key?**\nEach hive has one root key that corresponds to a specific branch of the registry:\n- SAM hive root = `HKLM\\SAM`\n- SYSTEM hive root = `HKLM\\SYSTEM`\n- SOFTWARE hive root = `HKLM\\SOFTWARE`\n- NTUSER.DAT root = `HKCU` (for that user)\n\nAll other keys in the hive are children (subkeys) of this root key, forming a tree structure.\n\n**Common value:** `0x20` (32) - meaning the root key cell is right at the beginning of the first hbin block (after the 32-byte hbin header).\n\n*Forensic Value:* **Important** - The root key offset should point to a valid NK cell. If it doesn't, the hive may be corrupted or tampered with.",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "HbinTotalSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Total Size of Hive Bins Data**\n\nThe total size in bytes of all hive bin (hbin) blocks combined. The actual registry data portion of the file starts at offset 4096 (after the base block) and extends for this many bytes.\n\n**Expected file size:** `HbinTotalSize + 4096` (base block + hive data). The actual file may be larger due to clustering or transaction log space.\n\n*Forensic Value:* Compare with actual file size:\n- File size == HbinTotalSize + 4096: Normal, consistent file\n- File size > HbinTotalSize + 4096: Extra data after hive bins (may be old/deleted data, recovery data, or appended content)\n- File size < HbinTotalSize + 4096: File is truncated or corrupted",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "ClusteringFactor",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Clustering Factor**\n\nThe logical sector size of the storage medium divided by 512. Determines the alignment of hive data structures.\n\n**Common value:** `1` (standard 512-byte sectors). Values of 2, 4, or 8 correspond to Advanced Format drives (1024, 2048, or 4096-byte sectors).\n\n*Forensic Note:* This field was primarily used in older Windows versions. Modern systems typically set this to 1 regardless of actual disk sector size.",
+                    "informational": true
+                },
+                {
+                    "name": "EmbeddedFilename",
+                    "size": 64,
+                    "type": "utf16le",
+                    "description": "**Embedded Filename (Original Hive Path)**\n\nThe original full path of the hive file as a null-terminated UTF-16LE string (up to 32 characters including null terminator).\n\n**Common values:**\n- `\\SystemRoot\\System32\\Config\\SAM` - SAM hive\n- `\\SystemRoot\\System32\\Config\\SYSTEM` - SYSTEM hive\n- `\\SystemRoot\\System32\\Config\\SOFTWARE` - SOFTWARE hive\n- `\\SystemRoot\\System32\\Config\\SECURITY` - SECURITY hive\n- `\\SystemRoot\\System32\\Config\\DEFAULT` - DEFAULT hive\n- `\\??\\C:\\Users\\<username>\\ntuser.dat` - User hive (NTUSER.DAT)\n- `\\??\\C:\\Users\\<username>\\AppData\\Local\\Microsoft\\Windows\\UsrClass.dat` - UsrClass hive\n- `\\??\\C:\\Windows\\AppCompat\\Programs\\Amcache.hve` - Amcache hive\n- `emRoot\\System32\\Config\\BBI` - BBI hive (Windows 10+, biometric data)\n\n**Why this is forensically valuable:**\nThis field captures the **original** path of the hive file at the time it was created or last loaded. If the hive file has been copied to a different location (e.g., during forensic acquisition), this field still shows where it was originally located.\n\n*Forensic Value:* **Critical** - Reveals:\n- **Which hive this is** (SAM, SYSTEM, SOFTWARE, NTUSER.DAT, etc.)\n- **The original system's path** (drive letter, Windows directory, username)\n- **The username** (for NTUSER.DAT and UsrClass.dat hives)\n- **Whether the file was moved** (compare embedded path with current path)\n\n**Forensic TODO:** Check for:\n- Username in NTUSER.DAT paths = identifies the user\n- Non-standard paths = hive may have been moved, restored, or created by non-standard tools\n- `\\SystemRoot\\` prefix = system hive loaded during boot\n- `\\??\\C:\\` prefix = user hive loaded during logon",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "RmId",
+                    "size": 16,
+                    "type": "guid",
+                    "description": "**Resource Manager ID (RmId)**\n\nA GUID identifying the Resource Manager associated with this hive's transaction logs. Part of the Windows Kernel Transaction Manager (KTM) integration added in Windows Vista.\n\n**What is a Resource Manager?**\nStarting with Windows Vista, registry hive operations use the Kernel Transaction Manager for crash-safe writes. The RmId links this hive to its transaction log files (.LOG1, .LOG2). During recovery, Windows matches the RmId in the hive header with the RmId in the transaction logs to find the correct logs for this hive.\n\n*Forensic Note:* This GUID can be used to match a hive with its corresponding transaction logs, which is useful when logs are separated from their hives during forensic acquisition."
+                },
+                {
+                    "name": "LogId",
+                    "size": 16,
+                    "type": "guid",
+                    "description": "**Log ID (LogId)**\n\nA GUID identifying the specific transaction log sequence for this hive. Used together with RmId for transaction log correlation.\n\n*Forensic Note:* Can help identify which .LOG1/.LOG2 files belong to this specific hive instance."
+                },
+                {
+                    "name": "HiveFlags",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Hive Flags**\n\nBitfield containing hive-level flags. Not well-documented publicly.\n\n*Forensic Note:* Typically 0 or 1. Non-standard values may indicate non-standard hive creation."
+                },
+                {
+                    "name": "TmId",
+                    "size": 16,
+                    "type": "guid",
+                    "description": "**Transaction Manager ID (TmId)**\n\nA GUID identifying the Transaction Manager instance associated with this hive.\n\n*Forensic Note:* Part of the KTM infrastructure. Less forensically relevant than other header fields but helps with transaction log correlation."
+                },
+                {
+                    "name": "GuidSignature",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**GUID Signature**\n\nA validation field for the GUID fields above. Should be `0x6D746872` (ASCII: 'rmtm' reversed due to little-endian) when the RmId, LogId, and TmId fields are valid.\n\n*Forensic Note:* If this doesn't equal `0x6D746872` (1836084850 decimal), the GUID fields may not be populated (pre-Vista hives or hives that haven't been written with KTM)."
+                },
+                {
+                    "name": "LastReorganizedTimestamp",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "**Last Reorganized Timestamp**\n\nThe date and time when the hive was last compacted (reorganized) by Windows. Hive compaction removes free space and defragments the hive file.\n\n**When does compaction occur?**\nWindows periodically compacts registry hives to reclaim space from deleted keys and values. This typically happens during system idle time or maintenance tasks.\n\n*Forensic Value:* If this timestamp is recent, deleted registry keys and values may have been permanently removed during compaction. Older timestamps mean more deleted data may still be recoverable from free space within hbin blocks.\n\n**Forensic TODO:** Check:\n- Recent compaction = less recoverable deleted data\n- Old or zero compaction timestamp = more deleted keys/values may survive in free cells\n- Compare with LastWriteTime - a reorganization forces a write",
+                    "forensic_value": "timestamp"
+                },
+                {
+                    "name": "HeaderReserved",
+                    "size": 332,
+                    "type": "bytes",
+                    "description": "**Reserved Header Space**\n\nReserved bytes between the last known header field and the checksum field. Should be zero in standard hives.\n\n**Forensic TODO:** Check for non-zero data:\n- Microsoft may use some of these bytes in future Windows versions\n- Non-zero data in a hive from a known Windows version could indicate tampering or custom tools\n- Compare with known-good hives from the same Windows version"
+                },
+                {
+                    "name": "Checksum",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Header Checksum**\n\nA CRC32-like checksum calculated over the first 508 bytes of the base block (everything before this field). Used to verify header integrity.\n\n**How it's calculated:**\nThe checksum is an XOR of all 127 DWORDs (4-byte values) in the header preceding this field. It's NOT a standard CRC32, but a simple XOR-based checksum.\n\n**Validation process:**\nWhen Windows loads a hive, it calculates the checksum over the first 508 bytes and compares it to this field. If they don't match, Windows attempts recovery from transaction logs. If recovery fails, the hive is considered corrupt.\n\n*Forensic Value:* **Important** - An invalid checksum indicates:\n- The header was modified without recalculating the checksum (manual editing, anti-forensics)\n- File corruption (bad sectors, incomplete write, disk imaging errors)\n- The hive was recovered from transaction logs but the header wasn't fully updated\n\n**Forensic TODO:** Validate the checksum:\n- Calculate XOR of all 127 DWORDs at offsets 0-507\n- Compare with this field\n- Invalid checksum + valid data = header was manually tampered with\n- Tools: `yarp`, `python-registry`, Registry Explorer",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "HeaderPadding",
+                    "size": 3584,
+                    "type": "skip",
+                    "description": "**Header Padding (to 4096 bytes)**\n\nZero-filled padding to align the base block to exactly 4096 bytes (one memory page). The hive bins data begins immediately after this padding at file offset 4096.\n\n*Forensic Note:* This area should be all zeros. Non-zero data here could indicate:\n- Older Windows version using this space for boot recovery data\n- File-level manipulation or data hiding\n- Incomplete zeroing after header recovery"
+                }
+            ]
+        },
+        {
+            "name": "HiveBins",
+            "type": "struct",
+            "repeat": "eof",
+            "description": "**Hive Bin Block (hbin)**\n\nAfter the 4096-byte base block, the registry hive contains a series of hive bin (hbin) blocks. Each hbin block has a 32-byte header followed by a sequence of cells containing the actual registry data.\n\n**What is a hive bin?**\nA hive bin is a contiguous allocation unit in the registry. When the registry needs more space, it allocates a new hbin block (minimum 4096 bytes, always a multiple of 4096). Hbin blocks are the containers for all registry cells: key nodes (nk), key values (vk), security descriptors (sk), and subkey lists (lf, lh, li, ri).\n\n**Cell types within hbin blocks:**\nEach cell starts with a 4-byte size field (negative = allocated, positive = free):\n- **nk (Named Key)** - A registry key with name, timestamp, subkey/value counts, parent pointer\n- **vk (Value Key)** - A registry value with name, data type, and data offset\n- **sk (Security Key)** - A security descriptor (ACL) shared by multiple keys\n- **lf/lh (Fast/Hash Leaf)** - Subkey index lists with name hash for fast lookup\n- **li (Index Leaf)** - Simple subkey index list without hashes\n- **ri (Index Root)** - Multi-level index for keys with many subkeys\n- **db (Big Data)** - Data cell for values larger than ~16 KB (version 1.4+)\n\n**Cell allocation:**\n- Negative size = allocated (in use)\n- Positive size = free (deleted or never used)\n- Cell size includes the 4-byte size field itself\n- Free cells may contain remnants of deleted keys/values (*forensically valuable!*)\n\n*Forensic Value:* Hbin blocks contain all the registry data. Free cells within hbin blocks may contain **deleted registry keys and values** that haven't been overwritten - these are forensically recoverable using tools like Registry Explorer, yarp, or RegRipper.",
+            "fields": [
+                {
+                    "name": "HbinSignature",
+                    "size": 4,
+                    "type": "string",
+                    "description": "**Hive Bin Signature ('hbin')**\n\nMust be the ASCII string `hbin` (bytes: `68 62 69 6E`). Identifies this block as a hive bin.\n\n*Validation:* Every hbin block must start with this signature. If scanning a corrupted hive for data recovery, search for `hbin` signatures at 4096-byte aligned offsets.\n\n**Forensic TODO:** If this signature is missing:\n- The hive may be corrupted at this point\n- Check for transaction logs that might contain the missing data\n- Search for subsequent hbin signatures to find the next valid block",
+                    "forensic_value": true,
+                    "expected_values": ["hbin"]
+                },
+                {
+                    "name": "HbinOffset",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Hive Bin Offset**\n\nOffset of this hbin block from the start of the hive bins data area (i.e., from file offset 4096). The first hbin block always has an offset of 0.\n\n*Forensic Note:* This allows reconstruction of the hbin order even if the header is damaged. Offsets should be monotonically increasing and each should equal the sum of all previous hbin sizes."
+                },
+                {
+                    "name": "SizeOfHbin",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Hive Bin**\n\nThe total size of this hbin block in bytes, including the 32-byte header. Always a multiple of 4096 bytes.\n\n**Typical values:**\n- `4096` (0x1000) - Minimum size, common for small allocations\n- `8192`, `16384`, etc. - Larger blocks for bigger allocations\n\n*Forensic Note:* The sum of all hbin sizes should equal `HbinTotalSize` from the base block header.",
+                    "informational": true
+                },
+                {
+                    "name": "HbinReserved1",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "**Reserved**\n\nReserved bytes in the hbin header. Typically zero."
+                },
+                {
+                    "name": "HbinTimestamp",
+                    "size": 8,
+                    "type": "filetime",
+                    "description": "**Hive Bin Timestamp**\n\nTimestamp associated with this hbin block. In older hive formats, this was the time the hbin was last modified. In modern hives (version 1.5+), this field may be zero.\n\n*Forensic Value:* When populated, this timestamp can indicate when this specific portion of the registry was last written. Particularly useful for analyzing which parts of the registry were modified and when.\n\n**Forensic TODO:** Non-zero timestamps on individual hbins can help narrow down when specific registry changes occurred, supplementing the overall hive LastWriteTime.",
+                    "forensic_value": "timestamp"
+                },
+                {
+                    "name": "HbinSpare",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Spare**\n\nUnused field. Should be zero."
+                },
+                {
+                    "name": "CellData",
+                    "size": "$SizeOfHbin - 32",
+                    "type": "bytes",
+                    "description": "**Registry Cell Data**\n\nRaw cell data within this hbin block. Contains a sequence of registry cells, each starting with a 4-byte signed size field followed by cell-type-specific data.\n\n**Manually identifying cells in hex:**\nCells are packed sequentially. Each starts with a 4-byte size (little-endian, signed):\n- Read 4 bytes: if the value is **negative**, take the absolute value as cell size (cell is allocated/in-use)\n- Read 4 bytes: if the value is **positive**, that's the cell size (cell is free/deleted)\n- After the size, read 2 bytes for the cell signature: `nk`, `vk`, `sk`, `lf`, `lh`, `li`, `ri`, `db`\n\n**Key forensic data within cells:**\n\n*nk cells (Named Key - registry keys):*\n- Flags (2 bytes): bit 5 = ASCII name, bit 0 = volatile\n- LastWriteTime (8 bytes): **KEY FORENSIC TIMESTAMP** - when this specific key was last modified\n- Subkey count, value count, parent offset, name\n\n*vk cells (Value Key - registry values):*\n- Data type (4 bytes): REG_SZ=1, REG_EXPAND_SZ=2, REG_BINARY=3, REG_DWORD=4, REG_MULTI_SZ=7, REG_QWORD=11\n- Data length and offset to actual value data\n- Name (variable length)\n\n**Value data types for forensic reference:**\n- `0` (REG_NONE) - No type\n- `1` (REG_SZ) - Unicode string\n- `2` (REG_EXPAND_SZ) - Unicode string with environment variable references\n- `3` (REG_BINARY) - Raw binary data\n- `4` (REG_DWORD) - 32-bit integer\n- `5` (REG_DWORD_BIG_ENDIAN) - 32-bit integer, big-endian (rare)\n- `6` (REG_LINK) - Unicode symbolic link\n- `7` (REG_MULTI_SZ) - Array of null-terminated Unicode strings\n- `8` (REG_RESOURCE_LIST) - Hardware resource list\n- `9` (REG_FULL_RESOURCE_DESCRIPTOR) - Hardware resource descriptor\n- `10` (REG_RESOURCE_REQUIREMENTS_LIST) - Hardware requirements list\n- `11` (REG_QWORD) - 64-bit integer\n\n*Forensic Value:* **Critical** - This raw data contains all registry keys, values, and deleted data. Use specialized tools (Registry Explorer, RegRipper, yarp, python-registry) for full cell-level parsing."
+                }
+            ]
+        }
+    ]
+}
