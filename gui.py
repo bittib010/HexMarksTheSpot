@@ -429,6 +429,11 @@ class RoundedButton(Canvas):
     
     def _redraw(self):
         """Redraw the button."""
+        try:
+            if not self.winfo_exists():
+                return
+        except:
+            return
         self.delete("all")
         w = self.winfo_width()
         h = self.winfo_height()
