@@ -6,3 +6,7 @@ MIDI's inner message parsing relies on variable-length quantities (VLQ) and runn
 - Pages content on SQLite3 database. This is necessary to handle large databases without consuming excessive memory. Implement a mechanism to fetch and display results in chunks, allowing users to navigate through pages of results.
 - Consider outsourcing the parsing and reading the finished parsed file,  to avoid the app crashing.???
 - Rounded corners on buttons and input fields for a more modern look.
+- precedence logic to look at extension first, then magic bytes, then alternative magic bytes.
+  - This forces us to also add file protocol versioning, so we can add new fields in the future without breaking old configs. We can also add a "deprecated" field to mark fields that should no longer be used but are still supported for backward compatibility.
+- Add a "deprecated" field to mark fields that should no longer be used but are still supported for backward compatibility. This allows us to phase out old fields gracefully while maintaining support for existing configurations.
+- 

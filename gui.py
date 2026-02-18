@@ -1,5 +1,6 @@
 # Standard Libraries
 import os
+import sys
 import threading
 import time
 import csv
@@ -18,6 +19,83 @@ from tkhtmlview import HTMLText
 # Application-specific - use the new dynamic parser loader
 from parser_loader import get_file_parser, discover_all_parsers
 from common import ColorGenerator
+
+
+def _win32_open_file_dialog(initialdir="", title="Select File", filetypes=None):
+    """
+    Windows-native file open dialog that does NOT resolve .lnk shortcuts.
+    
+    Uses ctypes to call GetOpenFileNameW with OFN_NODEREFERENCELINKS flag,
+    so that selecting a .lnk file returns the .lnk path itself rather than
+    following the shortcut to its target.
+    
+    Returns the selected file path, or "" if cancelled.
+    """
+    import ctypes
+    import ctypes.wintypes
+
+    OFN_FILEMUSTEXIST = 0x00001000
+    OFN_NODEREFERENCELINKS = 0x00100000
+    OFN_EXPLORER = 0x00080000
+    OFN_HIDEREADONLY = 0x00000004
+    MAX_PATH_BUF = 4096
+
+    class OPENFILENAME(ctypes.Structure):
+        _fields_ = [
+            ("lStructSize", ctypes.wintypes.DWORD),
+            ("hwndOwner", ctypes.wintypes.HWND),
+            ("hInstance", ctypes.wintypes.HINSTANCE),
+            ("lpstrFilter", ctypes.wintypes.LPCWSTR),
+            ("lpstrCustomFilter", ctypes.wintypes.LPWSTR),
+            ("nMaxCustFilter", ctypes.wintypes.DWORD),
+            ("nFilterIndex", ctypes.wintypes.DWORD),
+            ("lpstrFile", ctypes.wintypes.LPWSTR),
+            ("nMaxFile", ctypes.wintypes.DWORD),
+            ("lpstrFileTitle", ctypes.wintypes.LPWSTR),
+            ("nMaxFileTitle", ctypes.wintypes.DWORD),
+            ("lpstrInitialDir", ctypes.wintypes.LPCWSTR),
+            ("lpstrTitle", ctypes.wintypes.LPCWSTR),
+            ("Flags", ctypes.wintypes.DWORD),
+            ("nFileOffset", ctypes.wintypes.WORD),
+            ("nFileExtension", ctypes.wintypes.WORD),
+            ("lpstrDefExt", ctypes.wintypes.LPCWSTR),
+            ("lCustData", ctypes.wintypes.LPARAM),
+            ("lpfnHook", ctypes.c_void_p),
+            ("lpTemplateName", ctypes.wintypes.LPCWSTR),
+            ("pvReserved", ctypes.c_void_p),
+            ("dwReserved", ctypes.wintypes.DWORD),
+            ("FlagsEx", ctypes.wintypes.DWORD),
+        ]
+
+    # Build filter string: pairs of (description, pattern) separated by \0, ending with double \0
+    filter_parts = []
+    if filetypes:
+        for desc, pattern in filetypes:
+            filter_parts.append(desc)
+            filter_parts.append(pattern)
+    else:
+        filter_parts.append("All Files")
+        filter_parts.append("*.*")
+    filter_str = "\0".join(filter_parts) + "\0\0"
+
+    file_buf = ctypes.create_unicode_buffer(MAX_PATH_BUF)
+
+    ofn = OPENFILENAME()
+    ofn.lStructSize = ctypes.sizeof(OPENFILENAME)
+    ofn.hwndOwner = None
+    ofn.lpstrFilter = filter_str
+    ofn.nFilterIndex = 1
+    ofn.lpstrFile = ctypes.cast(file_buf, ctypes.wintypes.LPWSTR)
+    ofn.nMaxFile = MAX_PATH_BUF
+    ofn.lpstrInitialDir = initialdir or None
+    ofn.lpstrTitle = title
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_NODEREFERENCELINKS | OFN_EXPLORER | OFN_HIDEREADONLY
+
+    result = ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn))
+    if result:
+        return file_buf.value
+    return ""
+
 
 # Configure logging
 logging.basicConfig(
@@ -1258,18 +1336,35 @@ class Main:
     def open_file(self):
         """
         Open a file dialog and initiate the parsing of the selected file.
+        
+        On Windows, uses a native Win32 dialog with OFN_NODEREFERENCELINKS
+        so that .lnk shortcut files are opened as-is (for forensic analysis)
+        rather than being resolved to their target.
         """
         current_directory = os.getcwd()  # Get current working directory
-        filename = filedialog.askopenfilename(initialdir=current_directory,
-                                              title="Select File",
-                                              filetypes=(("All Files", "*.*"),
-                                                         ("SQLite Files",
-                                                          "*.sqlite"),
-                                                         ("PNG Files", "*.png"),
-                                                         ("JPG Files", "*.jpg"),
-                                                         ("JPEG Files", "*.jpeg"),
-                                                         ("MFT Files", "$MFT"),
-                                                         ("LNK Files", "*.lnk")))
+        file_types = (("All Files", "*.*"),
+                      ("SQLite Files", "*.sqlite"),
+                      ("PNG Files", "*.png"),
+                      ("JPG Files", "*.jpg"),
+                      ("JPEG Files", "*.jpeg"),
+                      ("MFT Files", "$MFT"),
+                      ("LNK Files", "*.lnk"),
+                      ("Prefetch Files", "*.pf"))
+
+        if sys.platform == "win32":
+            # Use Windows-native dialog with OFN_NODEREFERENCELINKS to
+            # prevent .lnk files from being resolved to their targets
+            filename = _win32_open_file_dialog(
+                initialdir=current_directory,
+                title="Select File",
+                filetypes=file_types
+            )
+        else:
+            filename = filedialog.askopenfilename(
+                initialdir=current_directory,
+                title="Select File",
+                filetypes=file_types
+            )
         if filename:
             # reset previous file treeview
             self.sequence_treeview.delete(
