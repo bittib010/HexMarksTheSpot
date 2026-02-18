@@ -59,6 +59,7 @@ New artifact parsers should be JSON configs in `Artefacts/configs/`. The schema 
 - **Expected values**: Validate parsed values against allowed lists or ranges
 - **Forensic highlighting**: `"forensic_value": true` or category strings (`"critical"`, `"important"`, `"timestamp"`, `"identifier"`, `"path"`, `"network"`)
 - **Informational highlighting**: `"informational": true` for green/teal descriptive fields
+- **Output format override**: `"output_format"` controls how a parsed value is *displayed* without changing how it is *parsed* (see `type` vs `output_format` below)
 - **Repeating structures**: `"repeat": N`, `"repeat": "$field"`, `"repeat": "eof"`, `"repeat": "until"` with `"repeat_until": "$condition"`
 - **Repeat step**: `"repeat_step": 1024` for fixed-size record iteration (e.g., MFT records)
 - **Nested structs**: `"type": "struct"` or `"type": "section"` with `"fields": [...]`
@@ -67,6 +68,39 @@ New artifact parsers should be JSON configs in `Artefacts/configs/`. The schema 
 ### Field Reference Resolution
 
 All `$name` references resolve against `self.parsed_values` - a flat dict populated as fields are parsed. Field names must be unique across the entire parser (or at least non-conflicting within scope). Use prefixes for attributes with similar fields (e.g., `SI_CreationTime`, `FN_CreationTime`).
+
+### `type` vs `output_format`
+
+These two field properties serve different purposes:
+
+- **`type`** controls **parsing** — how raw bytes are read from the file and converted into a native Python value. For example, `"type": "uint"` reads N bytes as an unsigned integer, `"type": "filetime"` reads 8 bytes as a Windows FILETIME and converts to a datetime.
+- **`output_format`** controls **display** — how the already-parsed value appears in the GUI's Value column. It is an optional post-parse presentation override that does not affect parsing logic.
+
+A field's `type` determines what goes into `parsed_values` and what the parser uses for conditions/references. The `output_format` only changes what the user sees in the table.
+
+**Available `output_format` values:**
+
+| Format | Display example | Use case |
+|--------|----------------|----------|
+| `hex` | `0x0000004C` | Signatures, offsets, serial numbers, flags |
+| `decimal` | `16,885,952` | Counts, lengths (with thousand separators) |
+| `ascii` | `MZ` | Magic bytes shown as text |
+| `base64` | `SGVsbG8gV29ybGQh` | Binary blobs for safe copy/paste |
+| `binary` | `0b10101011` | Bit patterns, masks |
+| `datetime_filetime` | `2023-03-15 14:30:00 UTC` | Raw bytes interpreted as Windows FILETIME |
+| `datetime_unix` | `2019-01-13 08:15:32 UTC` | Raw bytes interpreted as Unix timestamp |
+| `datetime_unix_ms` | `2023-03-15 14:30:00.123 UTC` | Unix timestamp in milliseconds |
+| `ip4` | `192.168.1.1` | 4-byte IPv4 address |
+| `ip6` | `2001:0db8:...` | 16-byte IPv6 address |
+| `size_bytes` | `4.0 KB` | File sizes in human-readable form |
+| `bool` | `True` / `False` | Non-zero = True, zero = False |
+
+**When to use `output_format`:**
+- A `uint` field holding a file size → add `"output_format": "size_bytes"` for human-readable display
+- A `uint` field holding a signature → add `"output_format": "hex"` so it shows `0xA0000003` instead of `2684354563`
+- A `bytes` field containing an IP address → add `"output_format": "ip4"` for dotted-decimal display
+
+**When NOT to use it:** If the `type` already produces the desired display (e.g., `filetime` already shows a datetime, `guid` already shows a GUID string), `output_format` is unnecessary.
 
 ### Color System
 

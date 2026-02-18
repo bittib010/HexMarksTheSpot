@@ -52,13 +52,15 @@
             "name": "data_size",
             "size": 4,
             "type": "uint",
-            "description": "Size of the following data"
+            "description": "Size of the following data",
+            "output_format": "size_bytes"
         },
         {
             "name": "data",
             "size": "$data_size",
             "type": "bytes",
-            "description": "Variable-length data (size from data_size field)"
+            "description": "Variable-length data (size from data_size field)",
+            "output_format": "base64"
         },
         {
             "name": "file_type",
@@ -78,9 +80,11 @@
             "size": 4,
             "type": "uint",
             "description": "Format version (must be 1-100)",
-            "expected_values": {"min": 1, "max": 100}
+            "expected_values": {"min": 1, "max": 100},
+            "output_format": "decimal"
         },
         {
+            "_comment": "output_format examples: hex, decimal, ascii, base64, binary, datetime_filetime, datetime_unix, datetime_unix_ms, ip4, ip6, size_bytes, bool",
             "name": "optional_field",
             "size": 16,
             "type": "bytes",

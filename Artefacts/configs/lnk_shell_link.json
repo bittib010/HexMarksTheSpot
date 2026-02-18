@@ -24,6 +24,7 @@
                     "name": "HeaderSize",
                     "size": 4,
                     "type": "uint",
+                    "output_format": "hex",
                     "description": "**Header Size**\n\nMust always be `0x0000004C` (76 in decimal). This fixed-size header is the mandatory starting structure of every LNK file and serves as a quick validation check.\n\n**What this means:** The first 4 bytes of any LNK file must decode to the integer 76 (little-endian: `4C 00 00 00`). This is a fixed structural constant - unlike other formats that may vary, every valid LNK file will have exactly this value.\n\n*Validation:* If this value differs from 76, the file is not a valid Shell Link.\n\n**Forensic TODO:** Check for non-76 values - could indicate:\n- File corruption or incomplete write\n- Intentional tampering to evade parsers\n- A different file type with a `.lnk` extension (extension masquerading)"
                 },
                 {
@@ -274,6 +275,7 @@
                     "name": "FileSize",
                     "size": 4,
                     "type": "uint",
+                    "output_format": "size_bytes",
                     "description": "**File Size (32-bit)**\n\nThe size of the **target file** in bytes at the time the shortcut was created or last updated. Stored as a 32-bit unsigned integer (little-endian).\n\n**Important limitation:** This field is only 4 bytes, capping it at 4,294,967,295 bytes (~4 GB). For target files larger than 4 GB, only the lower 32 bits of the actual size are stored (the value wraps around). There is no 'high 32 bits' companion field in the LNK format.\n\n*Example:* A 5 GB file (5,368,709,120 bytes = `0x140000000`) would be stored as `0x40000000` (1,073,741,824 bytes) - the upper bit is lost.\n\n*Forensic Value:* Compare this recorded size with the target file's current size. A mismatch proves the file was changed after the LNK was last updated.\n\n**Forensic TODO:** Investigate these findings:\n- Size is 0 for a non-empty target = metadata not captured, or target was empty when LNK was created\n- Size differs from current target = target was modified after shortcut creation\n- Size seems implausible for file type (e.g., 50-byte EXE) = possible truncation or placeholder\n- Remember the 4 GB limitation when analyzing large file targets"
                 },
                 {
@@ -297,6 +299,7 @@
                     "name": "HotKey",
                     "size": 2,
                     "type": "uint",
+                    "output_format": "hex",
                     "description": "**Hot Key (HotKeyFlags)**\n\n**What is a HotKey?**\nA HotKey (also called a keyboard shortcut or key binding) is a specific key combination that, when pressed anywhere in Windows, immediately activates this shortcut - launching the target program or opening the target file. HotKeys are system-wide, meaning they work regardless of which application currently has focus.\n\n**How it works:** When a user sets a keyboard shortcut on a .lnk file (right-click Properties, Shortcut Key field), Windows registers the key combination with the operating system. The Shell monitors all keyboard input, and when the registered combination is detected, it triggers the shortcut as if the user had double-clicked it.\n\n**Structure (2 bytes total):**\n- **Low byte (byte 0):** Virtual Key Code - identifies which key on the keyboard\n- **High byte (byte 1):** Modifier flags - which modifier keys must be held simultaneously\n\nA value of `0x0000` means no hotkey is assigned (the most common case for normal shortcuts).\n\n**Virtual Key Codes (Low Byte):**\n- 0x00: No key assigned\n- 0x30-0x39: Keys '0' through '9'\n- 0x41-0x5A: Keys 'A' through 'Z'\n- 0x70-0x7B: F1 through F12\n- 0x7C-0x87: F13 through F24\n- 0x90: VK_NUMLOCK (Num Lock)\n- 0x91: VK_SCROLL (Scroll Lock)\n\n**Modifier Flags (High Byte):**\n- 0x00: No modifier\n- 0x01: HOTKEYF_SHIFT (SHIFT held)\n- 0x02: HOTKEYF_CONTROL (CTRL held)\n- 0x04: HOTKEYF_ALT (ALT held)\n- Flags combine via bitwise OR (e.g., 0x06 = CTRL+ALT)\n\n**Decoding Examples:**\n- `0x0000` = No hotkey assigned\n- `0x0241` = CTRL+A (0x02=CTRL, 0x41='A')\n- `0x0570` = CTRL+ALT+F1 (0x05=CTRL|ALT, 0x70=F1)\n- `0x0342` = CTRL+SHIFT+B (0x03=CTRL|SHIFT, 0x42='B')\n\n*Forensic Value:* Most legitimate shortcuts do NOT have hotkeys assigned. A hotkey on a shortcut, especially in non-standard locations (Startup, Temp, AppData), is a **strong indicator** of persistence or malicious automation.\n\n**Forensic TODO:** If a hotkey is set, investigate:\n- Is the shortcut in a Startup folder? = auto-trigger persistence\n- Does the key combination override a common system shortcut? = hijacking\n- Is the LNK hidden or system-attributed? = stealth mechanism\n- Cross-reference with other LNK files for duplicate hotkey assignments"
                 },
                 {
@@ -467,6 +470,7 @@
                                     "name": "EntryFileSize",
                                     "size": 4,
                                     "type": "uint",
+                                    "output_format": "size_bytes",
                                     "description": "**File Size**\n\nSize of the target file in bytes. May be 0 for directories.",
                                     "informational": true
                                 },
@@ -645,6 +649,7 @@
                             "name": "DriveSerialNumber",
                             "size": 4,
                             "type": "uint",
+                            "output_format": "hex",
                             "description": "**Drive Serial Number**\n\n**CRITICAL FORENSIC VALUE!**\n\nThe volume serial number assigned when the volume was formatted. This is a 32-bit number generated from the system time during the `FORMAT` operation.\n\n**Key characteristics:**\n- Unique per format operation (changes if the volume is reformatted)\n- Consistent across all mounts of the same volume\n- Survives reboots, reconnections, and drive letter changes\n- Can identify specific USB drives, external disks, and disk images\n\n**How Volume Serial Numbers are generated:**\nWindows generates this number by combining the current date and time components during formatting. The algorithm XORs date/time values to produce a pseudo-random 32-bit number. While not cryptographically unique, collisions are extremely rare in practice.\n\n*Display format:* Typically shown as `XXXX-XXXX` (e.g., `1234-ABCD`)\nThe upper 16 bits are the first half, lower 16 bits are the second half.\n\n**Forensic Use Cases:**\n- Match a USB drive to shortcuts found on multiple computers\n- Prove a specific drive was connected to a system\n- Identify file movement between systems by comparing serial numbers across LNK files\n- Correlate with USB device logs (SetupAPI logs, Windows Event Logs)\n- Link to registry entries under `HKLM\\SYSTEM\\MountedDevices`\n\n**Forensic TODO:** Cross-reference this serial number with:\n- Other LNK files on the same and different systems\n- Windows Event Log (Event IDs 2003, 2100, 2101 in Microsoft-Windows-Partition/Diagnostic)\n- SetupAPI logs (`C:\\Windows\\INF\\setupapi.dev.log`) for USB device history\n- Registry `HKLM\\SYSTEM\\MountedDevices` for volume-to-device mappings\n- If multiple LNK files reference the same serial number, they accessed the same volume",
                             "forensic_value": "identifier"
                         },
@@ -985,12 +990,14 @@
                             "name": "TrackerBlockSignature",
                             "size": 4,
                             "type": "uint",
+                            "output_format": "hex",
                             "description": "**Block Signature**\n\nMust be 0xA0000003 for TrackerDataBlock."
                         },
                         {
                             "name": "TrackerLength",
                             "size": 4,
                             "type": "uint",
+                            "output_format": "decimal",
                             "description": "**Data Length**\n\nShould be 0x00000058 (88 bytes) for TrackerDataBlock."
                         },
                         {

@@ -240,6 +240,24 @@
                     "type": "boolean",
                     "description": "When true on a struct/section, children inherit the parent's base color with progressively brighter tones. Creates a visual gradient indicating related fields belonging to the same logical group.",
                     "default": false
+                },
+                "output_format": {
+                    "type": "string",
+                    "description": "Controls how the parsed value is displayed in the Value column and Description pane. Overrides the default display derived from the field type. Available formats:\n- 'hex': Hexadecimal (0xFF)\n- 'decimal': Decimal integer\n- 'ascii': ASCII string representation\n- 'base64': Base64-encoded\n- 'binary': Binary bit string (0b...)\n- 'datetime_filetime': Windows FILETIME (100ns intervals since 1601-01-01)\n- 'datetime_unix': Unix epoch (seconds since 1970-01-01)\n- 'datetime_unix_ms': Unix epoch milliseconds\n- 'ip4': IPv4 address (4 bytes)\n- 'ip6': IPv6 address (16 bytes)\n- 'size_bytes': Human-readable file size (KB/MB/GB)\n- 'bool': Boolean (0=False, non-zero=True)",
+                    "enum": [
+                        "hex",
+                        "decimal",
+                        "ascii",
+                        "base64",
+                        "binary",
+                        "datetime_filetime",
+                        "datetime_unix",
+                        "datetime_unix_ms",
+                        "ip4",
+                        "ip6",
+                        "size_bytes",
+                        "bool"
+                    ]
                 }
             }
         }

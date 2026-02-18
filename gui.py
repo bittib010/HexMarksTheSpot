@@ -14,6 +14,7 @@ from tkinter import filedialog, Button, Scrollbar, Label
 from tkinter import SEL, SEL_LAST, SEL_FIRST, END
 from tkinter import TclError, Entry, Listbox, ttk
 from tkinter import StringVar, DoubleVar, NO, Toplevel, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM
+from tkinter import Menu as tk_Menu
 from tkhtmlview import HTMLText
 
 # Application-specific - use the new dynamic parser loader
@@ -991,6 +992,9 @@ class Main:
         self.bookmark_window = None
         self.bookmarks = []  # Store bookmarks as list of (name, offset) tuples
         
+        # Maximum character width for the Value column in the treeview
+        self.VALUE_COLUMN_MAX_WIDTH = 40
+        
         # Set up modern styling
         self.style = setup_modern_style()
         
@@ -1305,6 +1309,16 @@ class Main:
         # Bind treeview selection
         self.sequence_treeview.bind("<<TreeviewSelect>>", self.listbox_item_selected)
         
+        # Right-click context menu for treeview
+        self._treeview_context_menu = self._create_treeview_context_menu()
+        self.sequence_treeview.bind("<Button-3>", self._show_treeview_context_menu)
+        
+        # Keyboard shortcuts for copy operations
+        self.master.bind("<Control-Shift-H>", self.copy_as_hex)
+        self.master.bind("<Control-Shift-D>", self.copy_as_decimal)
+        self.master.bind("<Control-Shift-A>", self.copy_as_ascii)
+        self.master.bind("<Control-Shift-V>", self.copy_as_parsed_value)
+        
         # Bind scroll/resize events to update treeview highlight border position
         self.sequence_treeview.bind('<Configure>', lambda e: self.master.after_idle(self._update_treeview_border_position))
         self.sequence_treeview.bind('<MouseWheel>', lambda e: self.master.after(10, self._update_treeview_border_position))
@@ -1339,7 +1353,7 @@ class Main:
         self.sequence_treeview.delete(*self.sequence_treeview.get_children())
         for (raw_offset, name, table_val), tags in matching_items:
             display_offset = self._format_offset(raw_offset)
-            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, table_val), tags=tags)
+            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, self._truncate_value(table_val)), tags=tags)
             self._item_raw_offsets[item_id] = raw_offset
 
     def clear_search(self):
@@ -1347,7 +1361,7 @@ class Main:
         self.sequence_treeview.delete(*self.sequence_treeview.get_children())
         for (raw_offset, name, table_val), tags in self.sequence_items:
             display_offset = self._format_offset(raw_offset)
-            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, table_val), tags=tags)
+            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, self._truncate_value(table_val)), tags=tags)
             self._item_raw_offsets[item_id] = raw_offset
 
     def get_complementary_color(hex_color):
@@ -1437,6 +1451,17 @@ class Main:
         if self.offset_format_var.get() == "Hex":
             return f"0x{offset:X}"
         return str(offset)
+
+    def _truncate_value(self, value):
+        """Truncate a value string to the configured max width for the Value column.
+        
+        Values longer than VALUE_COLUMN_MAX_WIDTH are truncated with an ellipsis.
+        The full value is still available in the Description pane on click.
+        """
+        s = str(value)
+        if len(s) > self.VALUE_COLUMN_MAX_WIDTH:
+            return s[:self.VALUE_COLUMN_MAX_WIDTH - 1] + '\u2026'
+        return s
 
     def _parse_offset(self, value):
         """Parse an offset string back to an integer, handling both hex and decimal formats."""
@@ -1666,6 +1691,95 @@ class Main:
                         pass
             else:
                 self.update_status(f"Already bookmarked: {name}")
+
+    def _get_selected_node(self):
+        """Get the Node object for the currently selected treeview item, or None."""
+        selected = self.sequence_treeview.selection()
+        if not selected:
+            return None
+        item = self.sequence_treeview.item(selected[0])
+        tags = item.get('tags', ())
+        tag = None
+        if tags:
+            tag = tags[0] if isinstance(tags, (list, tuple)) and len(tags) > 0 else str(tags)
+        if tag and tag in self.tag_to_child:
+            return self.tag_to_child[tag]
+        return None
+
+    def _copy_to_clipboard(self, text, label="Value"):
+        """Copy text to the system clipboard and show a status message."""
+        self.master.clipboard_clear()
+        self.master.clipboard_append(text)
+        # Truncate the status preview so it doesn't flood the status bar
+        preview = text if len(text) <= 60 else text[:57] + '...'
+        self.update_status(f"Copied {label}: {preview}")
+
+    def copy_as_hex(self, event=None):
+        """Copy the selected field's raw bytes as a hex string (e.g., '4C 00 00 00')."""
+        node = self._get_selected_node()
+        if not node:
+            self.update_status("Select a field to copy")
+            return
+        if not node.data:
+            self.update_status("Selected field has no data")
+            return
+        hex_str = ' '.join(f'{b:02X}' for b in node.data)
+        self._copy_to_clipboard(hex_str, "Hex")
+
+    def copy_as_decimal(self, event=None):
+        """Copy the selected field's raw bytes as a decimal integer."""
+        node = self._get_selected_node()
+        if not node:
+            self.update_status("Select a field to copy")
+            return
+        if not node.data:
+            self.update_status("Selected field has no data")
+            return
+        # Interpret as little-endian unsigned integer (most common in forensic formats)
+        val = int.from_bytes(node.data, byteorder='little', signed=False)
+        self._copy_to_clipboard(str(val), "Decimal")
+
+    def copy_as_ascii(self, event=None):
+        """Copy the selected field's raw bytes as an ASCII string (non-printable as dots)."""
+        node = self._get_selected_node()
+        if not node:
+            self.update_status("Select a field to copy")
+            return
+        if not node.data:
+            self.update_status("Selected field has no data")
+            return
+        ascii_str = ''.join(chr(b) if 32 <= b < 127 else '.' for b in node.data)
+        self._copy_to_clipboard(ascii_str, "ASCII")
+
+    def copy_as_parsed_value(self, event=None):
+        """Copy the selected field's parsed/interpreted value as shown in the Value column."""
+        node = self._get_selected_node()
+        if not node:
+            self.update_status("Select a field to copy")
+            return
+        val = node.table_value if node.table_value is not None else ''
+        self._copy_to_clipboard(str(val), "Parsed value")
+
+    def _create_treeview_context_menu(self):
+        """Create the right-click context menu for the parsed fields treeview."""
+        menu = tk_Menu(self.master, tearoff=0)
+        menu.add_command(label="Copy as Hex          Ctrl+Shift+H", command=self.copy_as_hex)
+        menu.add_command(label="Copy as Decimal      Ctrl+Shift+D", command=self.copy_as_decimal)
+        menu.add_command(label="Copy as ASCII        Ctrl+Shift+A", command=self.copy_as_ascii)
+        menu.add_command(label="Copy Parsed Value    Ctrl+Shift+V", command=self.copy_as_parsed_value)
+        menu.add_separator()
+        menu.add_command(label="Bookmark", command=self.add_bookmark)
+        return menu
+
+    def _show_treeview_context_menu(self, event):
+        """Show the right-click context menu on the treeview."""
+        # Select the item under the cursor
+        item_id = self.sequence_treeview.identify_row(event.y)
+        if item_id:
+            self.sequence_treeview.selection_set(item_id)
+            self.sequence_treeview.focus(item_id)
+            self._treeview_context_menu.tk_popup(event.x_root, event.y_root)
+        self._treeview_context_menu.grab_release()
 
     def bookmark_item_selected(self, event):
         """
@@ -2333,7 +2447,7 @@ class Main:
         # Insert into treeview with formatted offset
         display_offset = self._format_offset(offset)
         item_id = self.sequence_treeview.insert('', 'end', values=(
-            display_offset, node_data['name'], table_val), tags=(tag,))
+            display_offset, node_data['name'], self._truncate_value(table_val)), tags=(tag,))
         
         # Store mappings for click synchronization
         self.tag_to_treeview_item[tag] = item_id

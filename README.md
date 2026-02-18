@@ -209,6 +209,36 @@ Create a JSON file in `Artefacts/configs/` with your file format definition:
 }
 ```
 
+#### Output Format (Display Override)
+
+By default, the Value column shows the native parsed value (e.g., a `uint` shows a decimal number). Use `output_format` to change the **display** without affecting parsing:
+
+```json
+{
+    "name": "header_size",
+    "size": 4,
+    "type": "uint",
+    "output_format": "hex",
+    "description": "Always 0x4C — shown in hex for clarity"
+}
+```
+
+**Key distinction:** `type` controls how bytes are **parsed**; `output_format` controls how the parsed value is **displayed**.
+
+| Format | Example Output | Best For |
+|--------|---------------|----------|
+| `hex` | `0x0000004C` | Signatures, offsets, serial numbers |
+| `decimal` | `16,885,952` | Counts, lengths |
+| `size_bytes` | `4.0 KB` | File sizes |
+| `bool` | `True` / `False` | Flags |
+| `ascii` | `MZ` | Magic bytes as text |
+| `base64` | `SGVsbG8...` | Binary blobs |
+| `binary` | `0b10101011` | Bit patterns |
+| `ip4` / `ip6` | `192.168.1.1` | Network addresses |
+| `datetime_filetime` | `2023-03-15 14:30:00 UTC` | Raw FILETIME bytes |
+| `datetime_unix` | `2019-01-13 08:15:32 UTC` | Raw Unix timestamp bytes |
+| `datetime_unix_ms` | `2023-03-15 14:30:00.123 UTC` | Unix ms timestamps |
+
 #### Forensic Highlighting
 
 Mark fields with forensic significance using `forensic_value`:

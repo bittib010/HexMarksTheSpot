@@ -55,7 +55,8 @@
                     "size": 4,
                     "type": "uint",
                     "description": "**Prefetch File Size**\n\nThe total size of the (decompressed) Prefetch file in bytes. Should match actual file size.\n\nFrom .bt: `int FileSize`\n\n*Forensic Note:* If this doesn't match the actual file size, the file may be truncated, corrupted, or tampered with. For Win10+ compressed files, this is the decompressed size.",
-                    "informational": true
+                    "informational": true,
+                    "output_format": "size_bytes"
                 },
                 {
                     "name": "ExecutableName",
@@ -69,7 +70,8 @@
                     "size": 4,
                     "type": "bytes",
                     "description": "**Prefetch Path Hash**\n\nA hash of the full executable path. This hash is also used in the .pf filename: `EXECUTABLE_NAME-XXXXXXXX.pf`.\n\nFrom .bt: `int Hash <format=hex>`\n\n*Forensic Note:* The same executable launched from different directories produces different hash values and therefore different .pf files. This allows you to distinguish between, for example, `C:\\Windows\\System32\\cmd.exe` and `C:\\Temp\\cmd.exe`. Known hash algorithms:\n- XP: SCCA XP hash\n- Vista+: Path hashing incorporating directory path components\n\nCompare the hash in the filename with this value — mismatches suggest file renaming.",
-                    "forensic_value": "identifier"
+                    "forensic_value": "identifier",
+                    "output_format": "hex"
                 },
                 {
                     "name": "PFFlags",

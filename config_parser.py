@@ -38,6 +38,7 @@ Example JSON config structure:
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
@@ -489,6 +490,130 @@ class ConfigBasedParser(FileParser):
         
         return f"<ul>{''.join(active_flags)}</ul>"
     
+    def format_output(self, data: bytes, output_format: str, endianness: str = "little") -> str:
+        """
+        Format raw bytes into a human-readable string based on output_format.
+        
+        This is the central dispatch for the output_format config field.
+        It converts raw field bytes into the requested display format,
+        independent of how the field type parsed the data.
+        
+        Args:
+            data: The raw bytes of the field
+            output_format: One of the supported format strings
+            endianness: Byte order for multi-byte integer conversions
+            
+        Returns:
+            Formatted string for display in Value column and Description pane
+        """
+        byteorder = "little" if endianness == "little" else "big"
+        
+        if output_format == "hex":
+            return self._format_hex(data)
+        elif output_format == "decimal":
+            return self._format_decimal(data, byteorder)
+        elif output_format == "ascii":
+            return self._format_ascii(data)
+        elif output_format == "base64":
+            return self._format_base64(data)
+        elif output_format == "binary":
+            return self._format_binary(data)
+        elif output_format == "datetime_filetime":
+            return self.filetime_to_datetime(data)
+        elif output_format == "datetime_unix":
+            return self.unix_time_to_datetime(data)
+        elif output_format == "datetime_unix_ms":
+            return self._format_unix_ms(data, byteorder)
+        elif output_format == "ip4":
+            return self._format_ipv4(data)
+        elif output_format == "ip6":
+            return self._format_ipv6(data)
+        elif output_format == "size_bytes":
+            return self._format_size_bytes(data, byteorder)
+        elif output_format == "bool":
+            return self._format_bool(data, byteorder)
+        else:
+            logger.warning(f"Unknown output_format '{output_format}', falling back to hex")
+            return self._format_hex(data)
+    
+    def _format_hex(self, data: bytes) -> str:
+        """Format bytes as hex with 0x prefix, grouped for readability."""
+        if len(data) <= 8:
+            return "0x" + data.hex().upper()
+        # For larger data, space-separate each byte
+        return ' '.join(f'{b:02X}' for b in data)
+    
+    def _format_decimal(self, data: bytes, byteorder: str) -> str:
+        """Format bytes as an unsigned decimal integer."""
+        value = int.from_bytes(data, byteorder=byteorder)
+        return f"{value:,}"
+    
+    def _format_ascii(self, data: bytes) -> str:
+        """Format bytes as ASCII text, replacing non-printable chars with dots."""
+        chars = []
+        for b in data:
+            if 32 <= b < 127:
+                chars.append(chr(b))
+            else:
+                chars.append('.')
+        return ''.join(chars).rstrip('\x00').rstrip('.')
+    
+    def _format_base64(self, data: bytes) -> str:
+        """Format bytes as a Base64 encoded string."""
+        return base64.b64encode(data).decode('ascii')
+    
+    def _format_binary(self, data: bytes) -> str:
+        """Format bytes as a binary bit string."""
+        if len(data) <= 4:
+            value = int.from_bytes(data, byteorder='big')
+            bit_width = len(data) * 8
+            return f"0b{value:0{bit_width}b}"
+        # For larger data, group by byte
+        return ' '.join(f'{b:08b}' for b in data)
+    
+    def _format_unix_ms(self, data: bytes, byteorder: str) -> str:
+        """Format bytes as a Unix timestamp in milliseconds."""
+        try:
+            timestamp_ms = int.from_bytes(data, byteorder=byteorder)
+            if timestamp_ms == 0:
+                return "Not set (0)"
+            timestamp_s = timestamp_ms / 1000.0
+            return datetime.utcfromtimestamp(timestamp_s).strftime("%Y-%m-%d %H:%M:%S.%f UTC")[:-3]
+        except Exception as e:
+            return f"Invalid timestamp: {e}"
+    
+    def _format_ipv4(self, data: bytes) -> str:
+        """Format 4 bytes as a dotted-decimal IPv4 address."""
+        if len(data) != 4:
+            return f"Invalid IPv4 ({len(data)} bytes, need 4)"
+        return f"{data[0]}.{data[1]}.{data[2]}.{data[3]}"
+    
+    def _format_ipv6(self, data: bytes) -> str:
+        """Format 16 bytes as a colon-separated IPv6 address."""
+        if len(data) != 16:
+            return f"Invalid IPv6 ({len(data)} bytes, need 16)"
+        groups = []
+        for i in range(0, 16, 2):
+            groups.append(f'{data[i]:02x}{data[i+1]:02x}')
+        return ':'.join(groups)
+    
+    def _format_size_bytes(self, data: bytes, byteorder: str) -> str:
+        """Format bytes as a human-readable file size."""
+        value = int.from_bytes(data, byteorder=byteorder)
+        if value < 1024:
+            return f"{value} B"
+        elif value < 1024 * 1024:
+            return f"{value / 1024:.1f} KB ({value:,} bytes)"
+        elif value < 1024 * 1024 * 1024:
+            return f"{value / (1024 * 1024):.2f} MB ({value:,} bytes)"
+        else:
+            return f"{value / (1024 * 1024 * 1024):.2f} GB ({value:,} bytes)"
+    
+    def _format_bool(self, data: bytes, byteorder: str) -> str:
+        """Format bytes as a boolean value."""
+        value = int.from_bytes(data, byteorder=byteorder)
+        return "True" if value != 0 else "False"
+    
     def parse_field(self, field_dict: Dict[str, Any], parent_node: Node) -> Optional[Node]:
         """Parse a single field according to its definition."""
         name = field_dict.get("name", "unknown")
@@ -501,6 +626,7 @@ class ConfigBasedParser(FileParser):
         bit_flags = field_dict.get("bit_flags")
         value_map = field_dict.get("value_map")
         forensic_value = field_dict.get("forensic_value", False)
+        output_format = field_dict.get("output_format")
         
         # Check enabled flag - skip disabled fields entirely
         enabled = field_dict.get("enabled", True)
@@ -633,6 +759,13 @@ class ConfigBasedParser(FileParser):
         elif value_map and str(table_value) in value_map:
             display_value = f"{table_value} ({value_map[str(table_value)]})"
         
+        # Apply output_format override if specified in config
+        if output_format:
+            try:
+                display_value = self.format_output(data, output_format, endianness)
+            except Exception as e:
+                logger.warning(f"output_format '{output_format}' failed for field '{name}': {e}")
+        
         # Determine if the display value is just the raw hex (same as hex viewer)
         raw_hex = data.hex()
         is_unparsed = (str(display_value) == raw_hex)
@@ -645,6 +778,8 @@ class ConfigBasedParser(FileParser):
             html_desc += f"<p><b>Value:</b> <i>currently unparsed</i></p>"
         else:
             html_desc += f"<p><b>Value:</b> {display_value}</p>"
+        if output_format:
+            html_desc += f"<p><b>Format:</b> {output_format}</p>"
         html_desc += f"<p><b>Size:</b> {resolved_size} bytes</p>"
         html_desc += f"<p><b>Offset:</b> 0x{offset:X} ({offset})</p>"
         
