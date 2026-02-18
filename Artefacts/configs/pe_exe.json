@@ -1,131 +1,922 @@
 {
-    "name": "WindowsEXE",
-    "description": "Windows PE (Portable Executable) file header - EXE/DLL files",
-    "version": "1.0",
+    "$schema": "./parser-config.schema.json",
+    "name": "WindowsPE",
+    "description": "Windows Portable Executable (PE) format - Comprehensive forensic parser with educational documentation for EXE, DLL, and SYS files. Covers DOS Header, PE Signature, COFF File Header, Optional Header (PE32), Data Directories, and Section Headers.",
     "author": "HexMarksTheSpot",
+    "version": "2.0",
     "magic_bytes": "4D5A",
     "magic_offset": 0,
     "endianness": "little",
     "references": [
         "https://docs.microsoft.com/en-us/windows/win32/debug/pe-format",
-        "https://www.forensicswiki.org/wiki/Portable_Executable_(PE)"
+        "https://learn.microsoft.com/en-us/windows/win32/debug/pe-format",
+        "https://www.forensicswiki.org/wiki/Portable_Executable_(PE)",
+        "http://bytepointer.com/articles/the_microsoft_rich_header.htm",
+        "https://0xrick.github.io/win-internals/pe1/"
     ],
+    "forensic_notes": "**PE File Forensic Analysis Guide**\n\n**What is a PE file?**\nThe Portable Executable (PE) format is the standard binary file format for executables (.exe), dynamic-link libraries (.dll), kernel-mode drivers (.sys), and other executable code on Windows. It evolved from the earlier COFF (Common Object File Format) used in Unix systems. Every Windows executable since Windows NT uses this format.\n\n**Why PE files matter forensically:**\n- Every piece of Windows malware is (or contains) a PE file\n- Compilation timestamps reveal when code was built\n- The Rich Header fingerprints the Visual Studio toolchain used\n- Import tables reveal what OS functionality the program uses\n- Section characteristics expose packing, encryption, and anti-analysis\n- Digital signatures (Authenticode) prove or disprove provenance\n- Debug directories may contain PDB paths with developer usernames\n\n**Key Forensic Evidence:**\n1. **TimeDateStamp** - Compilation time (COFF header) - can reveal timezone, be faked, or be zero\n2. **Rich Header** - Undocumented Microsoft linker fingerprint revealing exact build tools used\n3. **Import Table** - Which Windows APIs the program calls (networking, crypto, process injection, etc.)\n4. **Section Names and Characteristics** - UPX, Themida, VMProtect leave distinctive signatures\n5. **Checksum Validity** - Tampered files often have invalid checksums\n6. **Debug Directory** - PDB path may contain developer's username, project path, or machine name\n7. **Certificate Table** - Authenticode signatures, stolen certificates, or signature stripping\n8. **AddressOfEntryPoint** - Entry point in unusual sections (not `.text`) = likely packed/injected\n\n**Suspicious Indicators:**\n- TimeDateStamp of 0 or far-future dates = likely forged\n- Entry point outside `.text` section = packed, injected, or manually linked\n- Sections with both WRITE and EXECUTE permissions = self-modifying code\n- Section names like `UPX0`, `.themida`, `.vmp` = known packers\n- Very few imports (1-3) = likely packed, resolves APIs at runtime\n- Import of `VirtualAlloc`, `WriteProcessMemory`, `CreateRemoteThread` = process injection\n- `LoadLibrary`+`GetProcAddress` as only imports = runtime API resolution (evasion)\n- SizeOfRawData is 0 but VirtualSize is large = section unpacked at runtime\n- NumberOfRvaAndSizes != 16 = non-standard, possible evasion of security tools\n\n**Common Analysis Workflow:**\n1. Check TimeDateStamp for plausibility\n2. Examine Rich Header for toolchain identification\n3. Review imports for suspicious API usage\n4. Check section characteristics for anomalies\n5. Verify Authenticode signature if present\n6. Compare SizeOfImage with actual file size\n7. Look for debug directory PDB paths\n8. Examine resources for embedded payloads",
     "fields": [
         {
-            "name": "dos_signature",
-            "size": 2,
-            "type": "string",
-            "description": "DOS MZ signature ('MZ' = 0x4D5A). Mark Zbikowski's initials.",
-            "forensic_value": true
+            "name": "IMAGE_DOS_HEADER",
+            "type": "struct",
+            "description": "**DOS Header (IMAGE_DOS_HEADER - 64 bytes)**\n\nThe first structure in every PE file. This is a legacy header from the MS-DOS era (1980s) that has been preserved for backward compatibility. When a PE file is run under MS-DOS, the DOS stub (just after this header) prints 'This program cannot be run in DOS mode' and exits.\n\n**Why does a modern Windows executable start with a DOS header?**\nWhen Microsoft created the PE format for Windows NT in 1993, they needed a way for new executables to gracefully fail if accidentally run on MS-DOS or Windows 3.x. The solution was brilliant: start every PE file with a valid DOS executable header. DOS would see this header, run the tiny stub program that prints an error message, and exit. Windows NT and later ignore the DOS header (except for `e_lfanew`) and jump directly to the PE signature.\n\n**The only field that matters for PE parsing is `e_lfanew`** (offset 0x3C) - it points to the PE signature. All other fields are DOS legacy and forensically interesting only in rare cases.\n\n*Forensic Value:* Most fields here are boilerplate. However, the DOS stub area between offset 64 and `e_lfanew` can contain hidden data, Rich Headers, or unusual code. Malware sometimes overwrites the DOS stub with custom code or hides data there.",
+            "fields": [
+                {
+                    "name": "e_magic",
+                    "size": 2,
+                    "type": "string",
+                    "description": "**MZ Signature (Magic Number)**\n\nMust always be `0x5A4D` (ASCII: 'MZ'). These are the initials of **Mark Zbikowski**, one of the lead developers of MS-DOS at Microsoft.\n\n**What is a magic number?**\nA magic number (also called a file signature or magic bytes) is a fixed sequence of bytes at the beginning of a file that identifies its format. Operating systems and forensic tools use these bytes to determine what a file actually is, regardless of its file extension. This is more reliable than file extensions, which can easily be renamed.\n\n**Why 'MZ'?**\nMark Zbikowski designed the original MS-DOS executable format (MZ format) in the 1980s. He used his initials as the signature - a common practice in early computing. This signature has persisted through every evolution of Windows executables for over 40 years.\n\n*Validation:* If these bytes are not `4D 5A`, the file is NOT a valid PE/DOS executable. Some malware packers create non-standard MZ headers or only preserve the first two bytes.\n\n**Forensic TODO:** Check for:\n- Non-standard MZ signature = not a valid executable\n- Modified bytes after MZ that differ from standard DOS header = custom packer or exploit",
+                    "forensic_value": true,
+                    "expected_values": ["MZ"]
+                },
+                {
+                    "name": "e_cblp",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Bytes on Last Page (e_cblp)**\n\nNumber of bytes actually used on the last 512-byte page of the DOS executable. A value of 0 means the entire last page is used (512 bytes).\n\n**DOS memory model context:**\nMS-DOS loaded executables in 512-byte pages (like disk sectors). The file size might not be an exact multiple of 512, so this field tells the DOS loader how many bytes of the last page contain actual program data versus padding.\n\n*Modern relevance:* This field is ignored by the Windows PE loader. However, some malware tools set it to specific values that can serve as tool fingerprints.",
+                    "informational": true
+                },
+                {
+                    "name": "e_cp",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Pages in File (e_cp)**\n\nTotal number of 512-byte pages in the DOS executable, including any partial last page.\n\n*Modern relevance:* Ignored by the Windows PE loader. Some PE generation tools leave recognizable patterns in these legacy DOS fields.",
+                    "informational": true
+                },
+                {
+                    "name": "e_crlc",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Relocation Count (e_crlc)**\n\nNumber of entries in the DOS relocation table. DOS executables needed relocations because they could be loaded at various memory addresses.\n\n*Modern relevance:* Typically 0 in PE files. Non-zero values with a functional DOS stub may indicate a dual-mode executable (runs on both DOS and Windows)."
+                },
+                {
+                    "name": "e_cparhdr",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Header Size in Paragraphs (e_cparhdr)**\n\nSize of the DOS header in 16-byte 'paragraphs'. A paragraph is a DOS memory unit = 16 bytes. Multiply this value by 16 to get the header size in bytes.\n\nTypically 4 (= 64 bytes = the size of IMAGE_DOS_HEADER)."
+                },
+                {
+                    "name": "e_minalloc",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Minimum Extra Paragraphs (e_minalloc)**\n\nMinimum additional memory (in 16-byte paragraphs) needed above the program image. DOS legacy field, ignored by Windows."
+                },
+                {
+                    "name": "e_maxalloc",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Maximum Extra Paragraphs (e_maxalloc)**\n\nMaximum additional memory (in 16-byte paragraphs) desired above the program image. DOS legacy field, ignored by Windows.\n\nCommonly `0xFFFF` in PE files, meaning 'as much as available'."
+                },
+                {
+                    "name": "e_ss",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Initial SS Value (e_ss)**\n\nInitial value for the Stack Segment (SS) register, relative to the start of the executable. Part of the DOS real-mode execution context. Ignored by Windows PE loader."
+                },
+                {
+                    "name": "e_sp",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Initial SP Value (e_sp)**\n\nInitial value for the Stack Pointer (SP) register. Sets the top of the DOS program's stack. Ignored by Windows PE loader.\n\nTypically `0x00B8` in standard PE files generated by Microsoft linkers."
+                },
+                {
+                    "name": "e_csum",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**DOS Checksum (e_csum)**\n\nChecksum of the DOS header contents. Rarely verified by DOS itself and completely ignored by Windows.\n\nTypically 0 in PE files. A non-zero value with the wrong checksum is not a concern."
+                },
+                {
+                    "name": "e_ip",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Initial IP Value (e_ip)**\n\nInitial Instruction Pointer for DOS execution. When DOS loads the executable, it begins executing at `CS:IP`. This points to the DOS stub code.\n\nIgnored by Windows PE loader, which uses `AddressOfEntryPoint` from the Optional Header instead."
+                },
+                {
+                    "name": "e_cs",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Initial CS Value (e_cs)**\n\nInitial Code Segment register value for DOS execution, relative to the load segment. Used together with `e_ip` to form the DOS entry point `CS:IP`.\n\nIgnored by Windows PE loader."
+                },
+                {
+                    "name": "e_lfarlc",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Relocation Table Offset (e_lfarlc)**\n\nFile offset of the DOS relocation table. In PE files this is typically `0x0040` (64), pointing right at the end of the DOS header.\n\n**Why 0x40?**\nThe value 0x40 (64 decimal) = the size of the IMAGE_DOS_HEADER structure itself. If the relocation table starts at offset 64 and the relocation count is 0, there's effectively no DOS relocation table. PE files use `0x40` here as a convention indicating 'this is a PE file, not a real DOS executable'.\n\n*Forensic Note:* A value of `0x40` or greater is required for PE files (values below 0x40 would overlap the DOS header itself)."
+                },
+                {
+                    "name": "e_ovno",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Overlay Number (e_ovno)**\n\nOverlay number for DOS overlay management. Overlays were a DOS technique for running programs larger than available memory by swapping code segments in and out.\n\nAlways 0 for the main executable. Ignored in PE files."
+                },
+                {
+                    "name": "e_res",
+                    "size": 8,
+                    "type": "bytes",
+                    "description": "**Reserved Words (e_res)**\n\n4 reserved 16-bit words (8 bytes total). Should be zero.\n\n**Forensic TODO:** Check for non-zero values:\n- Some packers and malware builders store tool signatures here\n- Non-zero data in reserved fields = non-standard tool or intentional data hiding\n- Compare across malware samples to identify common builder tools"
+                },
+                {
+                    "name": "e_oemid",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**OEM Identifier (e_oemid)**\n\nIdentifies the OEM (Original Equipment Manufacturer) for `e_oeminfo`. Intended for OEM-specific extensions to the executable format.\n\nRarely used, typically 0 in modern PE files."
+                },
+                {
+                    "name": "e_oeminfo",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**OEM Information (e_oeminfo)**\n\nOEM-specific data, defined by `e_oemid`. The meaning depends on which OEM identifier is used.\n\nRarely used, typically 0 in modern PE files."
+                },
+                {
+                    "name": "e_res2",
+                    "size": 20,
+                    "type": "bytes",
+                    "description": "**Reserved Words 2 (e_res2)**\n\n10 reserved 16-bit words (20 bytes total). Should be zero.\n\n**Forensic TODO:** Same as `e_res` - check for non-zero values that may indicate custom tools or data hiding. This is a larger area (20 bytes) that provides more room for hidden signatures or payloads."
+                },
+                {
+                    "name": "e_lfanew",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**PE Header Offset (e_lfanew)**\n\nThe **most important field** in the DOS header for PE parsing. This 4-byte value at file offset `0x3C` contains the file offset to the PE signature (`PE\\0\\0`).\n\n**How PE file loading works:**\n1. Windows reads the first 2 bytes - confirms MZ signature\n2. Windows reads the DWORD at offset 0x3C - this is `e_lfanew`\n3. Windows seeks to that offset and reads 4 bytes\n4. If those bytes are `50 45 00 00` (ASCII: 'PE\\0\\0'), it's a valid PE file\n5. Everything between offset 64 and `e_lfanew` is the DOS stub (and possibly Rich Header)\n\n**Common values:**\n- `0x80` (128) - Very common, standard Microsoft linker output\n- `0xE0` (224) or `0xF0` (240) - Common with Rich Header present\n- `0x100` (256) - Sometimes seen with larger Rich Headers\n- Larger values = more space for DOS stub or Rich Header data\n\n*Validation:* The PE spec does not define a maximum value, but `e_lfanew` + 4 must not exceed the file size. Values less than 4 are invalid. Extremely large values (>1024) are unusual and may indicate file manipulation.\n\n**Forensic TODO:** Check for:\n- Value < 64 = overlapping with DOS header (unusual but possible per spec)\n- Very large values = potential for data hiding between DOS header and PE signature\n- The area between offset 64 and `e_lfanew` may contain the Rich Header or hidden data",
+                    "forensic_value": "critical"
+                }
+            ]
         },
         {
-            "name": "e_cblp",
-            "size": 2,
-            "type": "uint",
-            "description": "Bytes on last page of file"
+            "name": "DOS_Stub",
+            "type": "section",
+            "description": "**DOS Stub Program**\n\nThe area between the end of the DOS header (offset 64) and the PE signature (at `e_lfanew`). This typically contains:\n\n1. **DOS Stub Code** - A tiny DOS program that prints 'This program cannot be run in DOS mode' and exits\n2. **Rich Header** (undocumented) - A Microsoft linker fingerprint embedded in XOR-encrypted form\n\n**The Rich Header:**\nThe Rich Header is an **undocumented** structure inserted by the Microsoft Visual Studio linker between the DOS stub and the PE signature. It is XOR-encrypted with a key derived from the header's content. When decrypted, it reveals a list of compiler/linker tool IDs and their usage counts.\n\n**Rich Header forensic value:**\n- Identifies the exact Visual Studio version and build tools used to compile the binary\n- Can link multiple malware samples to the same build environment\n- Absence of Rich Header in a file claiming to be MSVC-compiled is suspicious\n- The XOR key itself can serve as a fingerprint across related samples\n- Malware authors sometimes transplant Rich Headers from legitimate files to mislead analysts\n\n*Forensic TODO:* Check this region for:\n- Standard DOS stub message vs custom code\n- Rich Header presence (look for 'Rich' marker before `e_lfanew`)\n- Non-standard content that might indicate data hiding or unusual builders",
+            "fields": [
+                {
+                    "name": "DosStubAndRichHeader",
+                    "size": "$e_lfanew - 64",
+                    "type": "bytes",
+                    "description": "**DOS Stub + Rich Header Data**\n\nRaw bytes between the DOS header and the PE signature. The size varies depending on the linker used and whether a Rich Header is present.\n\n**Typical contents:**\n- First ~40 bytes: DOS stub machine code that prints the error message\n- Next ~14 bytes: The ASCII string 'This program cannot be run in DOS mode.\\r\\r\\n$'\n- Remaining bytes: Padding zeros, or the XOR-encrypted Rich Header\n\n**Identifying the Rich Header manually:**\n1. Scan backwards from `e_lfanew` for the ASCII string `Rich` (52 69 63 68)\n2. The 4 bytes after 'Rich' are the XOR key\n3. Scan backwards from 'Rich' marker, XOR-decoding each DWORD with the key\n4. When you decode `DanS` (44 61 6E 53), you've found the start of the Rich Header\n5. Between `DanS` and `Rich` are pairs of (tool_id, count) DWORDs\n\n*Forensic Value:* This area is one of the most valuable for malware attribution. The Rich Header links a binary to specific build tools and can be used for clustering related samples."
+                }
+            ]
         },
         {
-            "name": "e_cp",
-            "size": 2,
-            "type": "uint",
-            "description": "Pages in file"
+            "name": "PE_SIGNATURE",
+            "type": "struct",
+            "description": "**PE Signature**\n\nThe 4-byte PE signature marks the beginning of the actual PE data structures. Windows seeks to the offset specified by `e_lfanew` and reads these 4 bytes to confirm this is a valid PE file.\n\n**The signature cascade:**\nA PE file is validated through a two-step signature check:\n1. Bytes 0-1: `MZ` (0x4D5A) = valid DOS/PE file header\n2. Bytes at offset `e_lfanew`: `PE\\0\\0` (0x50450000) = valid PE file\n\nIf both signatures are present, the file is a PE executable. If only MZ is present but PE signature is missing or different, the file might be a pure DOS executable, NE (16-bit Windows), or LE (VxD driver) format.",
+            "fields": [
+                {
+                    "name": "PESignature",
+                    "size": 4,
+                    "type": "bytes",
+                    "description": "**PE Signature ('PE\\0\\0')**\n\nMust be `50 45 00 00` (ASCII: 'PE' followed by two null bytes). This is `IMAGE_NT_SIGNATURE` (value `0x00004550` in little-endian).\n\n**Other possible signatures at this location:**\n- `50 45 00 00` = PE format (Windows NT and later)\n- `4E 45` = NE format (16-bit Windows 3.x)\n- `4C 45` = LE format (Virtual Device Drivers - VxDs)\n- `4C 58` = LX format (OS/2 2.x)\n\n*Validation:* If not `PE\\0\\0`, this is not a valid Windows PE file.\n\n**Forensic TODO:** A modified PE signature may indicate:\n- Corrupted file\n- Anti-analysis technique (some tools modify this to prevent static analysis)\n- Older executable format (NE for 16-bit, LE for VxD)",
+                    "forensic_value": true
+                }
+            ]
         },
         {
-            "name": "e_crlc",
-            "size": 2,
-            "type": "uint",
-            "description": "Relocations"
+            "name": "IMAGE_FILE_HEADER",
+            "type": "struct",
+            "description": "**COFF File Header (IMAGE_FILE_HEADER - 20 bytes)**\n\nImmediately follows the PE signature. Also called the 'COFF Header' because it originates from the Common Object File Format used in Unix.\n\nThis 20-byte structure contains the core metadata about the executable: what processor it targets, when it was compiled, how many sections it contains, and its fundamental characteristics (EXE vs DLL, 32-bit vs 64-bit, etc.).\n\n*Forensic Value:* The COFF header contains some of the most important initial triage fields, especially `TimeDateStamp` (compilation time) and `Characteristics` (file type flags).",
+            "fields": [
+                {
+                    "name": "Machine",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Target Machine Architecture**\n\nIdentifies the CPU architecture this executable was compiled for. The Windows PE loader checks this field to ensure the executable is compatible with the current system.\n\n**How it works:**\nWhen you double-click an EXE, Windows reads this field to determine if the binary can run on the current processor. A 64-bit Windows system can run both AMD64 and I386 binaries (via WoW64 emulation), but an ARM64 Surface can only run ARM64 and I386 (via emulation) natively.\n\n*Forensic Value:* Reveals the target platform. Malware targeting specific architectures (e.g., ARM64 for IoT devices, or I386 for maximum compatibility) provides clues about the intended victims.\n\n**Forensic TODO:** Check for:\n- I386 (0x014C) targeting 32-bit = maximum compatibility, most common for malware\n- AMD64 (0x8664) = 64-bit only, indicates modern development\n- ARM/ARM64 = IoT, mobile, or Surface-targeted malware\n- Unexpected architecture for the context (e.g., ARM binary found on x86 system)",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "0": "IMAGE_FILE_MACHINE_UNKNOWN",
+                        "332": "I386 (Intel 386+, 32-bit x86)",
+                        "354": "R3000 (MIPS little-endian)",
+                        "358": "R4000 (MIPS little-endian)",
+                        "360": "R10000 (MIPS little-endian)",
+                        "361": "WCEMIPSV2 (MIPS WCE v2)",
+                        "388": "ALPHA (Alpha AXP)",
+                        "418": "SH3 (Hitachi SH3)",
+                        "419": "SH3DSP (Hitachi SH3 DSP)",
+                        "420": "SH3E (Hitachi SH3E)",
+                        "422": "SH4 (Hitachi SH4)",
+                        "424": "SH5 (Hitachi SH5)",
+                        "448": "ARM (ARM little-endian)",
+                        "450": "THUMB (ARM Thumb)",
+                        "452": "ARMNT (ARM Thumb-2)",
+                        "467": "AM33 (Matsushita AM33)",
+                        "496": "POWERPC (PowerPC little-endian)",
+                        "497": "POWERPCFP (PowerPC with FPU)",
+                        "512": "IA64 (Intel Itanium)",
+                        "614": "MIPS16 (MIPS16)",
+                        "644": "ALPHA64 (Alpha64)",
+                        "870": "MIPSFPU (MIPS with FPU)",
+                        "1126": "MIPSFPU16 (MIPS16 with FPU)",
+                        "3772": "EBC (EFI Byte Code)",
+                        "20530": "RISCV32 (RISC-V 32-bit)",
+                        "20580": "RISCV64 (RISC-V 64-bit)",
+                        "20776": "RISCV128 (RISC-V 128-bit)",
+                        "34404": "AMD64 (x64, 64-bit)",
+                        "36929": "M32R (Mitsubishi M32R)",
+                        "43620": "ARM64 (ARM64 little-endian)"
+                    }
+                },
+                {
+                    "name": "NumberOfSections",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Sections**\n\nThe number of section headers (and corresponding section bodies) in the PE file. Sections are the fundamental organizational units of a PE file, each containing a specific type of data (code, initialized data, resources, etc.).\n\n**Common section counts:**\n- `3-7`: Normal application (typical: .text, .rdata, .data, .rsrc, .reloc)\n- `1-2`: Possibly packed (packers merge sections to simplify)\n- `8+`: Complex application with custom sections or debug sections\n- `0`: Invalid but sometimes seen in crafted files\n\n**The Windows PE loader limit:**\nThe PE spec allows up to 65,535 sections (WORD max), but Windows limits the practical count to 96 sections. Files with more than 96 sections will fail to load.\n\n*Forensic Value:* Abnormal section counts are a strong indicator of packing or custom tooling. A single-section PE file is highly suspicious.",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "TimeDateStamp",
+                    "size": 4,
+                    "type": "unix_time",
+                    "description": "**Compilation Timestamp (TimeDateStamp)**\n\nA 32-bit Unix timestamp (seconds since January 1, 1970 00:00:00 UTC) indicating when the file was linked (compiled into its final form).\n\n**What this actually records:**\nThis timestamp is set by the linker (e.g., link.exe in Visual Studio) at the moment it produces the final PE file. It does NOT represent when the source code was written or when individual object files were compiled - those timestamps appear in the Rich Header and debug directories.\n\n**Interpreting the value:**\n- **Plausible date (2000-present):** Normal, likely genuine\n- **0x00000000 (Jan 1, 1970):** Deliberately zeroed - privacy-conscious build or reproducible build system (Golang, Rust with settings)\n- **0xFFFFFFFF or dates far in the future:** Forged or garbage\n- **Dates before 1990:** Suspicious for Windows PE files (format didn't exist yet)\n- **Delphi binaries:** Borland/Embarcadero compilers use `0x2A425E19` (1992-06-19) as a special constant\n- **Some Golang binaries:** Use 0 by default for reproducible builds\n\n**Timezone consideration:** The timestamp is UTC. Convert to the developer's likely timezone for more accurate analysis.\n\n*Forensic Value:* **Critical** - One of the first fields to check in malware triage. Cross-reference with file system timestamps ($MFT $SI_Modified, $FN_Modified) and any debug timestamps.\n\n**Forensic TODO:** Check for:\n- Timestamp vs file creation date discrepancy (compiled long before appearing?)\n- Timestamp in the future = definitely forged\n- Timestamp matching a known campaign's build timeline\n- Delphi constant `0x2A425E19` = compiled with Delphi/C++Builder\n- Zero = intentionally stripped (reproducible builds or anti-forensics)",
+                    "forensic_value": "timestamp"
+                },
+                {
+                    "name": "PointerToSymbolTable",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Pointer to Symbol Table**\n\nFile offset to the COFF symbol table. In modern PE files, this is **always 0** because COFF debug symbols have been replaced by PDB (Program Database) files.\n\n**Historical context:**\nEarly versions of Windows NT used COFF-style debug symbols embedded directly in the executable. This was later replaced by the more efficient PDB format, which stores debug symbols in a separate file.\n\n*Forensic Note:* Should be 0 for modern executables. Non-zero values may indicate:\n- Very old executables (pre-1998)\n- Custom-built executables with embedded COFF symbols\n- Files compiled with non-Microsoft toolchains that still use COFF symbols"
+                },
+                {
+                    "name": "NumberOfSymbols",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Number of Symbols**\n\nNumber of entries in the COFF symbol table. Should be 0 for all modern PE files (since COFF symbols are deprecated in favor of PDB files).\n\n*Note:* If `PointerToSymbolTable` is 0, this field should also be 0."
+                },
+                {
+                    "name": "SizeOfOptionalHeader",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Size of Optional Header**\n\nSize in bytes of the Optional Header that follows this COFF header. Despite its name, the Optional Header is **required** for executable PE files (it's 'optional' only in COFF object files).\n\n**Expected values:**\n- `0x00E0` (224 bytes) = PE32 (32-bit) Optional Header\n- `0x00F0` (240 bytes) = PE32+ (64-bit) Optional Header\n- `0x0000` = COFF object file (no Optional Header)\n\n**Why the size differs:**\nThe PE32+ (64-bit) Optional Header is 16 bytes larger because pointer-sized fields (`ImageBase`, `SizeOfStackReserve`, `SizeOfStackCommit`, `SizeOfHeapReserve`, `SizeOfHeapCommit`) increase from 4 bytes to 8 bytes, while the `BaseOfData` field is removed entirely.\n\n*Forensic Value:* Tells you whether this is a 32-bit or 64-bit binary. Unusual sizes may indicate tampering or non-standard toolchains.",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "Characteristics",
+                    "size": 2,
+                    "type": "bitfield",
+                    "description": "**File Characteristics (Bitfield)**\n\nA 16-bit bitfield describing the fundamental properties of the PE file. Multiple flags can be combined.\n\n**How to read this bitfield:**\nEach bit position represents a specific property. If the bit is set (1), the property is true.\n\n*Example:* Value `0x0102` = bits 1 and 8 set = `EXECUTABLE_IMAGE` + `32BIT_MACHINE` = 'this is a 32-bit executable'\n*Example:* Value `0x2102` = bits 1, 8, and 13 set = `EXECUTABLE_IMAGE` + `32BIT_MACHINE` + `DLL` = 'this is a 32-bit DLL'\n\n*Forensic Value:* **Critical** - Immediately tells you if the file is an EXE or DLL, whether it was stripped of debug info, and if ASLR data (relocations) is present.\n\n**Forensic TODO:** Check for:\n- `EXECUTABLE_IMAGE` not set = file will not execute (possibly corrupted or incomplete)\n- `DLL` flag set on a .exe file = unusual, possibly renamed DLL\n- `RELOCS_STRIPPED` set = cannot be relocated (ASLR incompatible) = older or custom-built\n- `DEBUG_STRIPPED` = debug info removed (normal for release builds, but also for anti-analysis)",
+                    "forensic_value": true,
+                    "bit_flags": {
+                        "0": {
+                            "name": "RELOCS_STRIPPED",
+                            "description": "Relocation info stripped from file. If set, the file must be loaded at its preferred ImageBase. ASLR cannot be applied."
+                        },
+                        "1": {
+                            "name": "EXECUTABLE_IMAGE",
+                            "description": "File is executable (no unresolved external references). This flag MUST be set for the file to be a valid executable."
+                        },
+                        "2": {
+                            "name": "LINE_NUMS_STRIPPED",
+                            "description": "COFF line numbers have been removed. Deprecated - should be 0 in modern PE files."
+                        },
+                        "3": {
+                            "name": "LOCAL_SYMS_STRIPPED",
+                            "description": "COFF symbol table entries for local symbols have been removed. Deprecated - should be 0."
+                        },
+                        "4": {
+                            "name": "AGGRESSIVE_WS_TRIM",
+                            "description": "Aggressively trim working set. Obsolete flag from Windows NT 4.0 era."
+                        },
+                        "5": {
+                            "name": "LARGE_ADDRESS_AWARE",
+                            "description": "Application can handle addresses larger than 2 GB. For 32-bit apps, enables access to the full 4 GB user-mode address space when running on 64-bit Windows."
+                        },
+                        "7": {
+                            "name": "BYTES_REVERSED_LO",
+                            "description": "Little-endian byte order. Deprecated and should not be used."
+                        },
+                        "8": {
+                            "name": "32BIT_MACHINE",
+                            "description": "Machine is based on a 32-bit word architecture."
+                        },
+                        "9": {
+                            "name": "DEBUG_STRIPPED",
+                            "description": "Debugging information is removed from the image file and stored separately in a .DBG file."
+                        },
+                        "10": {
+                            "name": "REMOVABLE_RUN_FROM_SWAP",
+                            "description": "If image is on removable media, fully load it and copy to swap file before execution."
+                        },
+                        "11": {
+                            "name": "NET_RUN_FROM_SWAP",
+                            "description": "If image is on network, fully load it and copy to swap file before execution."
+                        },
+                        "12": {
+                            "name": "SYSTEM",
+                            "description": "Image file is a system file (e.g., kernel-mode driver), not a user program."
+                        },
+                        "13": {
+                            "name": "DLL",
+                            "description": "Image file is a Dynamic Link Library (DLL). Can still have an entry point (DllMain)."
+                        },
+                        "14": {
+                            "name": "UP_SYSTEM_ONLY",
+                            "description": "File should only be run on a uniprocessor (single-core) machine."
+                        },
+                        "15": {
+                            "name": "BYTES_REVERSED_HI",
+                            "description": "Big-endian byte order. Deprecated and should not be used."
+                        }
+                    }
+                }
+            ]
         },
         {
-            "name": "e_cparhdr",
-            "size": 2,
-            "type": "uint",
-            "description": "Size of header in paragraphs"
+            "name": "IMAGE_OPTIONAL_HEADER",
+            "type": "struct",
+            "description": "**Optional Header (IMAGE_OPTIONAL_HEADER32 - 224 bytes for PE32)**\n\nDespite its name, this header is **required** for executable PE files (the name 'optional' comes from COFF, where object files don't have it). It contains the most detailed metadata about the executable image, split into three parts:\n\n1. **Standard Fields** (28 bytes): Magic number, linker version, code sizes, entry point\n2. **Windows-Specific Fields** (68 bytes): ImageBase, alignment, OS version, image size, checksum, subsystem, DLL characteristics, stack/heap sizes\n3. **Data Directories** (128 bytes): 16 entries pointing to import tables, export tables, resources, debug info, certificates, etc.\n\n**PE32 vs PE32+ (64-bit):**\nThis parser handles PE32 (32-bit). PE32+ (64-bit) has the same fields but `ImageBase`, `SizeOfStackReserve/Commit`, and `SizeOfHeapReserve/Commit` become 8 bytes instead of 4, and `BaseOfData` is removed. The `Magic` field (first 2 bytes) distinguishes them: `0x010B` = PE32, `0x020B` = PE32+.\n\n*Forensic Value:* Contains the entry point, subsystem type, DLL characteristics (ASLR/DEP/CFG), and all data directory pointers - essential for understanding what the binary does and how it's structured.",
+            "fields": [
+                {
+                    "name": "Magic",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Optional Header Magic Number**\n\nIdentifies the format of the Optional Header and determines whether this is a 32-bit or 64-bit PE file.\n\n**Values:**\n- `0x010B` (267) = **PE32** - 32-bit executable\n- `0x020B` (523) = **PE32+** - 64-bit executable\n- `0x0107` (263) = **ROM image** - very rare\n\n**Why this matters:**\nThe Magic value determines the sizes of several subsequent fields. In PE32+, pointer-sized fields become 8 bytes instead of 4. A parser must check this value before interpreting the rest of the Optional Header.\n\n*Note:* This parser currently handles PE32 (0x010B) field sizes. PE32+ files may parse with incorrect field boundaries for the pointer-sized fields.",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "267": "PE32 (32-bit)",
+                        "523": "PE32+ (64-bit)",
+                        "263": "ROM Image"
+                    }
+                },
+                {
+                    "name": "MajorLinkerVersion",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**Major Linker Version**\n\nThe major version number of the linker that produced this file.\n\n**Common values and their meanings:**\n- `6` = Visual Studio 6.0 (1998)\n- `7` = Visual Studio .NET 2002/2003\n- `8` = Visual Studio 2005\n- `9` = Visual Studio 2008\n- `10` = Visual Studio 2010\n- `11` = Visual Studio 2012\n- `12` = Visual Studio 2013\n- `14` = Visual Studio 2015/2017/2019/2022 (unified linker)\n- `2` = Often seen in Golang binaries\n- `48` (0x30) = Common in Delphi/C++Builder\n\n*Forensic Value:* Helps identify the development environment used to build the binary.",
+                    "informational": true
+                },
+                {
+                    "name": "MinorLinkerVersion",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**Minor Linker Version**\n\nThe minor version number of the linker. Combined with `MajorLinkerVersion`, gives the full linker version (e.g., 14.29 for VS2022).",
+                    "informational": true
+                },
+                {
+                    "name": "SizeOfCode",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Code (Text) Section(s)**\n\nTotal size of all sections that have the `IMAGE_SCN_CNT_CODE` characteristic, rounded up to the file alignment.\n\n*Forensic Note:* If this is 0 but the file claims to be executable, the code may be in a non-standard section or the file may be a resource-only DLL."
+                },
+                {
+                    "name": "SizeOfInitializedData",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Initialized Data**\n\nTotal size of all sections containing initialized data (sections with `IMAGE_SCN_CNT_INITIALIZED_DATA`). This includes `.rdata`, `.data`, `.rsrc`, etc."
+                },
+                {
+                    "name": "SizeOfUninitializedData",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Uninitialized Data (BSS)**\n\nTotal size of all sections containing uninitialized data (`.bss` section). This data is zero-initialized at load time and occupies no space in the file on disk."
+                },
+                {
+                    "name": "AddressOfEntryPoint",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Address of Entry Point (RVA)**\n\nThe **Relative Virtual Address** (RVA) of the first instruction to execute when the program starts. For DLLs, this is the address of `DllMain`.\n\n**What is an RVA?**\nAn RVA (Relative Virtual Address) is an offset relative to the base address where the PE image is loaded in memory (`ImageBase`). The actual virtual address = `ImageBase` + RVA. RVAs are used throughout PE headers because the loader may place the image at different base addresses due to ASLR.\n\n**How execution begins:**\n1. Windows loader maps the PE file into memory at `ImageBase` (or a random address if ASLR is active)\n2. Loader resolves imports, applies relocations\n3. Loader calculates actual entry point: `ImageBase` + `AddressOfEntryPoint`\n4. Execution transfers to that address\n\n**Normal values:** Should point into the `.text` section (the primary code section).\n\n*Forensic Value:* **Critical** - If the entry point is NOT in the `.text` section, the file is likely packed, injected, or manually crafted. Cross-reference with section boundaries.\n\n**Forensic TODO:** Check:\n- Entry point in `.text` section = normal\n- Entry point in last section = likely packed (UPX, ASPack, etc.)\n- Entry point at very start of a section (offset 0) = possible packer\n- Entry point of 0 = resource-only DLL or corrupted\n- Entry point outside any section = highly unusual, possibly injected",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "BaseOfCode",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Base of Code (RVA)**\n\nRVA to the beginning of the code (`.text`) section when loaded in memory. Should typically match the RVA of the first code section.\n\n*Forensic Note:* Compare with `AddressOfEntryPoint` - if the entry point is before this address, it's executing outside the code section.",
+                    "informational": true
+                },
+                {
+                    "name": "BaseOfData",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Base of Data (RVA)**\n\nRVA to the beginning of the data section when loaded in memory. **This field exists only in PE32 (32-bit) and is absent in PE32+ (64-bit).**\n\n*Note:* In PE32+, the `ImageBase` field occupies 8 bytes starting at this position, effectively replacing `BaseOfData`.",
+                    "informational": true
+                },
+                {
+                    "name": "ImageBase",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Preferred Image Base Address**\n\nThe preferred virtual address where the PE image should be loaded in memory. If ASLR (Address Space Layout Randomization) is enabled (via `DllCharacteristics`), the loader may ignore this preference.\n\n**Common values:**\n- `0x00400000` = Default for EXE files (most common)\n- `0x10000000` = Default for DLL files\n- `0x00010000` = Windows CE executables\n\n**Why ImageBase matters:**\nIf the loader can place the image at its preferred base address, no relocations are needed - all hardcoded addresses in the code are already correct. If ASLR moves the image to a different address, the loader must apply relocations (if the `.reloc` section is present) to fix all absolute addresses.\n\n*Forensic Note:* Non-standard ImageBase values may indicate custom tools or manual PE crafting.",
+                    "informational": true,
+                    "value_map": {
+                        "4194304": "0x00400000 (Default EXE)",
+                        "268435456": "0x10000000 (Default DLL)",
+                        "65536": "0x00010000 (Windows CE)"
+                    }
+                },
+                {
+                    "name": "SectionAlignment",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Section Alignment (in memory)**\n\nThe alignment of sections when loaded in memory. Each section starts at a virtual address that is a multiple of this value.\n\n**Typical value:** `0x1000` (4096 bytes = one memory page on x86/x64).\n\nThis must be greater than or equal to `FileAlignment`. If `SectionAlignment` < page size, it must equal `FileAlignment`.\n\n*Forensic Note:* Values other than 0x1000 are unusual and may indicate non-standard linking or manual PE construction."
+                },
+                {
+                    "name": "FileAlignment",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**File Alignment (on disk)**\n\nThe alignment of sections in the file on disk. Each section's raw data starts at a file offset that is a multiple of this value, with padding added if needed.\n\n**Typical value:** `0x200` (512 bytes = one disk sector).\n\n**Valid range:** Must be a power of 2 between 512 and 65536. The default is 512.\n\n*Forensic Note:* Very small alignment (0x200) is standard. Unusual values may indicate custom tools."
+                },
+                {
+                    "name": "MajorOperatingSystemVersion",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Major OS Version Required**\n\nThe minimum major version of the operating system required. Combined with `MinorOperatingSystemVersion`.\n\n**Common values:**\n- 4.0 = Windows NT 4.0\n- 5.1 = Windows XP\n- 6.0 = Windows Vista\n- 6.1 = Windows 7\n- 6.2 = Windows 8\n- 10.0 = Windows 10/11"
+                },
+                {
+                    "name": "MinorOperatingSystemVersion",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Minor OS Version Required**\n\nThe minimum minor version of the operating system required."
+                },
+                {
+                    "name": "MajorImageVersion",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Major Image Version**\n\nThe major version number of the image (application-defined). Set by the `/VERSION` linker option."
+                },
+                {
+                    "name": "MinorImageVersion",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Minor Image Version**\n\nThe minor version number of the image."
+                },
+                {
+                    "name": "MajorSubsystemVersion",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Major Subsystem Version**\n\nThe minimum major version of the Windows subsystem required to run this executable.\n\n*Forensic Value:* Combined with MinorSubsystemVersion, indicates the minimum Windows version the developer targeted.",
+                    "informational": true
+                },
+                {
+                    "name": "MinorSubsystemVersion",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Minor Subsystem Version**\n\nThe minimum minor version of the Windows subsystem required."
+                },
+                {
+                    "name": "Win32VersionValue",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Win32 Version Value**\n\nReserved, must be zero. Some packers use this field to store data, relying on the fact that Windows ignores it."
+                },
+                {
+                    "name": "SizeOfImage",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Image**\n\nThe total size of the PE image when loaded in memory, including all headers and sections. Must be a multiple of `SectionAlignment`.\n\n**How it's used:**\nThe Windows loader allocates this much virtual memory for the image. It then copies the headers and each section to their appropriate virtual addresses within this space.\n\n*Forensic Value:* Compare with the actual file size. A `SizeOfImage` much larger than the file may indicate sections with large virtual sizes but small raw data (unpacked at runtime).",
+                    "informational": true
+                },
+                {
+                    "name": "SizeOfHeaders",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Headers**\n\nThe combined size of the DOS header, PE signature, COFF header, Optional Header, and all section headers, rounded up to `FileAlignment`.\n\nThis tells the loader how many bytes from the start of the file constitute 'headers' versus 'section data'. All section raw data starts at offsets >= this value."
+                },
+                {
+                    "name": "CheckSum",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**PE Checksum**\n\nA checksum of the entire PE file. Calculated using the `CheckSumMappedFile` function from `imagehlp.dll`.\n\n**When is the checksum validated?**\n- **Kernel-mode drivers (.sys):** Windows REQUIRES a valid checksum. Invalid checksum = driver won't load.\n- **User-mode (.exe/.dll):** Windows does NOT validate the checksum. Many tools don't even set it.\n- **Signed files:** Authenticode signature verification includes its own hash, separate from this checksum.\n\n*Forensic Value:* **Important** for driver analysis. For user-mode executables:\n- Value of 0 = checksum not computed (very common, not suspicious)\n- Non-zero but invalid = file was modified after compilation (indicator of patching, infection, or tampering)\n\n**Forensic TODO:** If non-zero, verify the checksum:\n- Invalid checksum on a driver = tampered or home-built driver\n- Invalid checksum on a signed file = signature should also be invalid\n- Tools: `dumpbin /headers`, Python `pefile` library, or manual calculation",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "Subsystem",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Windows Subsystem**\n\nSpecifies which Windows subsystem is required to run this executable. This determines how Windows initializes the process and what type of user interface it uses.\n\n**How subsystems work:**\nWindows supports multiple subsystems that provide different execution environments. The subsystem determines whether the program gets a console window, a graphical window, or runs as a service/driver.\n\n*Forensic Value:* A mismatch between the subsystem and the file's behavior is suspicious. For example, a WINDOWS_GUI application that should be graphical but actually runs hidden commands.\n\n**Forensic TODO:** Check for:\n- `WINDOWS_CUI` (3) on a file with no visible console = possibly running hidden\n- `WINDOWS_GUI` (2) on a file with `SW_HIDE` in its calling LNK = stealth execution\n- `NATIVE` (1) = kernel-mode code, should only be .sys drivers",
+                    "forensic_value": "important",
+                    "value_map": {
+                        "0": "UNKNOWN (unknown subsystem)",
+                        "1": "NATIVE (device drivers and native NT processes)",
+                        "2": "WINDOWS_GUI (Windows GUI subsystem)",
+                        "3": "WINDOWS_CUI (Windows console subsystem)",
+                        "5": "OS2_CUI (OS/2 console subsystem)",
+                        "7": "POSIX_CUI (POSIX console subsystem)",
+                        "8": "NATIVE_WINDOWS (Native Win9x driver)",
+                        "9": "WINDOWS_CE_GUI (Windows CE)",
+                        "10": "EFI_APPLICATION (EFI application)",
+                        "11": "EFI_BOOT_SERVICE_DRIVER (EFI boot service driver)",
+                        "12": "EFI_RUNTIME_DRIVER (EFI runtime driver)",
+                        "13": "EFI_ROM (EFI ROM image)",
+                        "14": "XBOX (Xbox system)",
+                        "16": "WINDOWS_BOOT_APPLICATION (Windows boot application)"
+                    }
+                },
+                {
+                    "name": "DllCharacteristics",
+                    "size": 2,
+                    "type": "bitfield",
+                    "description": "**DLL Characteristics (Security Flags)**\n\nDespite the name, these flags apply to ALL PE files, not just DLLs. This bitfield controls critical security features like DEP, ASLR, Code Flow Guard, and stack integrity.\n\n**Modern security baseline:**\nA modern, security-conscious application should have at minimum:\n- `DYNAMIC_BASE` (ASLR) = enabled\n- `NX_COMPAT` (DEP) = enabled\n- `NO_SEH` or proper SafeSEH = enabled\n\n*Forensic Value:* **Critical** - Absence of ASLR and DEP flags in a modern binary is suspicious and may indicate:\n- Legacy code never updated for security mitigations\n- Deliberately compiled without protections for exploitation\n- Malware that needs predictable memory layout for shellcode\n\n**Forensic TODO:** A binary without DYNAMIC_BASE and NX_COMPAT in 2024+ is either very old or deliberately weakened.",
+                    "forensic_value": true,
+                    "bit_flags": {
+                        "5": {
+                            "name": "HIGH_ENTROPY_VA",
+                            "description": "64-bit ASLR with high entropy. Image can handle a high entropy 64-bit virtual address space. Provides stronger randomization."
+                        },
+                        "6": {
+                            "name": "DYNAMIC_BASE",
+                            "description": "**ASLR (Address Space Layout Randomization)**. The DLL can be relocated at load time. Essential security mitigation - randomizes the base address."
+                        },
+                        "7": {
+                            "name": "FORCE_INTEGRITY",
+                            "description": "Code integrity checks are enforced. The OS verifies digital signatures at load time."
+                        },
+                        "8": {
+                            "name": "NX_COMPAT",
+                            "description": "**DEP (Data Execution Prevention)** compatible. Image is compatible with NX (No eXecute) memory protection. Prevents code execution from data pages."
+                        },
+                        "9": {
+                            "name": "NO_ISOLATION",
+                            "description": "Image is isolation aware but should not be isolated. Related to side-by-side assembly manifest isolation."
+                        },
+                        "10": {
+                            "name": "NO_SEH",
+                            "description": "Image does not use Structured Exception Handling (SEH). No SE handler may be called. Removes SEH exploitation surface."
+                        },
+                        "11": {
+                            "name": "NO_BIND",
+                            "description": "Do not bind the image. Prevents the linker from pre-resolving import addresses."
+                        },
+                        "13": {
+                            "name": "WDM_DRIVER",
+                            "description": "A WDM (Windows Driver Model) driver. Relevant for kernel-mode driver identification."
+                        },
+                        "15": {
+                            "name": "TERMINAL_SERVER_AWARE",
+                            "description": "Image is Terminal Server aware. Properly handles multiple user sessions."
+                        }
+                    }
+                },
+                {
+                    "name": "SizeOfStackReserve",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Stack Reserve**\n\nThe total amount of virtual memory to reserve for the main thread's stack. Only `SizeOfStackCommit` bytes are initially committed (backed by physical memory); the rest is reserved address space that grows on demand.\n\n**Default:** `0x00100000` (1 MB) for most applications.\n\n*Forensic Note:* Unusually large values may indicate the application expects deep recursion or large stack allocations."
+                },
+                {
+                    "name": "SizeOfStackCommit",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Stack Commit**\n\nThe amount of main thread stack memory to commit (immediately allocate and back with physical memory) at load time.\n\n**Default:** `0x00001000` (4 KB = one page)."
+                },
+                {
+                    "name": "SizeOfHeapReserve",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Heap Reserve**\n\nThe total amount of virtual memory to reserve for the default process heap.\n\n**Default:** `0x00100000` (1 MB)."
+                },
+                {
+                    "name": "SizeOfHeapCommit",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Heap Commit**\n\nThe amount of heap memory to initially commit at load time.\n\n**Default:** `0x00001000` (4 KB)."
+                },
+                {
+                    "name": "LoaderFlags",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Loader Flags**\n\nReserved, must be zero. Historically had debugging-related bit definitions that were never implemented.\n\n*Forensic Note:* Non-zero values are non-standard and may indicate custom tools or data hiding."
+                },
+                {
+                    "name": "NumberOfRvaAndSizes",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Number of Data Directory Entries**\n\nThe number of entries in the Data Directory array that follows. Should be `16` for all standard PE files.\n\n**Why this field exists:**\nMicrosoft designed the PE format to be extensible. By specifying the count of data directories, future PE versions could add more directory types without breaking older tools. In practice, the value has been 16 since the PE format was created.\n\n*Forensic Value:* Values other than 16 are unusual and may indicate:\n- Crafted files designed to confuse parsers\n- Non-Microsoft linkers that produce minimal PE files\n- Anti-analysis technique (some security tools assume exactly 16 entries)",
+                    "forensic_value": "important",
+                    "expected_values": [16]
+                },
+                {
+                    "name": "DataDirectories",
+                    "type": "struct",
+                    "description": "**Data Directories Array (128 bytes)**\n\nAn array of 16 `IMAGE_DATA_DIRECTORY` entries (8 bytes each: RVA + Size). Each entry points to a specific data structure within the PE file. A directory entry with both RVA and Size of 0 means 'not present'.\n\n**These directories are the roadmap to everything interesting in a PE file.** They tell the loader where to find imports, exports, resources, debug information, certificates, relocations, TLS callbacks, and more.\n\n*Forensic Value:* The Data Directories collectively point to the most forensically valuable data in the PE file. Especially important: Import (index 1), Security/Certificate (index 4), Debug (index 6), and IAT (index 12).",
+                    "fields": [
+                        {
+                            "name": "ExportTable_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Export Table RVA (Directory Index 0)**\n\nRVA of the Export Directory. Contains functions this PE exports for use by other modules.\n\n*Forensic Note:* EXE files rarely have exports. If an .exe has exports, it may be acting as a DLL (rundll32 target) or is a dual-purpose binary."
+                        },
+                        {
+                            "name": "ExportTable_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Export Table Size**\n\nSize of the Export Directory in bytes."
+                        },
+                        {
+                            "name": "ImportTable_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Import Table RVA (Directory Index 1)**\n\nRVA of the Import Directory. Lists all DLLs and functions this PE imports.\n\n*Forensic Value:* **Critical** - The Import Table reveals what Windows APIs the program calls. This is the single most important indicator of malware capability:\n- `kernel32.dll: VirtualAlloc, WriteProcessMemory, CreateRemoteThread` = process injection\n- `advapi32.dll: RegSetValueEx, CryptEncrypt` = registry modification, encryption\n- `ws2_32.dll: connect, send, recv` = network communication\n- `wininet.dll: InternetOpenUrl, HttpSendRequest` = HTTP communication\n- Very few imports (1-3 DLLs) = likely packed, resolves APIs dynamically",
+                            "forensic_value": "critical"
+                        },
+                        {
+                            "name": "ImportTable_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Import Table Size**\n\nSize of the Import Directory in bytes."
+                        },
+                        {
+                            "name": "ResourceTable_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Resource Table RVA (Directory Index 2)**\n\nRVA of the Resource Directory. Contains embedded resources: icons, dialogs, version info, manifests, and potentially embedded files.\n\n*Forensic Note:* Resources can contain embedded executables, scripts, or configuration data. Malware often stores encrypted payloads in resources."
+                        },
+                        {
+                            "name": "ResourceTable_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Resource Table Size**\n\nSize of the Resource Directory in bytes."
+                        },
+                        {
+                            "name": "ExceptionTable_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Exception Table RVA (Directory Index 3)**\n\nRVA of the Exception Directory. Contains function table entries for structured exception handling. Used primarily on 64-bit systems."
+                        },
+                        {
+                            "name": "ExceptionTable_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Exception Table Size**\n\nSize of the Exception Directory in bytes."
+                        },
+                        {
+                            "name": "CertificateTable_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Certificate Table File Offset (Directory Index 4)**\n\n**Note: Unlike all other data directories, this is a FILE OFFSET, not an RVA.** Points to the Authenticode digital signature (WIN_CERTIFICATE structures).\n\n*Forensic Value:* **Critical** - If present, the file has an Authenticode signature. Check:\n- Is the signature valid? (Use `sigcheck.exe` or `Get-AuthenticodeSignature`)\n- Is it signed by a trusted publisher?\n- Is the certificate stolen or expired?\n- Was the file modified after signing? (signature will be invalid)",
+                            "forensic_value": "critical"
+                        },
+                        {
+                            "name": "CertificateTable_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Certificate Table Size**\n\nSize of the Certificate Table in bytes. If non-zero, the file contains Authenticode signatures."
+                        },
+                        {
+                            "name": "BaseRelocationTable_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Base Relocation Table RVA (Directory Index 5)**\n\nRVA of the Base Relocation Table. Contains fixup data used when the image is loaded at an address different from `ImageBase`.\n\n*Forensic Note:* If ASLR (`DYNAMIC_BASE`) is enabled but this table is empty, the binary cannot actually be relocated - the ASLR flag is ineffective."
+                        },
+                        {
+                            "name": "BaseRelocationTable_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Base Relocation Table Size**\n\nSize of the Base Relocation Table in bytes."
+                        },
+                        {
+                            "name": "DebugDirectory_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Debug Directory RVA (Directory Index 6)**\n\nRVA of the Debug Directory. Points to debug information including PDB file paths.\n\n*Forensic Value:* **Critical** - The PDB path can contain:\n- Developer's username (e.g., `C:\\Users\\APT28_Dev\\...`)\n- Project name and path revealing intent\n- Build server names and internal infrastructure paths\n- Language/locale of the development environment\n\nMalware authors sometimes strip or fake PDB paths, but many forget.",
+                            "forensic_value": "critical"
+                        },
+                        {
+                            "name": "DebugDirectory_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Debug Directory Size**\n\nSize of the Debug Directory in bytes."
+                        },
+                        {
+                            "name": "Architecture_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Architecture Data RVA (Directory Index 7)**\n\nReserved, must be 0. Previously used for architecture-specific data (called 'Copyright' in early documentation)."
+                        },
+                        {
+                            "name": "Architecture_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Architecture Data Size**\n\nReserved, must be 0."
+                        },
+                        {
+                            "name": "GlobalPtr_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Global Pointer RVA (Directory Index 8)**\n\nRVA of the global pointer register value. Used on IA-64 (Itanium) architecture only. The size field must be 0."
+                        },
+                        {
+                            "name": "GlobalPtr_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Global Pointer Size**\n\nMust be 0. The `GlobalPtr_RVA` is an address, not a data directory with a size."
+                        },
+                        {
+                            "name": "TLSDirectory_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**TLS Directory RVA (Directory Index 9)**\n\nRVA of the Thread Local Storage (TLS) Directory. TLS provides per-thread data storage.\n\n*Forensic Value:* **Important** - TLS has a `callbacks` array that gets executed BEFORE the entry point. Malware uses TLS callbacks as an anti-debugging technique:\n- Code in TLS callbacks runs before debugger breakpoints at the entry point\n- Anti-debug checks in TLS callbacks can detect and evade analysis\n- Some malware puts its entire payload in TLS callbacks, making the main entry point a decoy",
+                            "forensic_value": "important"
+                        },
+                        {
+                            "name": "TLSDirectory_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**TLS Directory Size**\n\nSize of the TLS Directory in bytes."
+                        },
+                        {
+                            "name": "LoadConfigDir_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Load Configuration Directory RVA (Directory Index 10)**\n\nRVA of the Load Configuration Directory. Contains security cookie (stack canary), SEH handler table, Control Flow Guard (CFG) data, and other security features.\n\n*Forensic Note:* Modern binaries should have a Load Config Directory with CFG function table and security cookie. Absence in a modern binary may indicate older toolchain or deliberate stripping."
+                        },
+                        {
+                            "name": "LoadConfigDir_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Load Configuration Directory Size**\n\nSize of the Load Configuration Directory in bytes."
+                        },
+                        {
+                            "name": "BoundImportDir_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Bound Import Directory RVA (Directory Index 11)**\n\nRVA of the Bound Import Directory. Pre-computed import addresses for faster loading. Rarely used in modern binaries."
+                        },
+                        {
+                            "name": "BoundImportDir_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Bound Import Directory Size**\n\nSize of the Bound Import Directory in bytes."
+                        },
+                        {
+                            "name": "IAT_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Import Address Table RVA (Directory Index 12)**\n\nRVA of the Import Address Table (IAT). This is the table the loader writes resolved function pointers into.\n\n**How IAT works:**\n1. On disk, the IAT contains thunks (function name hints)\n2. At load time, the loader resolves each import and overwrites the thunk with the actual function address\n3. When the program calls an imported function, it reads the address from the IAT\n\n*Forensic Note:* IAT hooking is a common technique for both malware and security software. Modified IAT entries can redirect function calls to malicious code."
+                        },
+                        {
+                            "name": "IAT_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Import Address Table Size**\n\nSize of the IAT in bytes."
+                        },
+                        {
+                            "name": "DelayImportDesc_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Delay Import Descriptor RVA (Directory Index 13)**\n\nRVA of the Delay Import Descriptor. Lists DLLs that are loaded on demand (when first called) rather than at process startup.\n\n*Forensic Note:* Delay-loaded imports may not appear in basic import analysis tools. Check this directory for additional API usage not visible in the regular Import Table."
+                        },
+                        {
+                            "name": "DelayImportDesc_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Delay Import Descriptor Size**\n\nSize of the Delay Import Descriptor in bytes."
+                        },
+                        {
+                            "name": "CLRRuntime_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**CLR Runtime Header RVA (Directory Index 14)**\n\nRVA of the CLR (Common Language Runtime) header. Present only in .NET assemblies (.NET EXE and DLL files).\n\n*Forensic Value:* If non-zero, this is a .NET binary. .NET assemblies contain IL (Intermediate Language) code that can be easily decompiled with tools like dnSpy, ILSpy, or dotPeek. This makes .NET malware relatively easier to analyze.",
+                            "forensic_value": "important"
+                        },
+                        {
+                            "name": "CLRRuntime_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**CLR Runtime Header Size**\n\nSize of the CLR Runtime Header. Non-zero indicates a .NET assembly."
+                        },
+                        {
+                            "name": "Reserved_RVA",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Reserved Directory Entry RVA (Directory Index 15)**\n\nReserved for future use. Must be 0."
+                        },
+                        {
+                            "name": "Reserved_Size",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Reserved Directory Entry Size**\n\nReserved, must be 0."
+                        }
+                    ]
+                }
+            ]
         },
         {
-            "name": "e_minalloc",
-            "size": 2,
-            "type": "uint",
-            "description": "Minimum extra paragraphs needed"
-        },
-        {
-            "name": "e_maxalloc",
-            "size": 2,
-            "type": "uint",
-            "description": "Maximum extra paragraphs needed"
-        },
-        {
-            "name": "e_ss",
-            "size": 2,
-            "type": "uint",
-            "description": "Initial (relative) SS value"
-        },
-        {
-            "name": "e_sp",
-            "size": 2,
-            "type": "uint",
-            "description": "Initial SP value"
-        },
-        {
-            "name": "e_csum",
-            "size": 2,
-            "type": "uint",
-            "description": "Checksum"
-        },
-        {
-            "name": "e_ip",
-            "size": 2,
-            "type": "uint",
-            "description": "Initial IP value"
-        },
-        {
-            "name": "e_cs",
-            "size": 2,
-            "type": "uint",
-            "description": "Initial (relative) CS value"
-        },
-        {
-            "name": "e_lfarlc",
-            "size": 2,
-            "type": "uint",
-            "description": "File address of relocation table"
-        },
-        {
-            "name": "e_ovno",
-            "size": 2,
-            "type": "uint",
-            "description": "Overlay number"
-        },
-        {
-            "name": "e_res",
-            "size": 8,
-            "type": "bytes",
-            "description": "Reserved words (4 words)"
-        },
-        {
-            "name": "e_oemid",
-            "size": 2,
-            "type": "uint",
-            "description": "OEM identifier"
-        },
-        {
-            "name": "e_oeminfo",
-            "size": 2,
-            "type": "uint",
-            "description": "OEM information"
-        },
-        {
-            "name": "e_res2",
-            "size": 20,
-            "type": "bytes",
-            "description": "Reserved words (10 words)"
-        },
-        {
-            "name": "e_lfanew",
-            "size": 4,
-            "type": "uint",
-            "description": "File address of PE header. This offset points to the PE signature.",
-            "forensic_value": true
+            "name": "SectionHeaders",
+            "type": "struct",
+            "description": "**Section Headers Array**\n\nThe section header table immediately follows the Optional Header. Each 40-byte entry describes one section of the PE file: its name, virtual size/address, raw data size/offset, and characteristics (permissions).\n\n**What are sections?**\nA PE file is divided into sections, each containing a specific type of data:\n- `.text` - Executable code (machine instructions)\n- `.rdata` - Read-only data (imports, exports, strings, constants)\n- `.data` - Initialized read/write data (global variables with initial values)\n- `.bss` - Uninitialized data (global variables without initial values, zero-filled at load)\n- `.rsrc` - Resources (icons, dialogs, version info, manifest, embedded files)\n- `.reloc` - Base relocations (fixup data for ASLR)\n- `.pdata` - Exception handling data (64-bit)\n- `.edata` - Export data (if not in .rdata)\n- `.idata` - Import data (if not in .rdata)\n- `.tls` - Thread Local Storage\n\n**Suspicious section names:**\n- `UPX0`, `UPX1` = UPX packer\n- `.themida` = Themida protector\n- `.vmp0`, `.vmp1` = VMProtect\n- `.aspack` = ASPack packer\n- `.adata` = Sometimes used by custom packers\n- Random names or all-zero names = suspicious\n\n*Forensic Value:* Section analysis reveals packing, unusual permissions (write+execute), and hidden data sections.",
+            "repeat": "$NumberOfSections",
+            "fields": [
+                {
+                    "name": "SectionName",
+                    "size": 8,
+                    "type": "string",
+                    "description": "**Section Name (8-byte ASCII)**\n\nAn 8-byte null-padded ASCII string naming the section. Names longer than 8 characters are truncated. Names starting with `/` followed by digits reference the string table (rare in PE files).\n\n**Standard section names and their purposes:**\n- `.text` - Executable machine code. The main code section.\n- `.rdata` - Read-only data. Constants, import tables, export tables, debug directory.\n- `.data` - Read/write initialized data. Global and static variables with initial values.\n- `.bss` - Uninitialized data. Variables zeroed at load time.\n- `.rsrc` - Resources. Icons, version info, manifest, embedded files, strings.\n- `.reloc` - Relocations. Base relocation fixup data for ASLR.\n- `.pdata` - Exception data. Structured Exception Handling table (x64).\n- `.tls` - Thread Local Storage. Per-thread data and TLS callbacks.\n- `.edata` - Exports. Exported function list (often merged into .rdata).\n- `.idata` - Imports. Imported function list (often merged into .rdata).\n\n*Forensic Value:* Non-standard section names are a strong indicator of packing, protection, or custom tooling. Document any unusual names.\n\n**Forensic TODO:** Flag these patterns:\n- UPX*, .aspack, .themida, .vmp = known packers/protectors\n- Random characters or all zeros = suspicious custom sections\n- Duplicate section names = unusual, may confuse analysis tools\n- Sections starting with '.' are convention, not required - names without '.' are valid but non-standard",
+                    "forensic_value": "important"
+                },
+                {
+                    "name": "VirtualSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Virtual Size**\n\nThe actual size of the section's data in memory (before alignment). May differ from `SizeOfRawData`.\n\n**VirtualSize vs SizeOfRawData:**\n- `VirtualSize > SizeOfRawData`: Section will be zero-padded in memory. Common for `.bss` (uninitialized data) and packed sections that decompress at runtime.\n- `VirtualSize < SizeOfRawData`: Extra raw data exists in the file but won't be mapped. Could hide data in the gap.\n- `VirtualSize == SizeOfRawData`: Standard case, all raw data is mapped.\n\n*Forensic Value:* A section with VirtualSize >> SizeOfRawData is suspicious - it likely unpacks code or data at runtime (common in packed malware)."
+                },
+                {
+                    "name": "VirtualAddress",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Virtual Address (RVA)**\n\nThe RVA of the first byte of the section when loaded into memory. The actual address = `ImageBase` + `VirtualAddress`.\n\nSections are loaded in order of their VirtualAddress values, each aligned to `SectionAlignment`."
+                },
+                {
+                    "name": "SizeOfRawData",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Size of Raw Data (on disk)**\n\nThe size of the section's data as stored in the file, rounded up to `FileAlignment`.\n\n- If this is 0, the section's data exists only in memory (no file backing). The section will be zero-initialized.\n- Compare with `VirtualSize` for packing indicators.\n\n*Forensic Value:* Sections with `SizeOfRawData = 0` but large `VirtualSize` are classic packer signatures - the section will be filled with decompressed data at runtime."
+                },
+                {
+                    "name": "PointerToRawData",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Pointer to Raw Data (file offset)**\n\nFile offset to the first byte of this section's data on disk. Must be a multiple of `FileAlignment`.\n\nIf `SizeOfRawData` is 0, this field is meaningless."
+                },
+                {
+                    "name": "PointerToRelocations",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Pointer to Relocations**\n\nFile offset to the beginning of COFF relocations for this section. This is 0 for executable images and only used in object files (.obj)."
+                },
+                {
+                    "name": "PointerToLinenumbers",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Pointer to Line Numbers**\n\nFile offset to the beginning of COFF line-number entries. Deprecated and should be 0."
+                },
+                {
+                    "name": "NumberOfRelocations",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Relocations**\n\nNumber of COFF relocation entries for this section. 0 for executable images."
+                },
+                {
+                    "name": "NumberOfLinenumbers",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of Line Numbers**\n\nNumber of COFF line-number entries. Deprecated, should be 0."
+                },
+                {
+                    "name": "SectionCharacteristics",
+                    "size": 4,
+                    "type": "bitfield",
+                    "description": "**Section Characteristics (Permissions and Properties)**\n\nA 32-bit bitfield describing the section's properties and memory protection when loaded.\n\n**Key permission bits to check:**\n- `MEM_EXECUTE` (bit 29) + `MEM_WRITE` (bit 31) = **WRITE+EXECUTE** = Self-modifying code. Very suspicious! Normal code sections are EXECUTE+READ only.\n- `MEM_EXECUTE` without `CNT_CODE` = code in an unexpected section\n- `MEM_WRITE` on a code section = potential for runtime code modification\n\n*Forensic Value:* **Critical** - Section permissions are the primary indicator of packing, code injection capability, and self-modifying code.",
+                    "forensic_value": true,
+                    "bit_flags": {
+                        "5": {
+                            "name": "CNT_CODE",
+                            "description": "Section contains executable code."
+                        },
+                        "6": {
+                            "name": "CNT_INITIALIZED_DATA",
+                            "description": "Section contains initialized data."
+                        },
+                        "7": {
+                            "name": "CNT_UNINITIALIZED_DATA",
+                            "description": "Section contains uninitialized data (BSS)."
+                        },
+                        "9": {
+                            "name": "LNK_INFO",
+                            "description": "Section contains comments or other information. Only valid for object files."
+                        },
+                        "11": {
+                            "name": "LNK_REMOVE",
+                            "description": "Section will not become part of image. Only valid for object files."
+                        },
+                        "12": {
+                            "name": "LNK_COMDAT",
+                            "description": "Section contains COMDAT data. Only valid for object files."
+                        },
+                        "15": {
+                            "name": "GPREL",
+                            "description": "Section contains data referenced relative to GP (global pointer). IA64 only."
+                        },
+                        "24": {
+                            "name": "LNK_NRELOC_OVFL",
+                            "description": "Section contains extended relocations."
+                        },
+                        "25": {
+                            "name": "MEM_DISCARDABLE",
+                            "description": "Section can be discarded from memory after loading. .reloc sections are typically discardable."
+                        },
+                        "26": {
+                            "name": "MEM_NOT_CACHED",
+                            "description": "Section cannot be cached."
+                        },
+                        "27": {
+                            "name": "MEM_NOT_PAGED",
+                            "description": "Section cannot be paged out to disk. Required for kernel-mode driver sections."
+                        },
+                        "28": {
+                            "name": "MEM_SHARED",
+                            "description": "Section is shared across all instances of the image."
+                        },
+                        "29": {
+                            "name": "MEM_EXECUTE",
+                            "description": "**Section is executable.** Contains code that can be run by the processor."
+                        },
+                        "30": {
+                            "name": "MEM_READ",
+                            "description": "**Section is readable.** Almost all sections have this flag."
+                        },
+                        "31": {
+                            "name": "MEM_WRITE",
+                            "description": "**Section is writable.** Combined with MEM_EXECUTE = self-modifying code capability (highly suspicious)."
+                        }
+                    }
+                }
+            ]
         }
     ]
 }
