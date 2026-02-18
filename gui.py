@@ -2206,8 +2206,6 @@ class Main:
         :param current: Current progress count
         :param total: Total items to process
         """
-        import time as time_module
-        
         if total == 0:
             return
             
@@ -2219,37 +2217,36 @@ class Main:
         self.progress_percent_var.set(f"{progress:.0f}%")
         
         # Calculate elapsed and estimated time
-        elapsed = time_module.time() - self.loading_start_time
+        import time as time_module
+        now = time_module.time()
+        elapsed = now - self.loading_start_time
         
-        # Update at every 10% milestone or every 5 seconds for long operations
-        should_update = (
-            current_milestone > self.last_progress_milestone or
-            (elapsed - (time_module.time() - self.last_progress_update_time) > 5)
-        )
+        # Update only at 10% milestones or when done (not every call)
+        if current_milestone <= self.last_progress_milestone and current != total:
+            return
         
-        if should_update or current == total:
-            self.last_progress_milestone = current_milestone
-            self.last_progress_update_time = time_module.time()
-            
-            # Build status message with time info
-            if elapsed > 2:  # Only show time for operations > 2 seconds
-                if progress > 0:
-                    estimated_total = elapsed / (progress / 100)
-                    remaining = estimated_total - elapsed
-                    if remaining > 60:
-                        time_str = f"~{remaining/60:.0f}m remaining"
-                    elif remaining > 0:
-                        time_str = f"~{remaining:.0f}s remaining"
-                    else:
-                        time_str = "Almost done..."
+        self.last_progress_milestone = current_milestone
+        self.last_progress_update_time = now
+        
+        # Build status message with time info
+        if elapsed > 2:  # Only show time for operations > 2 seconds
+            if progress > 0:
+                estimated_total = elapsed / (progress / 100)
+                remaining = estimated_total - elapsed
+                if remaining > 60:
+                    time_str = f"~{remaining/60:.0f}m remaining"
+                elif remaining > 0:
+                    time_str = f"~{remaining:.0f}s remaining"
                 else:
-                    time_str = "Calculating..."
-                
-                detail = f"{current}/{total} fields ({progress:.0f}%) - {time_str}"
+                    time_str = "Almost done..."
             else:
-                detail = f"{current}/{total} fields ({progress:.0f}%)"
+                time_str = "Calculating..."
             
-            self._update_loading_message("Processing", detail)
+            detail = f"{current}/{total} fields ({progress:.0f}%) - {time_str}"
+        else:
+            detail = f"{current}/{total} fields ({progress:.0f}%)"
+        
+        self._update_loading_message("Processing", detail)
     
     def _hide_loading_overlay(self):
         """Complete loading state and hide progress indicators."""
@@ -2699,6 +2696,13 @@ class Main:
         self._from_hex_click = False
         self._item_raw_offsets = {}
         
+        # Pre-build lookup table for ASCII conversion (avoids per-byte branching)
+        self._ascii_table = ''.join(
+            chr(b) if 32 <= b < 127 else '.' for b in range(256)
+        )
+        # Cache for contrast text colors (few unique colors)
+        self._contrast_cache = {}
+        
         # Collect all node data first (can be done in background thread)
         self.collected_nodes = []
         self._collect_nodes(root)
@@ -2710,53 +2714,90 @@ class Main:
         """
         Recursively collect all node data for display.
         Pre-builds hex and ASCII strings for bulk insertion.
+        Also pre-computes formatted offsets and contrast colors.
         This can safely run in a background thread.
         """
         if self.stop_parsing:
             return
-        for idx, (key, child) in enumerate(node.children):
-            if self.stop_parsing:
-                return
+        
+        # Local references for tight loop performance
+        collected = self.collected_nodes
+        byte_counter = self.byte_counter
+        ascii_table = self._ascii_table
+        contrast_cache = self._contrast_cache
+        is_hex_fmt = self.offset_format_var.get() == "Hex"
+        max_val_width = self.VALUE_COLUMN_MAX_WIDTH
+        stop_check = lambda: self.stop_parsing
+        
+        stack = [(node, 0)]  # iterative DFS to avoid recursion limit
+        while stack:
+            current_node, child_idx = stack[-1]
+            children = current_node.children
             
-            # Use actual file offset (key) for display, byte_counter for hex positioning
-            offset = key if key is not None else self.byte_counter
-            tag = f"color{self.byte_counter}_{idx}"
-            table_val = child.table_value or ''
+            if child_idx >= len(children) or stop_check():
+                stack.pop()
+                continue
+            
+            # Advance index for next iteration
+            stack[-1] = (current_node, child_idx + 1)
+            
+            key, child = children[child_idx]
+            offset = key if key is not None else byte_counter
+            tag = f"color{byte_counter}_{child_idx}"
             data = child.data
             data_len = len(data) if data else 0
+            color = child.color or '#ffffff'
             
-            # Pre-build hex and ASCII strings for bulk insertion
-            # This moves expensive string formatting to the background thread
+            # Pre-compute contrast text color (cached)
+            fg_color = contrast_cache.get(color)
+            if fg_color is None:
+                fg_color = ColorGenerator.get_contrast_text_color(color)
+                contrast_cache[color] = fg_color
+            
+            # Pre-format offset string
+            if is_hex_fmt:
+                display_offset = f"0x{offset:X}"
+            else:
+                display_offset = str(offset)
+            
+            # Pre-truncate value
+            table_val = child.table_value or ''
+            truncated_val = str(table_val)
+            if len(truncated_val) > max_val_width:
+                truncated_val = truncated_val[:max_val_width - 1] + '\u2026'
+            
+            # Pre-build hex and ASCII strings using C-level operations
             hex_str = ''
             ascii_str = ''
             if data:
-                # Build hex string with newlines at 16-byte boundaries
-                hex_parts = []
-                ascii_parts = []
-                for i, byte in enumerate(data):
-                    hex_parts.append(f'{byte:02x} ')
-                    ascii_parts.append(chr(byte) if 32 <= byte < 127 else '.')
-                hex_str = ''.join(hex_parts)
-                ascii_str = ''.join(ascii_parts)
+                # bytes.hex(' ') is C-level fast, then add trailing space
+                hex_str = data.hex(' ') + ' '
+                # translate is C-level fast for ASCII mapping
+                ascii_str = ''.join(ascii_table[b] for b in data)
             
-            # Store all data needed for GUI update
-            self.collected_nodes.append({
+            collected.append({
                 'tag': tag,
-                'color': child.color,
+                'color': color,
+                'fg_color': fg_color,
                 'name': child.name,
-                'data': data,
                 'data_len': data_len,
                 'hex_str': hex_str,
                 'ascii_str': ascii_str,
-                'info': child.info,
                 'table_val': table_val,
+                'truncated_val': truncated_val,
+                'display_offset': display_offset,
                 'offset': offset,
                 'child': child,
-                'display_pos': self.byte_counter,  # position in hex widget
+                'display_pos': byte_counter,
             })
             
-            self.byte_counter += data_len
-            self._collect_nodes(child)
+            byte_counter += data_len
+            
+            # Push child for DFS traversal
+            if child.children:
+                stack.append((child, 0))
+        
+        self.byte_counter = byte_counter
     
     def _update_gui_batch(self, start_idx):
         """
@@ -2770,8 +2811,8 @@ class Main:
         
         total_nodes = len(self.collected_nodes)
         
-        # Much larger batches since we do bulk inserts now
-        BATCH_SIZE = 500
+        # Large batches — most work is pre-computed, GUI inserts are bulk
+        BATCH_SIZE = 2000
             
         end_idx = min(start_idx + BATCH_SIZE, total_nodes)
         
@@ -2824,38 +2865,36 @@ class Main:
     def _display_node(self, node_data):
         """
         Display a single node's data in the GUI.
-        Uses bulk string insertion instead of byte-by-byte.
+        Uses bulk string insertion and pre-computed values.
         Must run on main thread.
         """
         tag = node_data['tag']
         color = node_data['color']
+        fg_color = node_data['fg_color']
         offset = node_data['offset']
         child = node_data['child']
         table_val = node_data['table_val']
         
-        # Insert into treeview with formatted offset
-        display_offset = self._format_offset(offset)
+        # Insert into treeview with pre-formatted values
         item_id = self.sequence_treeview.insert('', 'end', values=(
-            display_offset, node_data['name'], self._truncate_value(table_val)), tags=(tag,))
+            node_data['display_offset'], node_data['name'],
+            node_data['truncated_val']), tags=(tag,))
         
         # Store mappings for click synchronization
         self.tag_to_treeview_item[tag] = item_id
         self.tag_to_child[tag] = child
-        self.tag_to_display_pos[tag] = node_data.get('display_pos', offset)
-        self._item_raw_offsets[item_id] = offset  # Store raw int for format switching
+        self.tag_to_display_pos[tag] = node_data['display_pos']
+        self._item_raw_offsets[item_id] = offset
         if offset not in self.offset_to_tag:
             self.offset_to_tag[offset] = tag
         
-        # Compute contrast text color for this background
-        fg_color = ColorGenerator.get_contrast_text_color(color or '#ffffff')
-        
+        # Configure all three tags at once
         self.sequence_treeview.tag_configure(tag, background=color, foreground=fg_color)
-        # Always store raw offset in sequence_items for search/format switching
-        self.sequence_items.append(((offset, node_data['name'], table_val), (tag,)))
-        
-        # Configure tags for text widgets with contrast foreground
         self.text_widget.textWidget.tag_configure(tag, background=color, foreground=fg_color)
         self.text_widget.asciiText.tag_configure(tag, background=color, foreground=fg_color)
+        
+        # Store for search/format switching
+        self.sequence_items.append(((offset, node_data['name'], table_val), (tag,)))
         
         # Bulk-insert hex and ASCII data with newline splitting at 16-byte boundaries
         data_len = node_data['data_len']
@@ -2863,35 +2902,33 @@ class Main:
             hex_str = node_data['hex_str']
             ascii_str = node_data['ascii_str']
             
-            # Calculate position within current 16-byte line
             pos_in_line = self.display_byte_counter % 16
             bytes_consumed = 0
             
+            # Fast references to avoid repeated attribute lookup
+            hex_widget = self.text_widget.textWidget
+            ascii_widget = self.text_widget.asciiText
+            offset_widget = self.text_widget.offsetText
+            fmt_offset = self._format_viewer_offset
+            
             while bytes_consumed < data_len:
-                # How many bytes until end of current 16-byte line?
                 remaining_in_line = 16 - pos_in_line
                 chunk_size = min(remaining_in_line, data_len - bytes_consumed)
                 
-                # Extract chunk from pre-built strings
-                hex_start = bytes_consumed * 3  # each byte = "xx "
+                hex_start = bytes_consumed * 3
                 hex_end = (bytes_consumed + chunk_size) * 3
-                ascii_start = bytes_consumed
-                ascii_end = bytes_consumed + chunk_size
                 
-                # Insert hex and ASCII chunks
-                self.text_widget.textWidget.insert('end', hex_str[hex_start:hex_end], (tag,))
-                self.text_widget.asciiText.insert('end', ascii_str[ascii_start:ascii_end], (tag,))
+                hex_widget.insert('end', hex_str[hex_start:hex_end], (tag,))
+                ascii_widget.insert('end', ascii_str[bytes_consumed:bytes_consumed + chunk_size], (tag,))
                 
                 bytes_consumed += chunk_size
                 self.display_byte_counter += chunk_size
                 pos_in_line += chunk_size
                 
-                # Insert newline at 16-byte boundary
                 if pos_in_line >= 16:
-                    self.text_widget.textWidget.insert('end', '\n')
-                    self.text_widget.asciiText.insert('end', '\n')
-                    self.text_widget.offsetText.insert(
-                        'end', self._format_viewer_offset(self.display_byte_counter) + '\n')
+                    hex_widget.insert('end', '\n')
+                    ascii_widget.insert('end', '\n')
+                    offset_widget.insert('end', fmt_offset(self.display_byte_counter) + '\n')
                     pos_in_line = 0
         
         # Bind click handlers
