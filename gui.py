@@ -307,10 +307,10 @@ class TextWidget:
         # Configure grid weights for the container
         # col 0 = offset column, col 1 = hex view, col 2 = ASCII view, col 3 = scrollbar, col 4 = info panel
         self.container.grid_columnconfigure(0, weight=0)  # Offset column (fixed)
-        self.container.grid_columnconfigure(1, weight=3)  # Hex view
-        self.container.grid_columnconfigure(2, weight=1)  # ASCII view
+        self.container.grid_columnconfigure(1, weight=0)  # Hex view (fixed width)
+        self.container.grid_columnconfigure(2, weight=0)  # ASCII view (fixed width)
         self.container.grid_columnconfigure(3, weight=0)  # Scrollbar (fixed)
-        self.container.grid_columnconfigure(4, weight=3)  # Info panel
+        self.container.grid_columnconfigure(4, weight=1)  # Info panel (expands)
         self.container.grid_rowconfigure(0, weight=0)     # Labels
         self.container.grid_rowconfigure(1, weight=0)     # Column headers
         self.container.grid_rowconfigure(2, weight=1)     # Content
@@ -412,7 +412,7 @@ class TextWidget:
             highlightthickness=0,
             takefocus=0
         )
-        self.offsetText.grid(row=2, column=0, sticky=N+S+E+W)
+        self.offsetText.grid(row=2, column=0, sticky=N+S)
 
         # Hex view text widget - dark theme with modern colors
         self.textWidget = Text(
@@ -482,9 +482,9 @@ class TextWidget:
         self.textWidget.configure(yscrollcommand=self.scrollbar.set)
         self.asciiText.configure(yscrollcommand=self.scrollbar.set)
 
-        # Grid layout
-        self.textWidget.grid(row=2, column=1, sticky=N+S+E+W)
-        self.asciiText.grid(row=2, column=2, sticky=N+S+E+W)
+        # Grid layout - hex and ASCII are fixed width (sticky=N+S only), info panel expands
+        self.textWidget.grid(row=2, column=1, sticky=N+S)
+        self.asciiText.grid(row=2, column=2, sticky=N+S)
         self.scrollbar.grid(row=2, column=3, sticky=N+S, padx=2)
         self.popupText.grid(row=2, column=4, sticky=N+S+E+W, padx=(10, 0))
 
@@ -564,8 +564,8 @@ class Main:
         master.grid_rowconfigure(1, weight=1)  # Main content row
         master.grid_rowconfigure(2, weight=0)  # Status bar row
 
-        master.grid_columnconfigure(0, weight=3)  # Content area
-        master.grid_columnconfigure(1, weight=2)  # Sidebar
+        master.grid_columnconfigure(0, weight=1)  # Content area (hex/ASCII fixed, info panel expands)
+        master.grid_columnconfigure(1, weight=1)  # Sidebar (expands)
         
         # ========== HEADER SECTION ==========
         header_frame = Frame(master, bg=ModernTheme.BG_PRIMARY)
