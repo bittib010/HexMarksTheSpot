@@ -94,6 +94,7 @@
                         "bitfield",
                         "skip",
                         "remaining",
+                        "vlq",
                         "struct",
                         "section"
                     ],

@@ -104,6 +104,7 @@ class FieldType(Enum):
     SECTION = "section"       # Conditional section (group of fields)
     SKIP = "skip"             # Skip bytes (padding/reserved)
     REMAINING = "remaining"   # Read all remaining bytes
+    VLQ = "vlq"               # Variable-length quantity (1-4 bytes, MSB continuation)
     SWITCH = "switch"         # Switch/case based on another field
     LOOP_UNTIL = "loop_until" # Loop until condition met
 
@@ -655,6 +656,10 @@ class ConfigBasedParser(FileParser):
         if field_type == FieldType.LOOP_UNTIL:
             return self.parse_loop_until(field_dict, parent_node)
         
+        # Handle VLQ (variable-length quantity) — reads 1-4 bytes dynamically
+        if field_type == FieldType.VLQ:
+            return self.parse_vlq_field(field_dict, parent_node)
+        
         # Handle simple field types
         resolved_size = self.resolve_size(size)
         
@@ -781,6 +786,106 @@ class ConfigBasedParser(FileParser):
         if output_format:
             html_desc += f"<p><b>Format:</b> {output_format}</p>"
         html_desc += f"<p><b>Size:</b> {resolved_size} bytes</p>"
+        html_desc += f"<p><b>Offset:</b> 0x{offset:X} ({offset})</p>"
+        
+        node = Node(
+            data=data,
+            info=html_desc,
+            name=name,
+            table_value=str(display_value),
+            color=node_color
+        )
+        
+        parent_node.add_child(offset, node)
+        return node
+    
+    def parse_vlq_field(self, field_dict: Dict[str, Any], parent_node: Node) -> Optional[Node]:
+        """Parse a Variable-Length Quantity (VLQ) field.
+        
+        VLQ encoding uses 7 bits per byte for data with the MSB (bit 7) as a
+        continuation flag. If bit 7 is 1, more bytes follow. If bit 7 is 0,
+        this is the last byte. Reads 1 to 4 bytes.
+        
+        Used in MIDI delta times, protobuf varints, Git packfiles, etc.
+        
+        Example: bytes [0x81, 0x00] → value 128
+                 bytes [0x00]       → value 0
+                 bytes [0xC0, 0x00] → value 8192
+        """
+        name = field_dict.get("name", "Unknown")
+        description = field_dict.get("description", "")
+        color = field_dict.get("color")
+        forensic_value = field_dict.get("forensic_value")
+        value_map = field_dict.get("value_map")
+        output_format = field_dict.get("output_format")
+        
+        offset = self.file.tell()
+        
+        # Read bytes until MSB is 0 or we hit 4 bytes (max VLQ length)
+        vlq_bytes = bytearray()
+        value = 0
+        for _ in range(4):
+            byte_data = self.file.read(1)
+            if len(byte_data) == 0:
+                if len(vlq_bytes) == 0:
+                    return None
+                break
+            b = byte_data[0]
+            vlq_bytes.append(b)
+            value = (value << 7) | (b & 0x7F)
+            if (b & 0x80) == 0:
+                break  # MSB clear = last byte
+        
+        data = bytes(vlq_bytes)
+        table_value = value
+        
+        # Store parsed value for references (as integer for use in $field expressions)
+        self.parsed_values[name] = table_value
+        # Also store the byte count consumed so configs can use $name_bytes in size expressions
+        self.parsed_values[f"{name}_bytes"] = len(data)
+        
+        # Validate against expected_values if defined
+        expected_values = field_dict.get("expected_values")
+        if expected_values is not None:
+            self._validate_expected_value(name, table_value, expected_values, offset, data)
+        
+        # Determine color
+        from common import ColorGenerator
+        
+        if forensic_value:
+            if isinstance(forensic_value, str):
+                node_color = ColorGenerator.get_forensic_color(forensic_value)
+            else:
+                node_color = ColorGenerator.get_forensic_color()
+        elif field_dict.get("informational"):
+            node_color = ColorGenerator.get_informational_color()
+        elif color:
+            node_color = color
+        else:
+            node_color = ColorGenerator.get_next_color()
+        
+        # Format display value
+        display_value = table_value
+        if value_map and str(table_value) in value_map:
+            display_value = f"{table_value} ({value_map[str(table_value)]})"
+            description += f" = {value_map[str(table_value)]}"
+        
+        # Apply output_format override if specified
+        if output_format:
+            try:
+                display_value = self.format_output(data, output_format, field_dict.get("endianness", self.endianness))
+            except Exception as e:
+                logger.warning(f"output_format '{output_format}' failed for VLQ field '{name}': {e}")
+        
+        # Build HTML description
+        hex_repr = ' '.join(f'{b:02X}' for b in data)
+        html_desc = f"<h1>{name}</h1>"
+        if description:
+            html_desc += f"<p>{markdown_to_html(description)}</p>"
+        html_desc += f"<p><b>Value:</b> {value}</p>"
+        html_desc += f"<p><b>VLQ bytes:</b> {hex_repr} ({len(data)} byte{'s' if len(data) != 1 else ''})</p>"
+        if output_format:
+            html_desc += f"<p><b>Format:</b> {output_format}</p>"
         html_desc += f"<p><b>Offset:</b> 0x{offset:X} ({offset})</p>"
         
         node = Node(

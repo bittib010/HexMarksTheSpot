@@ -1,4 +1,3 @@
-- Add possibility to parse variable-length quantities (VLQ). An example of this is the delta time field in MIDI events, which can be 1 to 4 bytes long depending on the value. The parser should read bytes until it encounters a byte with the most significant bit (MSB) set to 0, indicating the end of the VLQ.
 - Pages content on SQLite3 database. This is necessary to handle large databases without consuming excessive memory. Implement a mechanism to fetch and display results in chunks, allowing users to navigate through pages of results.
 - Consider outsourcing the parsing and reading the finished parsed file,  to avoid the app crashing.???
 - Rounded corners on buttons and input fields for a more modern look.
@@ -11,6 +10,10 @@
 - Import file as hex text. (remove all whitespace and parse as hex).
 - Set size limit? as it keeps crashing on < 3mb files.
 - Open files already parsed by the app earlier. This would require saving the parsed structure to a file (e.g., JSON) and implementing a loading mechanism to reconstruct the parser state from that file. This allows users to save their work and resume later without having to re-parse the original file.
+- Add a safeguard that looks at the last index of the hexviewer and verifies this with the actual last index of the file. We should parse no matter if this check fails, but warn the user and initiate a lookup of WHERE the parsing actually failes. This should be done by iteratively scan through the displayed hex and file hex - the first mismatch should be printed with the error message. This would help users identify if the file was truncated or if there was an issue during parsing that caused it to stop prematurely or maybe more reliably: an error with the parsing logic or template.
+- When Bookmarks are open, adding a new bookmark should trigger an update to the open bookmark window that is open. 
+- The bookmarks should be able to be exported, and we should be able to add comments to the marked bookmarks that is saved for each session. Maybe even cached to a file based on the hash of the parsed file, so that it automatically loads on the next parse of the same file.
+- Making more space for the Field Parse section by moving all buttons into a typical "File", "Edit", "View", "Help" menu structure. This would allow us to add more features in the future without cluttering the UI, and also provide a more familiar interface for users.
 
 
 ## Future Parser Enhancements
@@ -22,4 +25,4 @@ The current JPEG parser handles all marker segments and provides full forensic d
 - **Canon CIFF structure** — Parse Canon Camera Image File Format (CIFF) heap structures embedded in APP0 segments. Requires recursive directory/entry parsing with heap-based storage.
 - **Casio MakerNote parsing** — Parse camera-specific MakerNote IFD entries (e.g., Casio QV-R62) within Exif data. Requires camera model detection and model-specific tag dictionaries.
 - **Photoshop IRB deep parsing** — Parse individual 8BIM Image Resource Blocks within APP13 (IPTC, thumbnails, ICC profiles, XMP). Currently parsed as a single blob after the identifier.
-- 
+- **XMP metadata parsing** — Extract and parse XMP metadata embedded in JPEG files, including Dublin Core, Photoshop, and custom namespaces. Requires XML parsing and namespace handling.

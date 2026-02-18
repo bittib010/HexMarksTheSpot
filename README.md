@@ -173,6 +173,7 @@ Create a JSON file in `Artefacts/configs/` with your file format definition:
 | `unix_time_64` | Unix timestamp (8 bytes) |
 | `bitfield` | Bit flags with named bits |
 | `skip` | Skip bytes (padding) |
+| `vlq` | Variable-Length Quantity (1-4 bytes, MSB continuation) |
 | `remaining` | Read all remaining bytes |
 
 #### Bitfield Example
@@ -191,6 +192,27 @@ Create a JSON file in `Artefacts/configs/` with your file format definition:
     }
 }
 ```
+
+#### Variable-Length Quantity (VLQ)
+
+VLQ fields read 1-4 bytes using MSB continuation encoding (bit 7 = more bytes follow). Used in MIDI delta times, protobuf varints, and Git packfiles.
+
+```json
+{
+    "name": "DeltaTime",
+    "type": "vlq",
+    "description": "Ticks since previous event"
+}
+```
+
+**Byte-size tracking:** VLQ fields automatically store `{name}_bytes` in `parsed_values` with the number of bytes consumed. This lets subsequent fields compute remaining sizes:
+
+```json
+{ "name": "DeltaTime", "type": "vlq" },
+{ "name": "RemainingData", "size": "$TotalLength - $DeltaTime_bytes", "type": "bytes" }
+```
+
+> **Note:** VLQ fields do not require a `size` property — they dynamically read bytes until the MSB continuation flag is clear.
 
 #### Value Maps (Enums)
 

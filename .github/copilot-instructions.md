@@ -50,7 +50,7 @@ New artifact parsers should be JSON configs in `Artefacts/configs/`. The schema 
 ### Key Features
 
 - **Magic bytes matching**: `magic_bytes` (hex string) at `magic_offset` for file identification
-- **Field types**: `bytes`, `uint`, `int`, `string`, `utf16`/`utf16le`/`utf16be`, `guid`, `filetime`, `unix_time`, `unix_time_64`, `bitfield`, `skip`, `remaining`, `struct`, `section`
+- **Field types**: `bytes`, `uint`, `int`, `string`, `utf16`/`utf16le`/`utf16be`, `guid`, `filetime`, `unix_time`, `unix_time_64`, `bitfield`, `vlq`, `skip`, `remaining`, `struct`, `section`
 - **Dynamic sizes**: Reference other fields with `$field_name` (e.g., `"size": "$data_length"`)
 - **Expressions**: `"size": "$header_size - 16"`, `"size": "$count * 2"`
 - **Conditions**: `"condition": "$flags.0"` (bit check), `"condition": "$type == 5 or $type == 2"`

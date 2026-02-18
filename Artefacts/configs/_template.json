@@ -98,6 +98,12 @@
             "description": "Number of records that follow"
         },
         {
+            "_comment": "VLQ field - reads 1-4 bytes dynamically (no 'size' needed). Stores {name}_bytes for size calculations.",
+            "name": "variable_length_value",
+            "type": "vlq",
+            "description": "Variable-Length Quantity encoded value"
+        },
+        {
             "_comment": "Repeat example: parse a struct N times based on a parsed field value",
             "name": "Records",
             "type": "struct",
