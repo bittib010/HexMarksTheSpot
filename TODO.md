@@ -15,6 +15,8 @@
 - ~~When Bookmarks are open, adding a new bookmark should trigger an update to the open bookmark window that is open.~~ **DONE** — `add_bookmark()` inserts into the treeview live; `_refresh_bookmark_window()` repopulates when loading from cache.
 - ~~The bookmarks should be able to be exported, and we should be able to add comments to the marked bookmarks that is saved for each session. Maybe even cached to a file based on the hash of the parsed file, so that it automatically loads on the next parse of the same file.~~ **DONE** — Bookmarks are now `{name, offset, comment}` dicts persisted to `cache/<hash>/bookmarks.json`. Comments editable via double-click in Comment column. Export to JSON/CSV via "Export Bookmarks" button.
 - Making more space for the Field Parse section by moving all buttons into a typical "File", "Edit", "View", "Help" menu structure. This would allow us to add more features in the future without cluttering the UI, and also provide a more familiar interface for users.
+- Bookmark should have the value there as well, a snippet of it in the table, but the full value on export. 
+- The Bookmark modal/window should have an "export" button that allows you to export the bookmarks to a JSON or CSV file, maybe even as Markdown with some sort of table formatting or code formatting - something that makes the findings and comments stand out. This would allow users to save their bookmarks and share them with others, and use as some sort of report or reference in their investigations.
 
 
 ## Future Parser Enhancements

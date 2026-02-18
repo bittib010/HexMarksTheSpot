@@ -2341,15 +2341,21 @@ class Main:
         ColorGenerator.reset()
         
         try:
+            import time as _time
+            t0 = _time.perf_counter()
+            
             # Compute file hash for caching
             self.master.after(0, lambda: self._update_loading_message(
                 "Computing file hash...",
                 "Checking cache"
             ))
             self.file_hash = cache_manager.compute_file_hash(filename)
+            t_hash = _time.perf_counter()
             
             # Check for cached parsed data
             cached_root = cache_manager.load_parsed_cache(self.file_hash)
+            t_load = _time.perf_counter()
+            
             if cached_root is not None:
                 self.master.after(0, lambda: self._update_loading_message(
                     "Loading from cache...",
@@ -2365,8 +2371,13 @@ class Main:
                 
                 cache_meta = cache_manager.get_cache_meta(self.file_hash)
                 cached_at = cache_meta.get("cached_at", "") if cache_meta else ""
+                t_render = _time.perf_counter()
+                timing = (f"hash {t_hash-t0:.2f}s, "
+                          f"cache load {t_load-t_hash:.2f}s, "
+                          f"render {t_render-t_load:.2f}s, "
+                          f"total {t_render-t0:.2f}s")
                 self.update_status(
-                    f"Loaded from cache ({self.total_nodes} fields, cached {cached_at[:19]})"
+                    f"Loaded from cache ({self.total_nodes} fields) [{timing}]"
                 )
             else:
                 # Parse fresh
@@ -2380,6 +2391,7 @@ class Main:
                     parser = get_file_parser(file)
                     parser_name = type(parser).__name__
                     self.root = parser.parse()
+                    t_parse = _time.perf_counter()
                     self.total_nodes = self.count_nodes(self.root)
                     self.processed_nodes = 0
                     
@@ -2400,6 +2412,15 @@ class Main:
                 
                 # Load cached bookmarks (may exist from a previous session)
                 self._load_cached_bookmarks()
+                
+                t_done = _time.perf_counter()
+                timing = (f"hash {t_hash-t0:.2f}s, "
+                          f"parse {t_parse-t_hash:.2f}s, "
+                          f"render {t_done-t_parse:.2f}s, "
+                          f"total {t_done-t0:.2f}s")
+                self.update_status(
+                    f"Parsed {self.total_nodes} fields [{timing}]"
+                )
             
             if self.stop_parsing:
                 self.update_status(f"Parsing of {filename} stopped.")
@@ -2688,6 +2709,7 @@ class Main:
     def _collect_nodes(self, node):
         """
         Recursively collect all node data for display.
+        Pre-builds hex and ASCII strings for bulk insertion.
         This can safely run in a background thread.
         """
         if self.stop_parsing:
@@ -2700,13 +2722,32 @@ class Main:
             offset = key if key is not None else self.byte_counter
             tag = f"color{self.byte_counter}_{idx}"
             table_val = child.table_value or ''
+            data = child.data
+            data_len = len(data) if data else 0
+            
+            # Pre-build hex and ASCII strings for bulk insertion
+            # This moves expensive string formatting to the background thread
+            hex_str = ''
+            ascii_str = ''
+            if data:
+                # Build hex string with newlines at 16-byte boundaries
+                hex_parts = []
+                ascii_parts = []
+                for i, byte in enumerate(data):
+                    hex_parts.append(f'{byte:02x} ')
+                    ascii_parts.append(chr(byte) if 32 <= byte < 127 else '.')
+                hex_str = ''.join(hex_parts)
+                ascii_str = ''.join(ascii_parts)
             
             # Store all data needed for GUI update
             self.collected_nodes.append({
                 'tag': tag,
                 'color': child.color,
                 'name': child.name,
-                'data': child.data,
+                'data': data,
+                'data_len': data_len,
+                'hex_str': hex_str,
+                'ascii_str': ascii_str,
                 'info': child.info,
                 'table_val': table_val,
                 'offset': offset,
@@ -2714,28 +2755,23 @@ class Main:
                 'display_pos': self.byte_counter,  # position in hex widget
             })
             
-            self.byte_counter += len(child.data) if child.data else 0
+            self.byte_counter += data_len
             self._collect_nodes(child)
     
     def _update_gui_batch(self, start_idx):
         """
         Update GUI in batches to prevent freezing.
         Runs on main thread via after().
-        Dynamically adjusts batch size based on performance.
+        Uses large batches since hex/ASCII strings are pre-built.
         """
         if self.stop_parsing:
             self._hide_loading_overlay()
             return
         
-        # Dynamic batch sizing for better responsiveness
-        # Start with smaller batches for large files, increase as we go
         total_nodes = len(self.collected_nodes)
-        if total_nodes > 1000:
-            BATCH_SIZE = 30  # Smaller batches for large files
-        elif total_nodes > 500:
-            BATCH_SIZE = 50
-        else:
-            BATCH_SIZE = 100  # Larger batches for smaller files
+        
+        # Much larger batches since we do bulk inserts now
+        BATCH_SIZE = 500
             
         end_idx = min(start_idx + BATCH_SIZE, total_nodes)
         
@@ -2788,6 +2824,7 @@ class Main:
     def _display_node(self, node_data):
         """
         Display a single node's data in the GUI.
+        Uses bulk string insertion instead of byte-by-byte.
         Must run on main thread.
         """
         tag = node_data['tag']
@@ -2820,25 +2857,42 @@ class Main:
         self.text_widget.textWidget.tag_configure(tag, background=color, foreground=fg_color)
         self.text_widget.asciiText.tag_configure(tag, background=color, foreground=fg_color)
         
-        # Insert hex and ASCII data
-        if node_data['data']:
-            for byte in node_data['data']:
-                text = f'{byte:02x} '
-                self.text_widget.textWidget.insert('end', text, (tag,))
+        # Bulk-insert hex and ASCII data with newline splitting at 16-byte boundaries
+        data_len = node_data['data_len']
+        if data_len > 0:
+            hex_str = node_data['hex_str']
+            ascii_str = node_data['ascii_str']
+            
+            # Calculate position within current 16-byte line
+            pos_in_line = self.display_byte_counter % 16
+            bytes_consumed = 0
+            
+            while bytes_consumed < data_len:
+                # How many bytes until end of current 16-byte line?
+                remaining_in_line = 16 - pos_in_line
+                chunk_size = min(remaining_in_line, data_len - bytes_consumed)
                 
-                if 32 <= byte < 127:
-                    ascii_char = chr(byte)
-                else:
-                    ascii_char = '.'
-                self.text_widget.asciiText.insert('end', ascii_char, (tag,))
+                # Extract chunk from pre-built strings
+                hex_start = bytes_consumed * 3  # each byte = "xx "
+                hex_end = (bytes_consumed + chunk_size) * 3
+                ascii_start = bytes_consumed
+                ascii_end = bytes_consumed + chunk_size
                 
-                self.display_byte_counter += 1
-                if self.display_byte_counter % 16 == 0:
+                # Insert hex and ASCII chunks
+                self.text_widget.textWidget.insert('end', hex_str[hex_start:hex_end], (tag,))
+                self.text_widget.asciiText.insert('end', ascii_str[ascii_start:ascii_end], (tag,))
+                
+                bytes_consumed += chunk_size
+                self.display_byte_counter += chunk_size
+                pos_in_line += chunk_size
+                
+                # Insert newline at 16-byte boundary
+                if pos_in_line >= 16:
                     self.text_widget.textWidget.insert('end', '\n')
                     self.text_widget.asciiText.insert('end', '\n')
-                    # Add next offset line
                     self.text_widget.offsetText.insert(
                         'end', self._format_viewer_offset(self.display_byte_counter) + '\n')
+                    pos_in_line = 0
         
         # Bind click handlers
         self.text_widget.textWidget.tag_bind(tag, "<Button-1>",
