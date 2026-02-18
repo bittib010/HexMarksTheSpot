@@ -22,6 +22,7 @@ from tkhtmlview import HTMLText
 # Application-specific - use the new dynamic parser loader
 from parser_loader import get_file_parser, discover_all_parsers
 from common import ColorGenerator
+import cache_manager
 
 
 def _win32_open_file_dialog(initialdir="", title="Select File", filetypes=None):
@@ -992,7 +993,8 @@ class Main:
         self.master = master
         self.bookmark_treeview = None
         self.bookmark_window = None
-        self.bookmarks = []  # Store bookmarks as list of (name, offset) tuples
+        self.bookmarks = []  # Store bookmarks as list of {name, offset, comment} dicts
+        self.file_hash = None  # SHA-256 hash of the currently loaded file
         
         # Maximum character width for the Value column in the treeview
         self.VALUE_COLUMN_MAX_WIDTH = 40
@@ -1767,7 +1769,7 @@ class Main:
             
         self.bookmark_window = Toplevel(self.master)
         self.bookmark_window.title("Bookmarks")
-        self.bookmark_window.geometry("400x300")
+        self.bookmark_window.geometry("550x350")
         self.bookmark_window.configure(bg=ModernTheme.BG_PRIMARY)
         
         # Header
@@ -1781,31 +1783,40 @@ class Main:
         header.pack(pady=(15, 10))
         
         self.bookmark_treeview = ttk.Treeview(
-            self.bookmark_window, columns=('Name', 'Offset'), style="Modern.Treeview", show="headings")
+            self.bookmark_window, columns=('Name', 'Offset', 'Comment'),
+            style="Modern.Treeview", show="headings")
         self.bookmark_treeview.heading('Name', text='Name')
         self.bookmark_treeview.heading('Offset', text='Offset')
-        self.bookmark_treeview.column('Name', width=250)
-        self.bookmark_treeview.column('Offset', width=100)
-        self.bookmark_treeview.pack(fill=BOTH, expand=True, padx=15, pady=(0, 15))
+        self.bookmark_treeview.heading('Comment', text='Comment')
+        self.bookmark_treeview.column('Name', width=200)
+        self.bookmark_treeview.column('Offset', width=90)
+        self.bookmark_treeview.column('Comment', width=220)
+        self.bookmark_treeview.pack(fill=BOTH, expand=True, padx=15, pady=(0, 10))
         
         # Populate with existing bookmarks
-        for name, raw_offset in self.bookmarks:
-            self.bookmark_treeview.insert('', 'end', values=(name, self._format_offset(raw_offset)))
+        for bm in self.bookmarks:
+            self.bookmark_treeview.insert('', 'end', values=(
+                bm['name'], self._format_offset(bm['offset']), bm.get('comment', '')))
         
         # Bind the selection event
         self.bookmark_treeview.bind(
             "<<TreeviewSelect>>", self.bookmark_item_selected)
+        # Double-click to edit comment
+        self.bookmark_treeview.bind("<Double-1>", self._edit_bookmark_comment)
         
-        # Delete button
+        # Button row
+        btn_frame = Frame(self.bookmark_window, bg=ModernTheme.BG_PRIMARY)
+        btn_frame.pack(fill=X, padx=15, pady=(0, 15))
+        
         delete_btn = RoundedButton(
-            self.bookmark_window,
-            text="Delete Selected",
-            command=self.delete_bookmark,
-            style="secondary",
-            radius=10,
-            height=36
-        )
-        delete_btn.pack(fill=X, padx=15, pady=(0, 15))
+            btn_frame, text="Delete Selected", command=self.delete_bookmark,
+            style="secondary", radius=10, height=36)
+        delete_btn.pack(side=LEFT, fill=X, expand=True, padx=(0, 5))
+        
+        export_btn = RoundedButton(
+            btn_frame, text="Export Bookmarks", command=self._export_bookmarks,
+            style="secondary", radius=10, height=36)
+        export_btn.pack(side=LEFT, fill=X, expand=True, padx=(5, 0))
     
     def delete_bookmark(self):
         """Delete the selected bookmark."""
@@ -1816,10 +1827,14 @@ class Main:
             item = self.bookmark_treeview.item(selected)
             name = item['values'][0]
             raw_offset = self._parse_offset(item['values'][1])
-            # Remove from bookmarks list (stored as raw int offsets)
-            self.bookmarks = [(n, o) for n, o in self.bookmarks if not (n == name and o == raw_offset)]
+            # Remove from bookmarks list (stored as dicts)
+            self.bookmarks = [
+                bm for bm in self.bookmarks
+                if not (bm['name'] == name and bm['offset'] == raw_offset)
+            ]
             # Remove from treeview
-            self.bookmark_treeview.delete(selected) 
+            self.bookmark_treeview.delete(selected)
+            self._save_bookmarks_to_cache() 
         
     def jump_to_bookmark(self, event):
         """
@@ -1857,16 +1872,23 @@ class Main:
             name = values[1]
             display_offset = self._format_offset(raw_offset)
             
-            # Check if already bookmarked (store raw offset)
-            if (name, raw_offset) not in self.bookmarks:
-                self.bookmarks.append((name, raw_offset))
+            # Check if already bookmarked
+            already = any(
+                bm['name'] == name and bm['offset'] == raw_offset
+                for bm in self.bookmarks
+            )
+            if not already:
+                bookmark = {'name': name, 'offset': raw_offset, 'comment': ''}
+                self.bookmarks.append(bookmark)
                 self.update_status(f"Bookmarked: {name} at offset {display_offset}")
+                self._save_bookmarks_to_cache()
                 
                 # If bookmark window is open, update it
                 if self.bookmark_treeview is not None and self.bookmark_window is not None:
                     try:
                         if self.bookmark_window.winfo_exists():
-                            self.bookmark_treeview.insert('', 'end', values=(name, display_offset))
+                            self.bookmark_treeview.insert(
+                                '', 'end', values=(name, display_offset, ''))
                     except:
                         pass
             else:
@@ -1971,7 +1993,7 @@ class Main:
         selected = self.bookmark_treeview.selection()
         if selected:
             item = self.bookmark_treeview.item(selected)
-            # Columns are (Name, Offset)
+            # Columns are (Name, Offset, Comment)
             offset = self._parse_offset(item['values'][1])
 
             # Calculate the corresponding row and column in the Text widget
@@ -2297,6 +2319,11 @@ class Main:
     def parse_file(self, filename):
         """
         Parse the selected file, displaying the content and controlling the progress.
+        
+        Checks for a cached parsed tree first (by file SHA-256 hash).
+        If found, loads from cache instead of re-parsing.
+        After parsing, saves the result to cache for future use.
+        Also loads any cached bookmarks for the file.
 
         :param filename: The path to the file to be parsed.
         """
@@ -2309,38 +2336,178 @@ class Main:
         ColorGenerator.reset()
         
         try:
-            # Update loading message
+            # Compute file hash for caching
             self.master.after(0, lambda: self._update_loading_message(
-                "Parsing file structure...",
-                "Analyzing binary data"
+                "Computing file hash...",
+                "Checking cache"
             ))
+            self.file_hash = cache_manager.compute_file_hash(filename)
             
-            with open(filename, "rb") as file:
-                parser = get_file_parser(file)
-                self.root = parser.parse()  # Store the root node
+            # Check for cached parsed data
+            cached_root = cache_manager.load_parsed_cache(self.file_hash)
+            if cached_root is not None:
+                self.master.after(0, lambda: self._update_loading_message(
+                    "Loading from cache...",
+                    "Using previously parsed data"
+                ))
+                self.root = cached_root
                 self.total_nodes = self.count_nodes(self.root)
                 self.processed_nodes = 0
+                self.show_parsed_data(self.root)
                 
-                # Update loading message with node count
+                # Load cached bookmarks
+                self._load_cached_bookmarks()
+                
+                cache_meta = cache_manager.get_cache_meta(self.file_hash)
+                cached_at = cache_meta.get("cached_at", "") if cache_meta else ""
+                self.update_status(
+                    f"Loaded from cache ({self.total_nodes} fields, cached {cached_at[:19]})"
+                )
+            else:
+                # Parse fresh
                 self.master.after(0, lambda: self._update_loading_message(
-                    "Rendering hex view...",
-                    f"Processing {self.total_nodes} fields"
+                    "Parsing file structure...",
+                    "Analyzing binary data"
                 ))
                 
-                self.show_parsed_data(self.root)
-                # Write parsed content to log file
-                self.write_parse_log(filename, self.root)
+                parser_name = ""
+                with open(filename, "rb") as file:
+                    parser = get_file_parser(file)
+                    parser_name = type(parser).__name__
+                    self.root = parser.parse()
+                    self.total_nodes = self.count_nodes(self.root)
+                    self.processed_nodes = 0
+                    
+                    self.master.after(0, lambda: self._update_loading_message(
+                        "Rendering hex view...",
+                        f"Processing {self.total_nodes} fields"
+                    ))
+                    
+                    self.show_parsed_data(self.root)
+                    self.write_parse_log(filename, self.root)
+                
+                # Save to cache in background
+                threading.Thread(
+                    target=cache_manager.save_parsed_cache,
+                    args=(self.file_hash, self.root, filename, parser_name),
+                    daemon=True
+                ).start()
+                
+                # Load cached bookmarks (may exist from a previous session)
+                self._load_cached_bookmarks()
+            
             if self.stop_parsing:
                 self.update_status(f"Parsing of {filename} stopped.")
         except Exception as e:
             self.update_status(f"Could not parse file: {e}")
-            # Hide loading on error
             self.master.after(0, self._hide_loading_overlay)
 
-        # Schedule a callback to clear the status after 10 seconds
         self.master.after(10000, self.clear_status)
         self.open_button.config(state="normal")
         self.stop_button.config(state="disabled")
+
+    def _load_cached_bookmarks(self):
+        """Load bookmarks from cache for the current file hash."""
+        if not self.file_hash:
+            return
+        cached_bookmarks = cache_manager.load_bookmarks(self.file_hash)
+        if cached_bookmarks:
+            self.bookmarks = cached_bookmarks
+            self.update_status(
+                f"Loaded {len(cached_bookmarks)} bookmarks from cache"
+            )
+            # Refresh bookmark window if open
+            self._refresh_bookmark_window()
+        else:
+            self.bookmarks = []
+
+    def _save_bookmarks_to_cache(self):
+        """Save current bookmarks to cache (called on any bookmark change)."""
+        if not self.file_hash:
+            return
+        threading.Thread(
+            target=cache_manager.save_bookmarks,
+            args=(self.file_hash, self.bookmarks),
+            daemon=True
+        ).start()
+
+    def _refresh_bookmark_window(self):
+        """Clear and repopulate the bookmark treeview if the window is open."""
+        if (self.bookmark_treeview is None or self.bookmark_window is None):
+            return
+        try:
+            if not self.bookmark_window.winfo_exists():
+                return
+        except:
+            return
+        # Clear all items
+        for item in self.bookmark_treeview.get_children():
+            self.bookmark_treeview.delete(item)
+        # Repopulate
+        for bm in self.bookmarks:
+            self.bookmark_treeview.insert('', 'end', values=(
+                bm['name'], self._format_offset(bm['offset']),
+                bm.get('comment', '')))
+
+    def _edit_bookmark_comment(self, event):
+        """Handle double-click on a bookmark row to edit its comment."""
+        if self.bookmark_treeview is None:
+            return
+        # Only act on the Comment column
+        region = self.bookmark_treeview.identify_region(event.x, event.y)
+        if region != 'cell':
+            return
+        col = self.bookmark_treeview.identify_column(event.x)
+        if col != '#3':  # Comment is the 3rd column
+            return
+        selected = self.bookmark_treeview.identify_row(event.y)
+        if not selected:
+            return
+
+        item = self.bookmark_treeview.item(selected)
+        current_comment = item['values'][2] if len(item['values']) > 2 else ''
+        name = item['values'][0]
+        raw_offset = self._parse_offset(item['values'][1])
+
+        # Simple dialog for editing the comment
+        from tkinter.simpledialog import askstring
+        new_comment = askstring(
+            "Edit Comment",
+            f"Comment for '{name}':",
+            initialvalue=str(current_comment),
+            parent=self.bookmark_window
+        )
+        if new_comment is None:
+            return  # Cancelled
+
+        # Update the bookmark dict
+        for bm in self.bookmarks:
+            if bm['name'] == name and bm['offset'] == raw_offset:
+                bm['comment'] = new_comment
+                break
+        # Update the treeview cell
+        self.bookmark_treeview.set(selected, 'Comment', new_comment)
+        self._save_bookmarks_to_cache()
+
+    def _export_bookmarks(self):
+        """Export bookmarks to JSON or CSV via a save dialog."""
+        if not self.bookmarks:
+            self.update_status("No bookmarks to export")
+            return
+        from tkinter.filedialog import asksaveasfilename
+        filepath = asksaveasfilename(
+            title="Export Bookmarks",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("CSV files", "*.csv")],
+            parent=self.bookmark_window or self.master
+        )
+        if not filepath:
+            return
+        try:
+            cache_manager.export_bookmarks_to_file(self.bookmarks, filepath)
+            self.update_status(f"Exported {len(self.bookmarks)} bookmarks to {filepath}")
+        except Exception as e:
+            self.update_status(f"Export failed: {e}")
 
     def count_nodes(self, node):
         """

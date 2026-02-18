@@ -1,0 +1,12 @@
+[
+  {
+    "name": "IncrementalVacuumMode",
+    "offset": 64,
+    "comment": "Testing comment"
+  },
+  {
+    "name": "TextEncoding",
+    "offset": 56,
+    "comment": "New comment"
+  }
+]
