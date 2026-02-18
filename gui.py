@@ -384,7 +384,7 @@ class TextWidget:
         hex_header_text = " ".join(f"{i:02X}" for i in range(16))
         hex_column_header = Label(
             self.container,
-            text=f" {hex_header_text} ",
+            text=f" {hex_header_text}",
             bg=ModernTheme.HEX_BG,
             fg=ModernTheme.TEXT_LIGHT,
             font=header_font,
@@ -405,7 +405,7 @@ class TextWidget:
             fg=ModernTheme.TEXT_LIGHT,
             font=header_font,
             anchor=W,
-            padx=12,
+            padx=2,
             pady=3,
             relief='flat',
             bd=0
@@ -439,7 +439,7 @@ class TextWidget:
             width=52,
             height=38,
             font=mono_font,
-            padx=12,
+            padx=6,
             pady=12,
             bg=ModernTheme.HEX_BG,
             fg=ModernTheme.HEX_FG,
@@ -448,7 +448,7 @@ class TextWidget:
             insertbackground=ModernTheme.HEX_FG,
             selectbackground=ModernTheme.SELECTION_BG,
             selectforeground=ModernTheme.TEXT_PRIMARY,
-            highlightthickness=1,
+            highlightthickness=0,
             highlightbackground=ModernTheme.BORDER,
             highlightcolor=ModernTheme.BORDER_FOCUS
         )
@@ -483,7 +483,7 @@ class TextWidget:
             width=18,
             height=38,
             font=mono_font,
-            padx=12,
+            padx=6,
             pady=12,
             bg=ModernTheme.HEX_BG,
             fg=ModernTheme.ASCII_FG,
@@ -492,7 +492,7 @@ class TextWidget:
             insertbackground=ModernTheme.ASCII_FG,
             selectbackground=ModernTheme.SELECTION_BG,
             selectforeground=ModernTheme.TEXT_PRIMARY,
-            highlightthickness=1,
+            highlightthickness=0,
             highlightbackground=ModernTheme.BORDER,
             highlightcolor=ModernTheme.BORDER_FOCUS
         )
