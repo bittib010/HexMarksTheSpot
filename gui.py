@@ -195,6 +195,23 @@ def setup_modern_style():
         foreground=[('selected', ModernTheme.TEXT_PRIMARY)]
     )
     
+    # Configure Combobox
+    style.configure(
+        "Modern.TCombobox",
+        fieldbackground=ModernTheme.BG_SECONDARY,
+        background=ModernTheme.BG_SECONDARY,
+        foreground=ModernTheme.TEXT_PRIMARY,
+        borderwidth=1,
+        padding=(6, 4),
+        font=('Segoe UI', 9)
+    )
+    style.map(
+        "Modern.TCombobox",
+        fieldbackground=[('readonly', ModernTheme.BG_SECONDARY)],
+        selectbackground=[('readonly', ModernTheme.BG_SECONDARY)],
+        selectforeground=[('readonly', ModernTheme.TEXT_PRIMARY)]
+    )
+    
     # Configure Button
     style.configure(
         "Modern.TButton",
@@ -606,14 +623,41 @@ class Main:
         search_frame.grid(row=0, column=0, sticky=E+W, pady=(0, 10))
         search_frame.grid_columnconfigure(0, weight=1)
         
+        # Header row with label and offset format dropdown
+        header_row = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
+        header_row.grid(row=0, column=0, columnspan=2, sticky=E+W, pady=(0, 8))
+        header_row.grid_columnconfigure(0, weight=1)
+        
         search_label = Label(
-            search_frame,
+            header_row,
             text="PARSED FIELDS",
             bg=ModernTheme.BG_PRIMARY,
             fg=ModernTheme.TEXT_SECONDARY,
             font=('Segoe UI', 9, 'bold')
         )
-        search_label.grid(row=0, column=0, columnspan=2, sticky=W, pady=(0, 8))
+        search_label.grid(row=0, column=0, sticky=W)
+        
+        # Offset format dropdown
+        self.offset_format_var = StringVar(value="Hex")
+        offset_format_label = Label(
+            header_row,
+            text="Offset:",
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY,
+            font=('Segoe UI', 8)
+        )
+        offset_format_label.grid(row=0, column=1, sticky=E, padx=(5, 2))
+        
+        self.offset_format_combo = ttk.Combobox(
+            header_row,
+            textvariable=self.offset_format_var,
+            values=["Hex", "Decimal"],
+            state="readonly",
+            style="Modern.TCombobox",
+            width=8
+        )
+        self.offset_format_combo.grid(row=0, column=2, sticky=E)
+        self.offset_format_combo.bind("<<ComboboxSelected>>", self._on_offset_format_changed)
         
         self.search_var = StringVar()
         self.search_entry = ttk.Entry(
@@ -814,6 +858,9 @@ class Main:
         self._border_frames = []
         self._from_hex_click = False  # Flag to prevent scroll loop on hex click
         
+        # Raw offset storage for format switching
+        self._item_raw_offsets = {}  # treeview item_id -> raw int offset
+        
         # Don't start in fullscreen by default for better usability
         # self.master.attributes("-fullscreen", True)
         
@@ -859,18 +906,18 @@ class Main:
         search_term = self.search_var.get().strip().lower()
         matching_items = [item for item in self.sequence_items if item[0][1] and search_term in item[0][1].lower()]
         self.sequence_treeview.delete(*self.sequence_treeview.get_children())
-        for values, tags in matching_items:
-            item_id = self.sequence_treeview.insert('', 'end', values=values, tags=tags)
-            if values and len(values) >= 3:  # Assuming table_value is the 3rd value in the tuple
-                self.sequence_treeview.item(item_id, values=(values[0], values[1], values[2]))
+        for (raw_offset, name, table_val), tags in matching_items:
+            display_offset = self._format_offset(raw_offset)
+            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, table_val), tags=tags)
+            self._item_raw_offsets[item_id] = raw_offset
 
     def clear_search(self):
         self.search_var.set('')
         self.sequence_treeview.delete(*self.sequence_treeview.get_children())
-        for values, tags in self.sequence_items:
-            item_id = self.sequence_treeview.insert('', 'end', values=values, tags=tags)
-            if values and len(values) >= 3:  # Assuming table_value is the 3rd value in the tuple
-                self.sequence_treeview.item(item_id, values=(values[0], values[1], values[2]))
+        for (raw_offset, name, table_val), tags in self.sequence_items:
+            display_offset = self._format_offset(raw_offset)
+            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, table_val), tags=tags)
+            self._item_raw_offsets[item_id] = raw_offset
 
     def get_complementary_color(hex_color):
         # TODO: add posibility to change text color to this to avoid "hiding" text in same color
@@ -950,6 +997,72 @@ class Main:
             f.place_forget()
         self._highlight_item_id = None
 
+    def _format_offset(self, offset):
+        """Format an integer offset based on the current display preference."""
+        try:
+            offset = int(offset)
+        except (ValueError, TypeError):
+            return str(offset)
+        if self.offset_format_var.get() == "Hex":
+            return f"0x{offset:X}"
+        return str(offset)
+
+    def _parse_offset(self, value):
+        """Parse an offset string back to an integer, handling both hex and decimal formats."""
+        s = str(value).strip()
+        if s.startswith("0x") or s.startswith("0X"):
+            return int(s, 16)
+        return int(s)
+
+    def _on_offset_format_changed(self, event=None):
+        """Re-format all offsets in the treeview and hex viewer when the dropdown changes."""
+        # Update treeview offsets
+        for item_id in self.sequence_treeview.get_children():
+            if item_id in self._item_raw_offsets:
+                raw = self._item_raw_offsets[item_id]
+                current = self.sequence_treeview.item(item_id, 'values')
+                self.sequence_treeview.item(
+                    item_id, values=(self._format_offset(raw), current[1], current[2]))
+        
+        # Update hex viewer offset column
+        self._refresh_viewer_offsets()
+
+    def _format_viewer_offset(self, byte_offset):
+        """Format a byte offset for the hex viewer's offset column."""
+        if self.offset_format_var.get() == "Hex":
+            return f"{byte_offset:08X}"
+        return str(byte_offset).rjust(10)
+
+    def _refresh_viewer_offsets(self):
+        """Rewrite all offset lines in the hex viewer to match current format preference."""
+        self.text_widget.offsetText.configure(state='normal')
+        content = self.text_widget.offsetText.get('1.0', 'end-1c')
+        lines = content.split('\n')
+        if not lines or (len(lines) == 1 and not lines[0].strip()):
+            self.text_widget.offsetText.configure(state='disabled')
+            return
+        
+        new_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                new_lines.append('')
+                continue
+            # Parse the existing offset value (could be hex or decimal)
+            try:
+                if stripped.startswith('0x') or stripped.startswith('0X'):
+                    val = int(stripped, 16)
+                else:
+                    val = int(stripped, 16) if all(c in '0123456789abcdefABCDEF' for c in stripped) and len(stripped) == 8 else int(stripped)
+            except ValueError:
+                new_lines.append(line)
+                continue
+            new_lines.append(self._format_viewer_offset(val))
+        
+        self.text_widget.offsetText.delete('1.0', 'end')
+        self.text_widget.offsetText.insert('1.0', '\n'.join(new_lines))
+        self.text_widget.offsetText.configure(state='disabled')
+
     def listbox_item_selected(self, event):
         """
         Handle the selection event in the sequence treeview.
@@ -961,7 +1074,7 @@ class Main:
         selected = self.sequence_treeview.selection()
         if selected:
             item = self.sequence_treeview.item(selected)
-            offset = int(item['values'][0])
+            offset = self._parse_offset(item['values'][0])
             tags = item.get('tags', ())
             
             # Resolve the tag first so we can use display_pos for scrolling
@@ -1005,7 +1118,7 @@ class Main:
                     # Update status bar with offset info
                     if hasattr(self, 'current_file') and self.current_file:
                         self.status_bar.config(
-                            text=f"File: {self.current_file}\t\tOffset Decimal: {offset} \tOffset Hexadecimal: 0x{offset:X}")
+                            text=f"File: {self.current_file}\t\tOffset: {self._format_offset(offset)}  (Dec: {offset}  Hex: 0x{offset:X})")
 
     def show_bookmarks(self):
         """
@@ -1040,8 +1153,8 @@ class Main:
         self.bookmark_treeview.pack(fill=BOTH, expand=True, padx=15, pady=(0, 15))
         
         # Populate with existing bookmarks
-        for name, offset in self.bookmarks:
-            self.bookmark_treeview.insert('', 'end', values=(name, offset))
+        for name, raw_offset in self.bookmarks:
+            self.bookmark_treeview.insert('', 'end', values=(name, self._format_offset(raw_offset)))
         
         # Bind the selection event
         self.bookmark_treeview.bind(
@@ -1063,9 +1176,10 @@ class Main:
         selected = self.bookmark_treeview.selection()
         if selected:
             item = self.bookmark_treeview.item(selected)
-            name, offset = item['values']
-            # Remove from bookmarks list
-            self.bookmarks = [(n, o) for n, o in self.bookmarks if not (n == name and o == offset)]
+            name = item['values'][0]
+            raw_offset = self._parse_offset(item['values'][1])
+            # Remove from bookmarks list (stored as raw int offsets)
+            self.bookmarks = [(n, o) for n, o in self.bookmarks if not (n == name and o == raw_offset)]
             # Remove from treeview
             self.bookmark_treeview.delete(selected) 
         
@@ -1101,19 +1215,20 @@ class Main:
         item = self.sequence_treeview.item(selected)
         values = item['values']
         if len(values) >= 2:
-            offset = values[0]
+            raw_offset = self._parse_offset(values[0])
             name = values[1]
+            display_offset = self._format_offset(raw_offset)
             
-            # Check if already bookmarked
-            if (name, offset) not in self.bookmarks:
-                self.bookmarks.append((name, offset))
-                self.update_status(f"Bookmarked: {name} at offset {offset}")
+            # Check if already bookmarked (store raw offset)
+            if (name, raw_offset) not in self.bookmarks:
+                self.bookmarks.append((name, raw_offset))
+                self.update_status(f"Bookmarked: {name} at offset {display_offset}")
                 
                 # If bookmark window is open, update it
                 if self.bookmark_treeview is not None and self.bookmark_window is not None:
                     try:
                         if self.bookmark_window.winfo_exists():
-                            self.bookmark_treeview.insert('', 'end', values=(name, offset))
+                            self.bookmark_treeview.insert('', 'end', values=(name, display_offset))
                     except:
                         pass
             else:
@@ -1130,7 +1245,7 @@ class Main:
         if selected:
             item = self.bookmark_treeview.item(selected)
             # Columns are (Name, Offset)
-            offset = int(item['values'][1])
+            offset = self._parse_offset(item['values'][1])
 
             # Calculate the corresponding row and column in the Text widget
             row = offset // 16 + 1  # Adding 1 because Text widget indices start from 1
@@ -1660,6 +1775,7 @@ class Main:
         self.current_highlight_tag = None
         self._hide_treeview_border()
         self._from_hex_click = False
+        self._item_raw_offsets = {}
         
         # Collect all node data first (can be done in background thread)
         self.collected_nodes = []
@@ -1732,7 +1848,7 @@ class Main:
             self.text_widget.offsetText.delete('1.0', 'end')
             
             # Insert first offset line
-            self.text_widget.offsetText.insert('end', '00000000\n')
+            self.text_widget.offsetText.insert('end', self._format_viewer_offset(0) + '\n')
             
             # Mark text mirror
             self.text_widget.textWidget.bind(
@@ -1779,14 +1895,16 @@ class Main:
         child = node_data['child']
         table_val = node_data['table_val']
         
-        # Insert into treeview
+        # Insert into treeview with formatted offset
+        display_offset = self._format_offset(offset)
         item_id = self.sequence_treeview.insert('', 'end', values=(
-            offset, node_data['name'], table_val), tags=(tag,))
+            display_offset, node_data['name'], table_val), tags=(tag,))
         
         # Store mappings for click synchronization
         self.tag_to_treeview_item[tag] = item_id
         self.tag_to_child[tag] = child
         self.tag_to_display_pos[tag] = node_data.get('display_pos', offset)
+        self._item_raw_offsets[item_id] = offset  # Store raw int for format switching
         if offset not in self.offset_to_tag:
             self.offset_to_tag[offset] = tag
         
@@ -1794,6 +1912,7 @@ class Main:
         fg_color = ColorGenerator.get_contrast_text_color(color or '#ffffff')
         
         self.sequence_treeview.tag_configure(tag, background=color, foreground=fg_color)
+        # Always store raw offset in sequence_items for search/format switching
         self.sequence_items.append(((offset, node_data['name'], table_val), (tag,)))
         
         # Configure tags for text widgets with contrast foreground
@@ -1818,7 +1937,7 @@ class Main:
                     self.text_widget.asciiText.insert('end', '\n')
                     # Add next offset line
                     self.text_widget.offsetText.insert(
-                        'end', f'{self.display_byte_counter:08X}\n')
+                        'end', self._format_viewer_offset(self.display_byte_counter) + '\n')
         
         # Bind click handlers
         self.text_widget.textWidget.tag_bind(tag, "<Button-1>",
@@ -1918,7 +2037,7 @@ class Main:
                 pass
 
         self.status_bar.config(
-            text=f"File: {(self.current_file)}\t\tOffset Decimal: {byte_offset} \tOffset Hexadecimal: 0x{byte_offset:X}")
+            text=f"File: {(self.current_file)}\t\tOffset: {self._format_offset(byte_offset)}  (Dec: {byte_offset}  Hex: 0x{byte_offset:X})")
     
     def _highlight_tag(self, tag):
         """
