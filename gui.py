@@ -6,6 +6,8 @@ import time
 import csv
 import hashlib
 import logging
+import tempfile
+import re
 from datetime import datetime
 
 # Third-Party Libraries
@@ -1225,6 +1227,15 @@ class Main:
         )
         self.export_hex_button.grid(row=2, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
+        self.import_hex_button = RoundedButton(
+            actions_frame,
+            text="📥 Import Hex",
+            command=self.import_hex_text,
+            style="secondary",
+            radius=10
+        )
+        self.import_hex_button.grid(row=3, column=0, sticky=E+W, padx=(0, 5), pady=3)
+        
         self.file_info_button = RoundedButton(
             actions_frame,
             text="ℹ️ File Info",
@@ -1232,7 +1243,7 @@ class Main:
             style="secondary",
             radius=10
         )
-        self.file_info_button.grid(row=3, column=0, sticky=E+W, padx=(0, 5), pady=3)
+        self.file_info_button.grid(row=3, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
         self.exit_button = RoundedButton(
             actions_frame,
@@ -1241,7 +1252,7 @@ class Main:
             style="secondary",
             radius=10
         )
-        self.exit_button.grid(row=3, column=1, sticky=E+W, padx=(5, 0), pady=(3, 0))
+        self.exit_button.grid(row=4, column=0, columnspan=2, sticky=E+W, pady=(3, 0))
         
         # ========== STATUS BAR ==========
         status_frame = Frame(master, bg=ModernTheme.BG_SECONDARY)
@@ -1390,6 +1401,121 @@ class Main:
             self.update_status(f"Hex dump exported to {os.path.basename(filename)} ({len(data):,} bytes)")
         except Exception as e:
             self.update_status(f"Export failed: {e}")
+
+    def import_hex_text(self):
+        """Import a hex text file, decode it to binary bytes, and parse the result.
+        
+        Accepts text files containing hex data in common formats:
+        - Raw hex: "4D5A9000..."
+        - Spaced hex: "4D 5A 90 00..."
+        - Hex dump lines: "00000000  4D 5A 90 00...  |MZ...|" (offset and ASCII columns stripped)
+        - 0x-prefixed: "0x4D, 0x5A, 0x90..."
+        
+        All non-hex characters (whitespace, offsets, ASCII sidebar, commas, 0x prefixes)
+        are stripped. The remaining hex digits are decoded to bytes,
+        written to a temp file, and parsed normally.
+        """
+        filename = filedialog.askopenfilename(
+            title="Import Hex Text File",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        if not filename:
+            return
+        
+        # Show loading overlay immediately — decoding large files can take a moment
+        source_name = os.path.basename(filename)
+        self.sequence_treeview.delete(*self.sequence_treeview.get_children())
+        self.progress_var.set(0)
+        self.progress_bar.grid(row=3, column=0, columnspan=5, sticky=W+E+S, pady=(5, 0))
+        self.progress_message.set("Decoding hex...")
+        self._show_loading_overlay(f"Importing hex from {source_name}...")
+        self._update_loading_message(
+            f"Importing hex from {source_name}...",
+            "Reading and decoding hex text"
+        )
+        
+        # Run decoding + parsing in background thread
+        threading.Thread(target=self._import_hex_worker, args=(filename,)).start()
+
+    def _import_hex_worker(self, filename):
+        """Background worker for hex text import — decodes hex and triggers parse."""
+        source_name = os.path.basename(filename)
+        
+        try:
+            with open(filename, 'r', encoding='utf-8', errors='replace') as f:
+                raw_text = f.read()
+        except Exception as e:
+            self.master.after(0, lambda: self._hide_loading_overlay())
+            self.update_status(f"Failed to read file: {e}")
+            return
+        
+        # Process each line to handle hex dump format
+        # Strip offset column (leading hex + whitespace) and ASCII sidebar (|...|)
+        cleaned_lines = []
+        for line in raw_text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Remove ASCII sidebar: 2+ spaces then |1-16 chars| at end of line
+            # Using .{1,16} anchored by "  |" avoids mismatching when | appears in hex data
+            line = re.sub(r'\s{2}\|.{1,16}\|\s*$', '', line)
+            # Remove hex dump offset column: "00000000  " or "0000:  " at start
+            line = re.sub(r'^[0-9A-Fa-f]{4,8}:?\s{1,4}', '', line)
+            cleaned_lines.append(line)
+        
+        cleaned = ' '.join(cleaned_lines)
+        
+        # Remove 0x prefixes, commas, and all non-hex characters
+        cleaned = cleaned.replace('0x', '').replace('0X', '')
+        cleaned = re.sub(r'[^0-9A-Fa-f]', '', cleaned)
+        
+        if len(cleaned) == 0:
+            self.master.after(0, lambda: self._hide_loading_overlay())
+            self.update_status("No hex data found in the file")
+            return
+        
+        if len(cleaned) % 2 != 0:
+            # Try to recover by trimming the last digit
+            self.master.after(0, lambda: self._update_loading_message(
+                "Trimming trailing nibble...",
+                f"{len(cleaned):,} hex digits (odd) — dropping last digit"
+            ))
+            cleaned = cleaned[:-1]
+        
+        try:
+            binary_data = bytes.fromhex(cleaned)
+        except ValueError as e:
+            self.master.after(0, lambda: self._hide_loading_overlay())
+            self.update_status(f"Invalid hex data: {e}")
+            return
+        
+        if len(binary_data) == 0:
+            self.master.after(0, lambda: self._hide_loading_overlay())
+            self.update_status("Hex text decoded to 0 bytes")
+            return
+        
+        # Write to a temp file and parse it
+        source_basename = os.path.splitext(source_name)[0]
+        try:
+            temp_dir = tempfile.mkdtemp(prefix="hexmarks_")
+            temp_path = os.path.join(temp_dir, source_basename + ".bin")
+            with open(temp_path, 'wb') as f:
+                f.write(binary_data)
+        except Exception as e:
+            self.master.after(0, lambda: self._hide_loading_overlay())
+            self.update_status(f"Failed to create temp file: {e}")
+            return
+        
+        self.update_status(
+            f"Imported {len(binary_data):,} bytes from {source_name} — parsing..."
+        )
+        self.master.after(0, lambda: self._update_loading_message(
+            "Parsing imported data...",
+            f"Decoded {len(binary_data):,} bytes"
+        ))
+        
+        # Continue with normal parse flow
+        self.parse_file(temp_path)
 
     def exit_app(self):
         """
