@@ -8,6 +8,11 @@
 - Parser field column header - left align.
 - not change scroll locaton on-click on a segment. the behavior is currently messing up the workflow of sending you backto the top of the sequence clicked on. so for large sequences you get somewhat lost. Clicking n parserfield should however send you to the correct location in the hexviewer by scrolling to it and marking like implemented already, but not when clicking in the viewer itself. This is a bit of a UX issue, but it can be solved by adding a flag to indicate whether the click originated from the parser field or the hex viewer, and only scroll to the location if the click came from the parser field.
 - clicking hexviewer marks the location in the parserfield currently, but the mark is hard to see unless you know which color it already had. lets change the mark to be a border change for the item instead. black border would be good.
+- Extract selected sequence as hex to clipboard
+- Extract file as hex to .txt file.
+- Import file as hex text. (remove all whitespace and parse as hex).
+- Set size limit? as it keeps crashing on < 3mb files.
+- Open files already parsed by the app earlier. This would require saving the parsed structure to a file (e.g., JSON) and implementing a loading mechanism to reconstruct the parser state from that file. This allows users to save their work and resume later without having to re-parse the original file.
 
 ## Future Parser Enhancements
 

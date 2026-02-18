@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 
 # Third-Party Libraries
-from tkinter import Tk, Text, N, S, E, W, Frame
+from tkinter import Tk, Text, N, S, E, W, Frame, Canvas
 from tkinter import filedialog, Button, Scrollbar, Label
 from tkinter import SEL, SEL_LAST, SEL_FIRST, END
 from tkinter import TclError, Entry, Listbox, ttk
@@ -303,6 +303,426 @@ def setup_modern_style():
     return style
 
 
+# ============================================================================
+# Custom Rounded Widgets for Modern UI
+# ============================================================================
+
+class RoundedButton(Canvas):
+    """A modern button with rounded corners using Canvas drawing."""
+    
+    def __init__(self, parent, text="", command=None, radius=10,
+                 bg_color=None, fg_color=None, hover_color=None,
+                 font=('Segoe UI', 10), width=None, height=38,
+                 style="primary", state="normal", **kwargs):
+        """
+        Create a rounded button.
+        
+        :param parent: Parent widget
+        :param text: Button text
+        :param command: Callback function
+        :param radius: Corner radius in pixels
+        :param bg_color: Background color (auto from style if None)
+        :param fg_color: Text color (auto from style if None) 
+        :param hover_color: Hover background color (auto from style if None)
+        :param font: Font tuple
+        :param width: Button width (None = auto from parent)
+        :param height: Button height
+        :param style: "primary", "secondary", "danger", or "small"
+        """
+        # Resolve colors from style presets
+        styles = {
+            "primary": {
+                "bg": ModernTheme.BTN_PRIMARY,
+                "fg": ModernTheme.BTN_TEXT,
+                "hover": ModernTheme.BTN_PRIMARY_HOVER,
+                "disabled_bg": ModernTheme.BG_SECONDARY,
+                "disabled_fg": ModernTheme.TEXT_LIGHT,
+            },
+            "secondary": {
+                "bg": ModernTheme.BG_SECONDARY,
+                "fg": ModernTheme.TEXT_PRIMARY,
+                "hover": ModernTheme.BORDER,
+                "disabled_bg": ModernTheme.BG_SECONDARY,
+                "disabled_fg": ModernTheme.TEXT_LIGHT,
+            },
+            "danger": {
+                "bg": "#DC6B6B",
+                "fg": ModernTheme.BTN_TEXT,
+                "hover": "#C45555",
+                "disabled_bg": ModernTheme.BG_SECONDARY,
+                "disabled_fg": ModernTheme.TEXT_LIGHT,
+            },
+            "small": {
+                "bg": ModernTheme.BG_SECONDARY,
+                "fg": ModernTheme.TEXT_PRIMARY,
+                "hover": ModernTheme.BORDER,
+                "disabled_bg": ModernTheme.BG_SECONDARY,
+                "disabled_fg": ModernTheme.TEXT_LIGHT,
+            },
+        }
+        
+        preset = styles.get(style, styles["primary"])
+        self._bg_color = bg_color or preset["bg"]
+        self._fg_color = fg_color or preset["fg"]
+        self._hover_color = hover_color or preset["hover"]
+        self._disabled_bg = preset["disabled_bg"]
+        self._disabled_fg = preset["disabled_fg"]
+        self._current_bg = self._bg_color
+        
+        self._text = text
+        self._command = command
+        self._radius = radius
+        self._font = font
+        self._state = state
+        self._style = style
+        self._btn_height = height
+        
+        # Determine parent background color
+        parent_bg = ModernTheme.BG_PRIMARY
+        try:
+            parent_bg = parent.cget('bg')
+        except Exception:
+            pass
+        
+        # Use width=0 by default so the canvas doesn't request excessive space
+        # Let the grid/pack geometry manager control actual width via sticky=E+W
+        if 'width' not in kwargs:
+            kwargs['width'] = 0
+        
+        super().__init__(
+            parent,
+            height=height,
+            bg=parent_bg,
+            highlightthickness=0,
+            borderwidth=0,
+            **kwargs
+        )
+        
+        # Draw initial state
+        self.bind('<Configure>', self._on_resize)
+        self.bind('<Enter>', self._on_enter)
+        self.bind('<Leave>', self._on_leave)
+        self.bind('<ButtonPress-1>', self._on_press)
+        self.bind('<ButtonRelease-1>', self._on_release)
+        
+        if self._state == "disabled":
+            self._current_bg = self._disabled_bg
+    
+    def _create_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
+        """Draw a rounded rectangle on the canvas."""
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1, x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2, x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2, x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1, x1 + radius, y1,
+        ]
+        return self.create_polygon(points, smooth=True, **kwargs)
+    
+    def _redraw(self):
+        """Redraw the button."""
+        self.delete("all")
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        
+        # Draw rounded rectangle background
+        fill = self._current_bg
+        if self._state == "disabled":
+            fill = self._disabled_bg
+        
+        # Optional subtle border for secondary buttons
+        outline_color = ""
+        outline_width = 0
+        if self._style in ("secondary", "small"):
+            outline_color = ModernTheme.BORDER
+            outline_width = 1
+        
+        self._create_rounded_rect(
+            1, 1, w - 1, h - 1,
+            self._radius,
+            fill=fill,
+            outline=outline_color,
+            width=outline_width
+        )
+        
+        # Draw text
+        text_color = self._fg_color if self._state != "disabled" else self._disabled_fg
+        self.create_text(
+            w / 2, h / 2,
+            text=self._text,
+            fill=text_color,
+            font=self._font
+        )
+    
+    def _on_resize(self, event):
+        self._redraw()
+    
+    def _on_enter(self, event):
+        if self._state != "disabled":
+            self._current_bg = self._hover_color
+            self._redraw()
+            self.config(cursor="hand2")
+    
+    def _on_leave(self, event):
+        if self._state != "disabled":
+            self._current_bg = self._bg_color
+            self._redraw()
+            self.config(cursor="")
+    
+    def _on_press(self, event):
+        if self._state != "disabled":
+            # Darken slightly on press
+            self._current_bg = self._hover_color
+            self._redraw()
+    
+    def _on_release(self, event):
+        if self._state != "disabled" and self._command:
+            # Check if mouse is still over button
+            x, y = event.x, event.y
+            if 0 <= x <= self.winfo_width() and 0 <= y <= self.winfo_height():
+                self._command()
+        if self._state != "disabled":
+            self._current_bg = self._bg_color
+            self._redraw()
+    
+    def configure_state(self, state):
+        """Update button state ('normal' or 'disabled')."""
+        self._state = state
+        if state == "disabled":
+            self._current_bg = self._disabled_bg
+            self.config(cursor="")
+        else:
+            self._current_bg = self._bg_color
+        self._redraw()
+    
+    def configure_text(self, text):
+        """Update button text."""
+        self._text = text
+        self._redraw()
+    
+    # Compatibility aliases for ttk.Button interface
+    def config(self, **kwargs):
+        if 'state' in kwargs:
+            self.configure_state(str(kwargs.pop('state')))
+        if 'text' in kwargs:
+            self.configure_text(kwargs.pop('text'))
+        if 'command' in kwargs:
+            self._command = kwargs.pop('command')
+        if kwargs:
+            super().config(**kwargs)
+    
+    def configure(self, **kwargs):
+        self.config(**kwargs)
+    
+    def cget(self, key):
+        if key == 'state':
+            return self._state
+        if key == 'text':
+            return self._text
+        return super().cget(key)
+
+
+class RoundedEntry(Frame):
+    """A text entry with rounded border styling."""
+    
+    def __init__(self, parent, textvariable=None, font=('Segoe UI', 10),
+                 radius=10, placeholder="", **kwargs):
+        parent_bg = ModernTheme.BG_PRIMARY
+        try:
+            parent_bg = parent.cget('bg')
+        except Exception:
+            pass
+        
+        super().__init__(parent, bg=parent_bg, **kwargs)
+        
+        self._radius = radius
+        self._placeholder = placeholder
+        self._has_focus = False
+        
+        # Canvas for the rounded border
+        self._canvas = Canvas(
+            self, bg=parent_bg,
+            highlightthickness=0, borderwidth=0,
+            height=38, width=0
+        )
+        self._canvas.pack(fill=X, expand=True)
+        
+        # The actual entry widget (placed inside canvas)
+        self._entry = Entry(
+            self,
+            textvariable=textvariable,
+            font=font,
+            bg=ModernTheme.BG_SECONDARY,
+            fg=ModernTheme.TEXT_PRIMARY,
+            insertbackground=ModernTheme.TEXT_PRIMARY,
+            relief='flat',
+            borderwidth=0
+        )
+        self._entry_window = None
+        
+        self._canvas.bind('<Configure>', self._on_resize)
+        self._entry.bind('<FocusIn>', self._on_focus_in)
+        self._entry.bind('<FocusOut>', self._on_focus_out)
+    
+    def _create_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1, x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2, x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2, x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1, x1 + radius, y1,
+        ]
+        return self._canvas.create_polygon(points, smooth=True, **kwargs)
+    
+    def _redraw(self):
+        self._canvas.delete("all")
+        w = self._canvas.winfo_width()
+        h = self._canvas.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        
+        border_color = ModernTheme.BORDER_FOCUS if self._has_focus else ModernTheme.BORDER
+        
+        # Rounded background
+        self._create_rounded_rect(
+            1, 1, w - 1, h - 1,
+            self._radius,
+            fill=ModernTheme.BG_SECONDARY,
+            outline=border_color,
+            width=1.5 if self._has_focus else 1
+        )
+        
+        # Place entry widget inside the rounded rect
+        pad = self._radius
+        if self._entry_window:
+            self._canvas.delete(self._entry_window)
+        self._entry_window = self._canvas.create_window(
+            pad, h / 2,
+            window=self._entry,
+            anchor='w',
+            width=w - 2 * pad,
+            height=h - 12
+        )
+    
+    def _on_resize(self, event):
+        self._redraw()
+    
+    def _on_focus_in(self, event):
+        self._has_focus = True
+        self._redraw()
+    
+    def _on_focus_out(self, event):
+        self._has_focus = False
+        self._redraw()
+    
+    # Delegate common Entry methods
+    def get(self):
+        return self._entry.get()
+    
+    def delete(self, first, last=None):
+        return self._entry.delete(first, last)
+    
+    def insert(self, index, string):
+        return self._entry.insert(index, string)
+    
+    def bind(self, sequence, func=None, add=None):
+        """Bind events to the inner entry widget for key/focus, frame for others."""
+        if sequence in ('<FocusIn>', '<FocusOut>', '<Key>', '<Return>', '<KeyRelease>'):
+            return self._entry.bind(sequence, func, add)
+        return super().bind(sequence, func, add)
+    
+    def focus_set(self):
+        return self._entry.focus_set()
+    
+    def icursor(self, index):
+        return self._entry.icursor(index)
+    
+    def select_range(self, start, end):
+        return self._entry.select_range(start, end)
+
+
+class RoundedPanel(Frame):
+    """A container frame with rounded corners and optional border."""
+    
+    def __init__(self, parent, radius=12, bg_color=None,
+                 border_color=None, border_width=1, pad=12, **kwargs):
+        parent_bg = ModernTheme.BG_PRIMARY
+        try:
+            parent_bg = parent.cget('bg')
+        except Exception:
+            pass
+        
+        super().__init__(parent, bg=parent_bg, **kwargs)
+        
+        self._radius = radius
+        self._bg_color = bg_color or ModernTheme.BG_SECONDARY
+        self._border_color = border_color or ModernTheme.BORDER
+        self._border_width = border_width
+        self._pad = pad
+        
+        self._canvas = Canvas(
+            self, bg=parent_bg,
+            highlightthickness=0, borderwidth=0
+        )
+        self._canvas.pack(fill=BOTH, expand=True)
+        
+        # Inner frame where child widgets go
+        self.inner = Frame(self._canvas, bg=self._bg_color)
+        self._inner_window = None
+        
+        self._canvas.bind('<Configure>', self._on_resize)
+    
+    def _create_rounded_rect(self, x1, y1, x2, y2, radius, **kwargs):
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1, x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2, x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2, x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1, x1 + radius, y1,
+        ]
+        return self._canvas.create_polygon(points, smooth=True, **kwargs)
+    
+    def _on_resize(self, event):
+        self._canvas.delete("all")
+        w = event.width
+        h = event.height
+        if w <= 1 or h <= 1:
+            return
+        
+        # Draw rounded background
+        self._create_rounded_rect(
+            1, 1, w - 1, h - 1,
+            self._radius,
+            fill=self._bg_color,
+            outline=self._border_color,
+            width=self._border_width
+        )
+        
+        # Place inner frame
+        pad = self._pad
+        if self._inner_window:
+            self._canvas.delete(self._inner_window)
+        self._inner_window = self._canvas.create_window(
+            pad, pad,
+            window=self.inner,
+            anchor='nw',
+            width=w - 2 * pad,
+            height=h - 2 * pad
+        )
 
 
 class TextWidget:
@@ -583,7 +1003,7 @@ class Main:
         master.grid_rowconfigure(2, weight=0)  # Status bar row
 
         master.grid_columnconfigure(0, weight=1)  # Content area (hex/ASCII fixed, info panel expands)
-        master.grid_columnconfigure(1, weight=1)  # Sidebar (expands)
+        master.grid_columnconfigure(1, weight=1)  # Sidebar
         
         # ========== HEADER SECTION ==========
         header_frame = Frame(master, bg=ModernTheme.BG_PRIMARY)
@@ -660,11 +1080,11 @@ class Main:
         self.offset_format_combo.bind("<<ComboboxSelected>>", self._on_offset_format_changed)
         
         self.search_var = StringVar()
-        self.search_entry = ttk.Entry(
+        self.search_entry = RoundedEntry(
             search_frame,
             textvariable=self.search_var,
-            style="Modern.TEntry",
-            font=('Segoe UI', 10)
+            font=('Segoe UI', 10),
+            radius=8
         )
         self.search_entry.grid(row=1, column=0, sticky=E+W, padx=(0, 5))
         self.search_entry.insert(0, "Search fields...")
@@ -674,21 +1094,25 @@ class Main:
         search_buttons = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
         search_buttons.grid(row=1, column=1, sticky=E)
         
-        self.search_button = ttk.Button(
+        self.search_button = RoundedButton(
             search_buttons,
             text="🔍",
             command=self.search_sequence,
-            style="Secondary.TButton",
-            width=3
+            style="small",
+            radius=8,
+            width=38,
+            height=38
         )
         self.search_button.pack(side=LEFT, padx=2)
         
-        self.clear_button = ttk.Button(
+        self.clear_button = RoundedButton(
             search_buttons,
             text="✕",
             command=self.clear_search,
-            style="Secondary.TButton",
-            width=3
+            style="small",
+            radius=8,
+            width=38,
+            height=38
         )
         self.clear_button.pack(side=LEFT, padx=2)
         
@@ -741,61 +1165,68 @@ class Main:
         actions_frame.grid_columnconfigure(1, weight=1)
         
         # Open File and Stop buttons (primary actions)
-        self.open_button = ttk.Button(
+        self.open_button = RoundedButton(
             actions_frame,
             text="📂 Open File",
             command=self.open_file,
-            style="Modern.TButton"
+            style="primary",
+            radius=10
         )
         self.open_button.grid(row=0, column=0, sticky=E+W, padx=(0, 5), pady=3)
         
         self.stop_parsing = False
-        self.stop_button = ttk.Button(
+        self.stop_button = RoundedButton(
             actions_frame,
             text="⏹ Stop",
             command=self.stop,
             state="disabled",
-            style="Stop.TButton"
+            style="danger",
+            radius=10
         )
         self.stop_button.grid(row=0, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
-        self.bookmark_button = ttk.Button(
+        self.bookmark_button = RoundedButton(
             actions_frame,
             text="📌 Add Bookmark",
             command=self.add_bookmark,
-            style="Secondary.TButton"
+            style="secondary",
+            radius=10
         )
         self.bookmark_button.grid(row=1, column=0, sticky=E+W, padx=(0, 5), pady=3)
         
-        self.show_bookmarks_button = ttk.Button(
+        self.show_bookmarks_button = RoundedButton(
             actions_frame,
             text="📚 Bookmarks",
             command=self.show_bookmarks,
-            style="Secondary.TButton"
+            style="secondary",
+            radius=10
         )
         self.show_bookmarks_button.grid(row=1, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
-        self.export_button = ttk.Button(
+        self.export_button = RoundedButton(
             actions_frame,
             text="📄 Export CSV",
             command=self.export_to_csv,
-            style="Secondary.TButton"
+            style="secondary",
+            radius=10
         )
         self.export_button.grid(row=2, column=0, sticky=E+W, padx=(0, 5), pady=3)
         
-        self.file_info_button = ttk.Button(
+        self.file_info_button = RoundedButton(
             actions_frame,
             text="ℹ️ File Info",
             command=self.show_file_info,
-            style="Secondary.TButton"
+            style="secondary",
+            radius=10
         )
         self.file_info_button.grid(row=2, column=1, sticky=E+W, padx=(5, 0), pady=3)
         
-        self.exit_button = ttk.Button(
+        self.exit_button = RoundedButton(
             actions_frame,
             text="Exit",
             command=self.exit_app,
-            style="Secondary.TButton"
+            style="secondary",
+            radius=10
         )
         self.exit_button.grid(row=3, column=0, columnspan=2, sticky=E+W, pady=(10, 0))
         
@@ -1161,13 +1592,15 @@ class Main:
             "<<TreeviewSelect>>", self.bookmark_item_selected)
         
         # Delete button
-        delete_btn = ttk.Button(
+        delete_btn = RoundedButton(
             self.bookmark_window,
             text="Delete Selected",
             command=self.delete_bookmark,
-            style="Secondary.TButton"
+            style="secondary",
+            radius=10,
+            height=36
         )
-        delete_btn.pack(pady=(0, 15))
+        delete_btn.pack(fill=X, padx=15, pady=(0, 15))
     
     def delete_bookmark(self):
         """Delete the selected bookmark."""
@@ -1299,12 +1732,14 @@ class Main:
         )
         title.pack(side=LEFT)
         
-        close_btn = ttk.Button(
+        close_btn = RoundedButton(
             header_frame,
             text="✕",
             command=self.close_file_info_modal,
-            style="Secondary.TButton",
-            width=3
+            style="small",
+            radius=8,
+            width=36,
+            height=32
         )
         close_btn.pack(side=RIGHT)
         
