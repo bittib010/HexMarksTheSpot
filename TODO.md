@@ -1,7 +1,9 @@
-- SQLITE should be updated. Pages are as an example pretty underparsed: we are currently not parsing the rows of data, the sqlite statements etc. Making these available as single sequences would be really beneficial. If we have implemented the logic to set a structure as a child of another, we should have a current page as parent for all those sub structures which in turn will highlight the belonging structures of that page as similar gradient of the same color. This would make it much easier to visually identify which structures belong together and navigate through the parsed data. If this is not implemented, we should strive for at least mentioning somehow that this is a structure within a page. https://www.sqlite.org/fileformat.html. The URL could also potentially show fields not considered yet. If any found, add it to this TODO list so we can keep track of progress and future enhancements.
-- Add support for WAL files so that it makes those parsings easier. This would involve implementing the logic to read and parse the Write-Ahead Log (WAL) file format used by SQLite, which contains changes that have not yet been committed to the main database file. By parsing WAL files, users can see uncommitted changes and recover data that may not be present in the main database file, providing a more comprehensive view of the database state.
-- We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
-- Remember to update Copilot instructions if necessary on new implementations. 
+- Add a template for: 
+  - WAL
+  - 
+  - We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
+
+PS! Remember to update Copilot instructions if necessary on new implementations. 
 
 ## Future Parser Enhancements
 
