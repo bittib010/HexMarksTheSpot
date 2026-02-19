@@ -478,6 +478,7 @@
                                     "name": "EntryModifiedDate",
                                     "size": 4,
                                     "type": "bytes",
+                                    "output_format": "datetime_dos",
                                     "description": "**Last Modified Date (DOS format)**\n\nA 4-byte DOS date/time stamp capturing when the file was last modified.\n\n**DOS Timestamp Encoding (FAT format):**\nThis is a legacy format from the DOS/FAT era, packed into 4 bytes (2 bytes for date + 2 bytes for time):\n\n*Date word (bits 0-15):*\n- Bits 0-4: Day of month (1-31)\n- Bits 5-8: Month (1-12)\n- Bits 9-15: Year offset from 1980 (0-127, so 1980-2107)\n\n*Time word (bits 16-31):*\n- Bits 16-20: Seconds divided by 2 (0-29, so 0-58 seconds in 2-second resolution)\n- Bits 21-26: Minutes (0-59)\n- Bits 27-31: Hours (0-23)\n\n**Important limitations:**\n- Only 2-second precision (seconds are divided by 2)\n- Year range limited to 1980-2107\n- No timezone information - assumed local time\n\n*Forensic Value:* This timestamp is independent of the FILETIME timestamps in the header. It was captured from the Shell item data, which may come from a different point in time than the header timestamps. Comparing these can reveal timeline inconsistencies.",
                                     "forensic_value": "timestamp"
                                 },
@@ -547,6 +548,7 @@
                     "name": "LinkInfoHeaderSize",
                     "size": 4,
                     "type": "uint",
+                    "output_format": "size_bytes",
                     "description": "**LinkInfo Header Size**\n\nSize of the fixed-length header portion of the LinkInfo structure.\n\n**Version detection via header size:**\n- `0x0000001C` (28 bytes): **Original format** - Contains the basic offset fields only. No Unicode path offsets are present.\n- `0x00000024` (36 bytes) or greater: **Extended format** - Includes additional Unicode offset fields (`LocalBasePathOffsetUnicode` and `CommonPathSuffixOffsetUnicode`).\n\n*Forensic Value:* The header size reveals which version of the structure was written. Extended headers (36+ bytes) are found in newer Windows versions and provide Unicode path support. Unexpected sizes may indicate non-standard LNK creation tools."
                 },
                 {

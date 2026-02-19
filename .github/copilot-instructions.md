@@ -166,6 +166,7 @@ Parser configs live in `Artefacts/configs/*.json`. Schema: `parser-config.schema
 | `datetime_filetime` | `2023-03-15 14:30:00 UTC` | FILETIME bytes |
 | `datetime_unix` | `2019-01-13 08:15:32 UTC` | Unix timestamp bytes |
 | `datetime_unix_ms` | `2023-03-15 14:30:00.123 UTC` | Unix ms timestamp |
+| `datetime_dos` | `2024-03-15 14:30:00` | DOS/FAT 4-byte timestamp |
 | `ip4` | `192.168.1.1` | IPv4 address |
 | `ip6` | `2001:0db8:...` | IPv6 address |
 | `size_bytes` | `4.0 KB` | Human-readable file sizes |

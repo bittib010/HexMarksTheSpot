@@ -525,6 +525,8 @@ class ConfigBasedParser(FileParser):
             return self.unix_time_to_datetime(data)
         elif output_format == "datetime_unix_ms":
             return self._format_unix_ms(data, byteorder)
+        elif output_format == "datetime_dos":
+            return self._format_dos_datetime(data, byteorder)
         elif output_format == "ip4":
             return self._format_ipv4(data)
         elif output_format == "ip6":
@@ -583,6 +585,43 @@ class ConfigBasedParser(FileParser):
         except Exception as e:
             return f"Invalid timestamp: {e}"
     
+    def _format_dos_datetime(self, data: bytes, byteorder: str) -> str:
+        """Format 4 bytes as a DOS date/time stamp (FAT format).
+        
+        DOS timestamps pack date and time into 4 bytes (2 for date + 2 for time):
+        - Date word: bits 0-4 = day, bits 5-8 = month, bits 9-15 = year (offset from 1980)
+        - Time word: bits 0-4 = seconds/2, bits 5-10 = minutes, bits 11-15 = hours
+        
+        In little-endian format: time_word comes first (bytes 0-1), date_word second (bytes 2-3).
+        """
+        try:
+            if len(data) != 4:
+                return f"Invalid DOS datetime ({len(data)} bytes, need 4)"
+            # DOS timestamps store time word first, then date word (in little-endian files)
+            time_word = int.from_bytes(data[0:2], byteorder=byteorder)
+            date_word = int.from_bytes(data[2:4], byteorder=byteorder)
+            
+            if date_word == 0 and time_word == 0:
+                return "Not set (0)"
+            
+            # Decode date: day (bits 0-4), month (bits 5-8), year offset (bits 9-15)
+            day = date_word & 0x1F
+            month = (date_word >> 5) & 0x0F
+            year = ((date_word >> 9) & 0x7F) + 1980
+            
+            # Decode time: seconds/2 (bits 0-4), minutes (bits 5-10), hours (bits 11-15)
+            seconds = (time_word & 0x1F) * 2
+            minutes = (time_word >> 5) & 0x3F
+            hours = (time_word >> 11) & 0x1F
+            
+            # Validate ranges
+            if not (1 <= month <= 12 and 1 <= day <= 31 and hours <= 23 and minutes <= 59 and seconds <= 59):
+                return f"Invalid DOS date/time (raw: 0x{data.hex().upper()})"
+            
+            return f"{year:04d}-{month:02d}-{day:02d} {hours:02d}:{minutes:02d}:{seconds:02d}"
+        except Exception as e:
+            return f"Invalid DOS datetime: {e}"
+
     def _format_ipv4(self, data: bytes) -> str:
         """Format 4 bytes as a dotted-decimal IPv4 address."""
         if len(data) != 4:

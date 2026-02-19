@@ -244,7 +244,7 @@
                 },
                 "output_format": {
                     "type": "string",
-                    "description": "Controls how the parsed value is displayed in the Value column and Description pane. Overrides the default display derived from the field type. Available formats:\n- 'hex': Hexadecimal (0xFF)\n- 'decimal': Decimal integer\n- 'ascii': ASCII string representation\n- 'base64': Base64-encoded\n- 'binary': Binary bit string (0b...)\n- 'datetime_filetime': Windows FILETIME (100ns intervals since 1601-01-01)\n- 'datetime_unix': Unix epoch (seconds since 1970-01-01)\n- 'datetime_unix_ms': Unix epoch milliseconds\n- 'ip4': IPv4 address (4 bytes)\n- 'ip6': IPv6 address (16 bytes)\n- 'size_bytes': Human-readable file size (KB/MB/GB)\n- 'bool': Boolean (0=False, non-zero=True)",
+                    "description": "Controls how the parsed value is displayed in the Value column and Description pane. Overrides the default display derived from the field type. Available formats:\n- 'hex': Hexadecimal (0xFF)\n- 'decimal': Decimal integer\n- 'ascii': ASCII string representation\n- 'base64': Base64-encoded\n- 'binary': Binary bit string (0b...)\n- 'datetime_filetime': Windows FILETIME (100ns intervals since 1601-01-01)\n- 'datetime_unix': Unix epoch (seconds since 1970-01-01)\n- 'datetime_unix_ms': Unix epoch milliseconds\n- 'datetime_dos': DOS/FAT date-time (4 bytes: 2-byte time + 2-byte date)\n- 'ip4': IPv4 address (4 bytes)\n- 'ip6': IPv6 address (16 bytes)\n- 'size_bytes': Human-readable file size (KB/MB/GB)\n- 'bool': Boolean (0=False, non-zero=True)",
                     "enum": [
                         "hex",
                         "decimal",
@@ -254,6 +254,7 @@
                         "datetime_filetime",
                         "datetime_unix",
                         "datetime_unix_ms",
+                        "datetime_dos",
                         "ip4",
                         "ip6",
                         "size_bytes",
