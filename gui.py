@@ -1774,7 +1774,7 @@ class Main:
             
         self.bookmark_window = Toplevel(self.master)
         self.bookmark_window.title("Bookmarks")
-        self.bookmark_window.geometry("550x350")
+        self.bookmark_window.geometry("750x500")
         self.bookmark_window.configure(bg=ModernTheme.BG_PRIMARY)
         
         # Header
@@ -1788,20 +1788,25 @@ class Main:
         header.pack(pady=(15, 10))
         
         self.bookmark_treeview = ttk.Treeview(
-            self.bookmark_window, columns=('Name', 'Offset', 'Comment'),
+            self.bookmark_window, columns=('Name', 'Offset', 'Value', 'Comment'),
             style="Modern.Treeview", show="headings")
         self.bookmark_treeview.heading('Name', text='Name')
         self.bookmark_treeview.heading('Offset', text='Offset')
+        self.bookmark_treeview.heading('Value', text='Value')
         self.bookmark_treeview.heading('Comment', text='Comment')
-        self.bookmark_treeview.column('Name', width=200)
-        self.bookmark_treeview.column('Offset', width=90)
-        self.bookmark_treeview.column('Comment', width=220)
+        self.bookmark_treeview.column('Name', width=180)
+        self.bookmark_treeview.column('Offset', width=80)
+        self.bookmark_treeview.column('Value', width=180)
+        self.bookmark_treeview.column('Comment', width=250)
         self.bookmark_treeview.pack(fill=BOTH, expand=True, padx=15, pady=(0, 10))
         
         # Populate with existing bookmarks
         for bm in self.bookmarks:
+            val = bm.get('value', '')
+            truncated = self._truncate_value(val) if val else ''
             self.bookmark_treeview.insert('', 'end', values=(
-                bm['name'], self._format_offset(bm['offset']), bm.get('comment', '')))
+                bm['name'], self._format_offset(bm['offset']),
+                truncated, bm.get('comment', '')))
         
         # Bind the selection event
         self.bookmark_treeview.bind(
@@ -1875,6 +1880,18 @@ class Main:
         if len(values) >= 2:
             raw_offset = self._parse_offset(values[0])
             name = values[1]
+            # Capture the full parsed value (not truncated)
+            full_value = ''
+            tags = item.get('tags', ())
+            tag = None
+            if tags:
+                tag = tags[0] if isinstance(tags, (list, tuple)) and len(tags) > 0 else str(tags)
+            if tag and tag in self.tag_to_child:
+                node = self.tag_to_child[tag]
+                full_value = str(node.table_value) if node.table_value is not None else ''
+            elif len(values) >= 3:
+                full_value = str(values[2])
+            
             display_offset = self._format_offset(raw_offset)
             
             # Check if already bookmarked
@@ -1883,7 +1900,8 @@ class Main:
                 for bm in self.bookmarks
             )
             if not already:
-                bookmark = {'name': name, 'offset': raw_offset, 'comment': ''}
+                bookmark = {'name': name, 'offset': raw_offset,
+                            'value': full_value, 'comment': ''}
                 self.bookmarks.append(bookmark)
                 self.update_status(f"Bookmarked: {name} at offset {display_offset}")
                 self._save_bookmarks_to_cache()
@@ -1892,8 +1910,9 @@ class Main:
                 if self.bookmark_treeview is not None and self.bookmark_window is not None:
                     try:
                         if self.bookmark_window.winfo_exists():
+                            truncated = self._truncate_value(full_value) if full_value else ''
                             self.bookmark_treeview.insert(
-                                '', 'end', values=(name, display_offset, ''))
+                                '', 'end', values=(name, display_offset, truncated, ''))
                     except:
                         pass
             else:
@@ -2468,27 +2487,29 @@ class Main:
             self.bookmark_treeview.delete(item)
         # Repopulate
         for bm in self.bookmarks:
+            val = bm.get('value', '')
+            truncated = self._truncate_value(val) if val else ''
             self.bookmark_treeview.insert('', 'end', values=(
                 bm['name'], self._format_offset(bm['offset']),
-                bm.get('comment', '')))
+                truncated, bm.get('comment', '')))
 
     def _edit_bookmark_comment(self, event):
         """Handle double-click on a bookmark row to edit its comment."""
         if self.bookmark_treeview is None:
             return
-        # Only act on the Comment column
+        # Only act on the Comment column (#4 now)
         region = self.bookmark_treeview.identify_region(event.x, event.y)
         if region != 'cell':
             return
         col = self.bookmark_treeview.identify_column(event.x)
-        if col != '#3':  # Comment is the 3rd column
+        if col != '#4':  # Comment is the 4th column
             return
         selected = self.bookmark_treeview.identify_row(event.y)
         if not selected:
             return
 
         item = self.bookmark_treeview.item(selected)
-        current_comment = item['values'][2] if len(item['values']) > 2 else ''
+        current_comment = item['values'][3] if len(item['values']) > 3 else ''
         name = item['values'][0]
         raw_offset = self._parse_offset(item['values'][1])
 
@@ -2513,21 +2534,26 @@ class Main:
         self._save_bookmarks_to_cache()
 
     def _export_bookmarks(self):
-        """Export bookmarks to JSON or CSV via a save dialog."""
+        """Export bookmarks to JSON, CSV, or Markdown via a save dialog."""
         if not self.bookmarks:
             self.update_status("No bookmarks to export")
             return
         from tkinter.filedialog import asksaveasfilename
         filepath = asksaveasfilename(
             title="Export Bookmarks",
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("CSV files", "*.csv")],
+            defaultextension=".md",
+            filetypes=[
+                ("Markdown report", "*.md"),
+                ("JSON files", "*.json"),
+                ("CSV files", "*.csv"),
+            ],
             parent=self.bookmark_window or self.master
         )
         if not filepath:
             return
         try:
-            cache_manager.export_bookmarks_to_file(self.bookmarks, filepath)
+            source_name = os.path.basename(self.current_file) if hasattr(self, 'current_file') and self.current_file else ''
+            cache_manager.export_bookmarks_to_file(self.bookmarks, filepath, source_name)
             self.update_status(f"Exported {len(self.bookmarks)} bookmarks to {filepath}")
         except Exception as e:
             self.update_status(f"Export failed: {e}")
