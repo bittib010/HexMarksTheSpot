@@ -15,7 +15,7 @@ from tkinter import Tk, Text, N, S, E, W, Frame, Canvas
 from tkinter import filedialog, Button, Scrollbar, Label
 from tkinter import SEL, SEL_LAST, SEL_FIRST, END
 from tkinter import TclError, Entry, Listbox, ttk
-from tkinter import StringVar, DoubleVar, NO, Toplevel, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM
+from tkinter import StringVar, DoubleVar, IntVar, NO, Toplevel, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM, Spinbox
 from tkinter import Menu as tk_Menu
 from tkhtmlview import HTMLText
 
@@ -1882,6 +1882,7 @@ class Main:
             name = values[1]
             # Capture the full parsed value (not truncated)
             full_value = ''
+            is_raw_hex = False
             tags = item.get('tags', ())
             tag = None
             if tags:
@@ -1889,6 +1890,9 @@ class Main:
             if tag and tag in self.tag_to_child:
                 node = self.tag_to_child[tag]
                 full_value = str(node.table_value) if node.table_value is not None else ''
+                # Detect if value is just raw hex (unparsed bytes)
+                if node.data and full_value == node.data.hex():
+                    is_raw_hex = True
             elif len(values) >= 3:
                 full_value = str(values[2])
             
@@ -1901,7 +1905,8 @@ class Main:
             )
             if not already:
                 bookmark = {'name': name, 'offset': raw_offset,
-                            'value': full_value, 'comment': ''}
+                            'value': full_value, 'is_raw_hex': is_raw_hex,
+                            'comment': ''}
                 self.bookmarks.append(bookmark)
                 self.update_status(f"Bookmarked: {name} at offset {display_offset}")
                 self._save_bookmarks_to_cache()
@@ -2538,6 +2543,12 @@ class Main:
         if not self.bookmarks:
             self.update_status("No bookmarks to export")
             return
+
+        # Ask for hex value length limit before exporting
+        hex_limit = self._ask_hex_limit()
+        if hex_limit is None:
+            return  # User cancelled
+
         from tkinter.filedialog import asksaveasfilename
         filepath = asksaveasfilename(
             title="Export Bookmarks",
@@ -2553,10 +2564,75 @@ class Main:
             return
         try:
             source_name = os.path.basename(self.current_file) if hasattr(self, 'current_file') and self.current_file else ''
-            cache_manager.export_bookmarks_to_file(self.bookmarks, filepath, source_name)
+            cache_manager.export_bookmarks_to_file(
+                self.bookmarks, filepath, source_name, hex_limit=hex_limit)
             self.update_status(f"Exported {len(self.bookmarks)} bookmarks to {filepath}")
         except Exception as e:
             self.update_status(f"Export failed: {e}")
+
+    def _ask_hex_limit(self):
+        """Show a small dialog to configure the raw hex byte limit for export.
+        
+        Returns the limit as an integer, or None if cancelled.
+        Only applies to raw hex (unparsed) values; parsed values are always shown in full.
+        """
+        # Check if any bookmarks have raw hex values
+        has_raw = any(bm.get('is_raw_hex', False) for bm in self.bookmarks)
+        if not has_raw:
+            return 128  # Default, won't matter since no raw hex
+
+        dialog = Toplevel(self.bookmark_window or self.master)
+        dialog.title("Export Settings")
+        dialog.geometry("340x150")
+        dialog.configure(bg=ModernTheme.BG_PRIMARY)
+        dialog.resizable(False, False)
+        dialog.transient(self.bookmark_window or self.master)
+        dialog.grab_set()
+
+        Label(
+            dialog, text="Max bytes for raw hex values:",
+            font=('Segoe UI', 10), bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_PRIMARY
+        ).pack(pady=(20, 5))
+
+        Label(
+            dialog, text="(Parsed values like timestamps, strings, integers\nare always shown in full)",
+            font=('Segoe UI', 8), bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY
+        ).pack(pady=(0, 8))
+
+        limit_var = IntVar(value=128)
+        spin = Spinbox(
+            dialog, from_=16, to=65536, textvariable=limit_var,
+            width=8, font=('Segoe UI', 10), justify='center'
+        )
+        spin.pack(pady=(0, 10))
+
+        result = [None]
+
+        def on_ok():
+            try:
+                result[0] = max(16, int(limit_var.get()))
+            except (ValueError, TclError):
+                result[0] = 128
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        btn_frame = Frame(dialog, bg=ModernTheme.BG_PRIMARY)
+        btn_frame.pack(pady=(0, 10))
+        RoundedButton(
+            btn_frame, text="OK", command=on_ok,
+            style="primary", radius=8, height=30, width=80
+        ).pack(side=LEFT, padx=5)
+        RoundedButton(
+            btn_frame, text="Cancel", command=on_cancel,
+            style="secondary", radius=8, height=30, width=80
+        ).pack(side=LEFT, padx=5)
+
+        dialog.wait_window()
+        return result[0]
 
     def count_nodes(self, node):
         """

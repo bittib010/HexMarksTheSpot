@@ -265,13 +265,15 @@ def load_bookmarks(file_hash: str) -> List[Dict[str, Any]]:
 
 
 def export_bookmarks_to_file(bookmarks: List[Dict[str, Any]], filepath: str,
-                              source_filename: str = "") -> bool:
+                              source_filename: str = "",
+                              hex_limit: int = 128) -> bool:
     """Export bookmarks to a standalone JSON, CSV, or Markdown file.
     
     Args:
         bookmarks: List of bookmark dicts
         filepath: Destination file path (.json, .csv, or .md)
         source_filename: Original filename for metadata
+        hex_limit: Max bytes of raw hex to include (parsed values always shown in full)
         
     Returns:
         True if exported successfully
@@ -294,7 +296,7 @@ def export_bookmarks_to_file(bookmarks: List[Dict[str, Any]], filepath: str,
                         bm.get("comment", ""),
                     ])
         elif ext == ".md":
-            _export_bookmarks_markdown(bookmarks, filepath, source_filename)
+            _export_bookmarks_markdown(bookmarks, filepath, source_filename, hex_limit)
         else:
             # Default to JSON
             export_data = {
@@ -314,8 +316,13 @@ def export_bookmarks_to_file(bookmarks: List[Dict[str, Any]], filepath: str,
 
 
 def _export_bookmarks_markdown(bookmarks: List[Dict[str, Any]], filepath: str,
-                                source_filename: str = "") -> None:
-    """Export bookmarks as a formatted Markdown report."""
+                                source_filename: str = "",
+                                hex_limit: int = 128) -> None:
+    """Export bookmarks as a formatted Markdown report.
+    
+    Args:
+        hex_limit: Max bytes of raw hex to display. Parsed values are always shown in full.
+    """
     lines: List[str] = []
     
     # Header
@@ -335,39 +342,51 @@ def _export_bookmarks_markdown(bookmarks: List[Dict[str, Any]], filepath: str,
     for i, bm in enumerate(bookmarks, 1):
         offset = bm.get("offset", 0)
         name = _md_escape(bm.get("name", ""))
-        value = bm.get("value", "")
-        # Truncate value for table (max 50 chars)
-        table_val = _md_escape(str(value)[:50] + ("..." if len(str(value)) > 50 else ""))
+        is_raw = bm.get("is_raw_hex", False)
+        value = str(bm.get("value", ""))
+        # For summary table: truncate to 50 chars regardless
+        table_val = _md_escape(value[:50] + ("..." if len(value) > 50 else ""))
+        if is_raw and table_val:
+            table_val = f"`{table_val}`"
         comment = _md_escape(bm.get("comment", ""))
         lines.append(f"| {i} | {name} | `0x{offset:X}` | {table_val} | {comment} |")
     lines.append("")
     
-    # Detailed sections for bookmarks that have comments or long values
-    has_details = any(
-        bm.get("comment") or len(str(bm.get("value", ""))) > 50
-        for bm in bookmarks
-    )
-    if has_details:
-        lines.append("## Details")
+    # Detailed sections — always show if there's a value to display
+    lines.append("## Details")
+    lines.append("")
+    for i, bm in enumerate(bookmarks, 1):
+        offset = bm.get("offset", 0)
+        name = bm.get("name", "")
+        comment = bm.get("comment", "")
+        is_raw = bm.get("is_raw_hex", False)
+        value = str(bm.get("value", ""))
+        
+        lines.append(f"### {i}. {name}")
         lines.append("")
-        for i, bm in enumerate(bookmarks, 1):
-            comment = bm.get("comment", "")
-            value = str(bm.get("value", ""))
-            if not comment and len(value) <= 50:
-                continue
-            offset = bm.get("offset", 0)
-            name = bm.get("name", "")
-            lines.append(f"### {i}. {name}")
-            lines.append("")
-            lines.append(f"- **Offset:** `0x{offset:X}` (decimal: {offset})")
-            if value:
-                lines.append(f"- **Value:**")
+        lines.append(f"- **Offset:** `0x{offset:X}` (decimal: {offset})")
+        
+        if value:
+            if is_raw:
+                # Raw hex: format nicely with spaces and apply byte limit
+                formatted = _format_hex_display(value, hex_limit)
+                total_bytes = len(value) // 2 if len(value) % 2 == 0 else (len(value) + 1) // 2
+                truncated = total_bytes > hex_limit
+                label = f"**Raw hex** ({total_bytes} bytes"
+                if truncated:
+                    label += f", showing first {hex_limit}"
+                label += "):"
+                lines.append(f"- {label}")
                 lines.append(f"  ```")
-                lines.append(f"  {value}")
+                lines.append(f"  {formatted}")
                 lines.append(f"  ```")
-            if comment:
-                lines.append(f"- **Comment:** {comment}")
-            lines.append("")
+            else:
+                # Parsed value: show in full
+                lines.append(f"- **Value:** `{value}`")
+        
+        if comment:
+            lines.append(f"- **Comment:** {comment}")
+        lines.append("")
     
     lines.append("---")
     lines.append("*Generated by HexMarksTheSpot*")
@@ -375,6 +394,39 @@ def _export_bookmarks_markdown(bookmarks: List[Dict[str, Any]], filepath: str,
     
     with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
+
+
+def _format_hex_display(hex_str: str, byte_limit: int = 128) -> str:
+    """Format a raw hex string for readable display.
+    
+    Inserts spaces between byte pairs and wraps lines at 16 bytes.
+    Truncates to byte_limit bytes if the hex string exceeds it.
+    
+    Args:
+        hex_str: Continuous hex string like 'deadbeef01'
+        byte_limit: Max number of bytes to display
+    
+    Returns:
+        Formatted string like 'DE AD BE EF  01 ...' with line wraps
+    """
+    # Truncate to byte_limit bytes (2 hex chars per byte)
+    char_limit = byte_limit * 2
+    truncated = len(hex_str) > char_limit
+    hex_str = hex_str[:char_limit]
+    
+    # Split into byte pairs and uppercase
+    pairs = [hex_str[i:i+2].upper() for i in range(0, len(hex_str), 2)]
+    
+    # Group into lines of 16 bytes
+    result_lines = []
+    for j in range(0, len(pairs), 16):
+        line = ' '.join(pairs[j:j+16])
+        result_lines.append(line)
+    
+    result = '\n  '.join(result_lines)
+    if truncated:
+        result += '\n  ...'
+    return result
 
 
 def _md_escape(text: str) -> str:
