@@ -7,6 +7,7 @@
     "magic_bytes": "255044462D",
     "magic_offset": 0,
     "endianness": "big",
+    "file_extensions": [".pdf"],
     "references": [
         "https://www.adobe.com/content/dam/acom/en/devnet/pdf/pdfs/PDF32000_2008.pdf",
         "https://pdfa.org/resource/iso-32000-2/",

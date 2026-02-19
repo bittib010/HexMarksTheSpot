@@ -7,6 +7,7 @@
     "magic_bytes": "4D546864",
     "magic_offset": 0,
     "endianness": "big",
+    "file_extensions": [".mid", ".midi"],
     "references": [
         "https://www.midi.org/specifications-old/item/the-midi-1-0-specification",
         "https://www.cs.cmu.edu/~music/cmsip/readings/Standard-MIDI-file-format-updated.pdf",

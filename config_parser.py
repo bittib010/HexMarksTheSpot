@@ -41,6 +41,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -163,6 +164,8 @@ class ConfigParserDefinition:
     references: List[str] = field(default_factory=list)  # Documentation URLs
     version: str = "1.0"
     author: str = ""
+    file_extensions: List[str] = field(default_factory=list)  # e.g. [".lnk", ".png"]
+    alternative_magic: List[Dict[str, Any]] = field(default_factory=list)  # [{bytes: "hex", offset: int}]
     
     @classmethod
     def from_json(cls, json_data: Dict) -> "ConfigParserDefinition":
@@ -177,6 +180,8 @@ class ConfigParserDefinition:
             references=json_data.get("references", []),
             version=json_data.get("version", "1.0"),
             author=json_data.get("author", ""),
+            file_extensions=json_data.get("file_extensions", []),
+            alternative_magic=json_data.get("alternative_magic", []),
         )
     
     @classmethod
@@ -236,6 +241,7 @@ class ConfigBasedParser(FileParser):
             
             @classmethod
             def recognizes(cls, file: BinaryIO) -> bool:
+                """Check primary magic bytes match."""
                 if cls._config.magic_bytes is None:
                     return False
                 
@@ -244,6 +250,33 @@ class ConfigBasedParser(FileParser):
                 header = file.read(len(magic_bytes))
                 file.seek(0)
                 return header == magic_bytes
+            
+            @classmethod
+            def recognizes_alternative(cls, file: BinaryIO) -> bool:
+                """Check alternative magic bytes (fallback identification)."""
+                for alt in cls._config.alternative_magic:
+                    alt_bytes_hex = alt.get("bytes")
+                    alt_offset = alt.get("offset", 0)
+                    if not alt_bytes_hex:
+                        continue
+                    try:
+                        magic = bytes.fromhex(alt_bytes_hex)
+                        file.seek(alt_offset)
+                        header = file.read(len(magic))
+                        file.seek(0)
+                        if header == magic:
+                            return True
+                    except Exception:
+                        file.seek(0)
+                return False
+            
+            @classmethod
+            def matches_extension(cls, filename: str) -> bool:
+                """Check if the filename extension matches this parser."""
+                if not cls._config.file_extensions:
+                    return False
+                ext = os.path.splitext(filename)[1].lower()
+                return ext in [e.lower() for e in cls._config.file_extensions]
         
         # Set a meaningful class name
         DynamicConfigParser.__name__ = f"{config.name}Parser"
@@ -782,7 +815,16 @@ class ConfigBasedParser(FileParser):
         # Create node - determine color based on category
         from common import ColorGenerator
         
-        if forensic_value:
+        # Deprecated fields: still parsed but visually muted with a notice
+        deprecated = field_dict.get("deprecated", False)
+        if deprecated:
+            deprecation_msg = deprecated if isinstance(deprecated, str) else "This field is deprecated."
+            description = f"**⚠ DEPRECATED:** {deprecation_msg}\n\n{description}"
+        
+        if deprecated:
+            # Deprecated fields get muted gray color
+            node_color = ColorGenerator.get_deprecated_color()
+        elif forensic_value:
             # Forensic takes highest precedence
             if isinstance(forensic_value, str):
                 node_color = ColorGenerator.get_forensic_color(forensic_value)
@@ -891,7 +933,15 @@ class ConfigBasedParser(FileParser):
         # Determine color
         from common import ColorGenerator
         
-        if forensic_value:
+        # Deprecated fields: still parsed but visually muted with a notice
+        deprecated = field_dict.get("deprecated", False)
+        if deprecated:
+            deprecation_msg = deprecated if isinstance(deprecated, str) else "This field is deprecated."
+            description = f"**⚠ DEPRECATED:** {deprecation_msg}\n\n{description}"
+        
+        if deprecated:
+            node_color = ColorGenerator.get_deprecated_color()
+        elif forensic_value:
             if isinstance(forensic_value, str):
                 node_color = ColorGenerator.get_forensic_color(forensic_value)
             else:
@@ -956,6 +1006,14 @@ class ConfigBasedParser(FileParser):
         repeat_step = field_dict.get("repeat_step")
         repeat_until = field_dict.get("repeat_until")
         use_gradient = field_dict.get("color_gradient", False)
+        
+        # Deprecated sections: still parsed but visually muted with a notice
+        deprecated = field_dict.get("deprecated", False)
+        if deprecated:
+            deprecation_msg = deprecated if isinstance(deprecated, str) else "This section is deprecated."
+            description = f"**⚠ DEPRECATED:** {deprecation_msg}\n\n{description}"
+            from common import ColorGenerator
+            color = ColorGenerator.get_deprecated_color()
         
         if not nested_fields:
             return None

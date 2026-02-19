@@ -7,6 +7,7 @@
     "magic_bytes": "4D5A",
     "magic_offset": 0,
     "endianness": "little",
+    "file_extensions": [".exe", ".dll", ".sys", ".scr", ".ocx"],
     "references": [
         "https://docs.microsoft.com/en-us/windows/win32/debug/pe-format",
         "https://learn.microsoft.com/en-us/windows/win32/debug/pe-format",

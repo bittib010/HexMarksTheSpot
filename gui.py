@@ -21,7 +21,7 @@ from tkhtmlview import HTMLText
 
 # Application-specific - use the new dynamic parser loader
 from parser_loader import get_file_parser, discover_all_parsers
-from common import ColorGenerator
+from common import ColorGenerator, Node, markdown_to_html
 import cache_manager
 
 
@@ -2356,6 +2356,7 @@ class Main:
         if filename:
             # Warn for large files (>10MB) — parsing may be slow or cause high memory usage
             file_size = os.path.getsize(filename)
+            self.file_size = file_size  # Store for hex integrity verification
             if file_size > 10 * 1024 * 1024:  # 10 MB threshold
                 size_str = self._format_file_size(file_size)
                 proceed = messagebox.askyesno(
@@ -2453,7 +2454,7 @@ class Main:
                 
                 parser_name = ""
                 with open(filename, "rb") as file:
-                    parser = get_file_parser(file)
+                    parser = get_file_parser(file, filename)
                     parser_name = type(parser).__name__
                     self.root = parser.parse()
                     t_parse = _time.perf_counter()
@@ -2853,6 +2854,13 @@ class Main:
         self.collected_nodes = []
         self._collect_nodes(root)
         
+        # Fill gaps between parsed nodes with "Unparsed Data" entries
+        # so the hex viewer always shows every byte of the file
+        self._fill_unparsed_gaps()
+        
+        # Verify parsed bytes match actual file content (hex safeguard)
+        self._verify_hex_integrity()
+        
         # Schedule GUI updates on main thread in batches
         self.master.after(0, self._update_gui_batch, 0)
     
@@ -2944,6 +2952,319 @@ class Main:
                 stack.append((child, 0))
         
         self.byte_counter = byte_counter
+    
+    def _fill_unparsed_gaps(self):
+        """
+        Fill gaps between parsed nodes with 'Unparsed Data' entries so the
+        hex viewer always displays every byte of the file.
+        
+        Scans the collected_nodes list for byte ranges not covered by any
+        parsed field, reads those bytes from the actual file, and inserts
+        placeholder nodes. This ensures the hex viewer is the authoritative
+        representation of the file — parsed fields are interactive, while
+        unparsed regions are shown in a neutral gray.
+        """
+        if not hasattr(self, 'current_file') or not self.current_file:
+            return
+        if not hasattr(self, 'file_size') or self.file_size == 0:
+            return
+        
+        file_size = self.file_size
+        
+        # Build a sorted list of (start, end) ranges covered by parsed nodes
+        # Only consider leaf nodes that have actual data (data_len > 0)
+        covered = []
+        for nd in self.collected_nodes:
+            if nd['data_len'] > 0:
+                covered.append((nd['offset'], nd['offset'] + nd['data_len']))
+        
+        if not covered:
+            # Nothing parsed at all — fill entire file as unparsed
+            covered = []
+        
+        # Sort by start offset
+        covered.sort(key=lambda x: x[0])
+        
+        # Find gaps: byte ranges not covered by any parsed node
+        gaps = []
+        cursor = 0
+        for start, end in covered:
+            if start > cursor:
+                gaps.append((cursor, start))
+            cursor = max(cursor, end)
+        # Trailing gap at end of file
+        if cursor < file_size:
+            gaps.append((cursor, file_size))
+        
+        if not gaps:
+            return  # No gaps — full coverage
+        
+        # Read the file to extract gap bytes
+        try:
+            with open(self.current_file, 'rb') as f:
+                file_data = f.read()
+        except (OSError, IOError):
+            return
+        
+        # Styling for unparsed data nodes
+        unparsed_color = '#D3D3D3'  # Light gray
+        ascii_table = self._ascii_table
+        contrast_cache = self._contrast_cache
+        is_hex_fmt = self.offset_format_var.get() == "Hex"
+        max_val_width = self.VALUE_COLUMN_MAX_WIDTH
+        
+        fg_color = contrast_cache.get(unparsed_color)
+        if fg_color is None:
+            fg_color = ColorGenerator.get_contrast_text_color(unparsed_color)
+            contrast_cache[unparsed_color] = fg_color
+        
+        # Create gap nodes
+        gap_nodes = []
+        for gap_start, gap_end in gaps:
+            gap_data = file_data[gap_start:gap_end]
+            gap_len = len(gap_data)
+            if gap_len == 0:
+                continue
+            
+            tag = f"unparsed_{gap_start}"
+            if is_hex_fmt:
+                display_offset = f"0x{gap_start:X}"
+            else:
+                display_offset = str(gap_start)
+            
+            hex_str = gap_data.hex(' ') + ' '
+            ascii_str = ''.join(ascii_table[b] for b in gap_data)
+            
+            # Create a placeholder Node for the gap
+            gap_node = Node(
+                data=gap_data,
+                info=markdown_to_html(
+                    f"**Unparsed Data** — {gap_len} bytes at offset "
+                    f"0x{gap_start:X} not covered by any parser field.\n\n"
+                    "These bytes exist in the file but are not recognized by "
+                    "the current parser template. This may indicate:\n"
+                    "- Incomplete parser coverage\n"
+                    "- Padding or reserved bytes not accounted for\n"
+                    "- Data structures not yet implemented in the template"
+                ),
+                name="Unparsed Data",
+                color=unparsed_color,
+                table_value=f"{gap_len} bytes"
+            )
+            
+            table_val = gap_node.table_value
+            truncated_val = str(table_val)
+            if len(truncated_val) > max_val_width:
+                truncated_val = truncated_val[:max_val_width - 1] + '\u2026'
+            
+            gap_nodes.append({
+                'tag': tag,
+                'color': unparsed_color,
+                'fg_color': fg_color,
+                'name': "Unparsed Data",
+                'data_len': gap_len,
+                'hex_str': hex_str,
+                'ascii_str': ascii_str,
+                'table_val': table_val,
+                'truncated_val': truncated_val,
+                'display_offset': display_offset,
+                'offset': gap_start,
+                'child': gap_node,
+                'display_pos': gap_start,  # will be recalculated after merge
+            })
+        
+        if not gap_nodes:
+            return
+        
+        # Merge gap nodes into collected_nodes and re-sort by offset
+        self.collected_nodes.extend(gap_nodes)
+        self.collected_nodes.sort(key=lambda x: x['offset'])
+        
+        # Recalculate display_pos (cumulative byte position) after merge
+        running_pos = 0
+        for nd in self.collected_nodes:
+            nd['display_pos'] = running_pos
+            running_pos += nd['data_len']
+        
+        # Update byte counter to reflect full file coverage
+        self.byte_counter = running_pos
+    
+    def _verify_hex_integrity(self):
+        """
+        Post-parse safeguard: compare total parsed bytes and their content
+        against the actual file on disk.
+        
+        Performs four checks:
+        1. Byte count — do parsed leaf nodes cover exactly the file size?
+        2. Overlap detection — do any nodes claim the same byte range?
+        3. Per-node data — does each node's data match the file at its offset?
+        4. Sequential stream — does the reconstructed display stream match
+           the file when read sequentially?
+        
+        On mismatch, logs the exact offset where divergence first occurs,
+        the field name, expected vs actual bytes, and surrounding context.
+        Parsing proceeds regardless — this is purely informational to help
+        identify template errors or truncated files.
+        """
+        if not hasattr(self, 'current_file') or not self.current_file:
+            return
+        if not hasattr(self, 'file_size'):
+            return
+        
+        import logging
+        file_size = self.file_size
+        parsed_bytes = self.byte_counter
+        
+        # Step 1: Check byte count mismatch
+        if parsed_bytes != file_size:
+            diff = file_size - parsed_bytes
+            if parsed_bytes < file_size:
+                size_msg = (f"Hex safeguard: parsed {parsed_bytes:,} bytes but "
+                            f"file is {file_size:,} bytes "
+                            f"({diff:,} bytes unparsed)")
+            else:
+                size_msg = (f"Hex safeguard: parsed {parsed_bytes:,} bytes but "
+                            f"file is only {file_size:,} bytes "
+                            f"({abs(diff):,} bytes over-read)")
+            logging.warning(size_msg)
+            self.master.after(0, lambda msg=size_msg: self._show_hex_safeguard_warning(msg))
+            # Don't return — continue to find exact divergence location
+        
+        # Only do byte-level verification for files up to 50MB
+        if file_size > 50 * 1024 * 1024:
+            return
+        
+        try:
+            with open(self.current_file, 'rb') as f:
+                file_data = f.read()
+        except (OSError, IOError):
+            return
+        
+        # Step 2: Overlap detection — check if any nodes claim the same bytes
+        # Build sorted list of (start, end, name) for leaf nodes only
+        ranges = []
+        for nd in self.collected_nodes:
+            if nd['data_len'] > 0 and nd['name'] != 'Unparsed Data':
+                ranges.append((nd['offset'], nd['offset'] + nd['data_len'], nd['name']))
+        ranges.sort(key=lambda x: x[0])
+        
+        for i in range(len(ranges) - 1):
+            curr_start, curr_end, curr_name = ranges[i]
+            next_start, next_end, next_name = ranges[i + 1]
+            if curr_end > next_start:
+                overlap_bytes = curr_end - next_start
+                msg = (f"Hex safeguard: OVERLAP — '{curr_name}' "
+                       f"(0x{curr_start:X}..0x{curr_end:X}) overlaps "
+                       f"'{next_name}' (0x{next_start:X}..0x{next_end:X}) "
+                       f"by {overlap_bytes} bytes")
+                logging.warning(msg)
+                self.master.after(0, lambda m=msg: self._show_hex_safeguard_warning(m))
+                return
+        
+        # Step 3: Per-node data verification — each node's bytes must match
+        # the file at its declared offset
+        for nd in self.collected_nodes:
+            if nd['data_len'] == 0 or nd['name'] == 'Unparsed Data':
+                continue
+            offset = nd['offset']
+            data = nd['child'].data
+            data_len = nd['data_len']
+            
+            # Bounds check
+            if offset + data_len > len(file_data):
+                msg = (f"Hex safeguard: '{nd['name']}' at offset "
+                       f"0x{offset:X} extends beyond file end "
+                       f"(needs {data_len} bytes, "
+                       f"only {len(file_data) - offset} available)")
+                logging.warning(msg)
+                self.master.after(0, lambda m=msg: self._show_hex_safeguard_warning(m))
+                return
+            
+            # Compare bytes at declared offset
+            file_chunk = file_data[offset:offset + data_len]
+            if data != file_chunk:
+                # Find first mismatched byte within this field
+                for i in range(data_len):
+                    if data[i] != file_chunk[i]:
+                        abs_offset = offset + i
+                        # Context: show ±8 bytes from the file around mismatch
+                        ctx_start = max(0, abs_offset - 8)
+                        ctx_end = min(len(file_data), abs_offset + 9)
+                        file_ctx = ' '.join(f'{file_data[j]:02X}' for j in range(ctx_start, ctx_end))
+                        parsed_ctx = ' '.join(
+                            f'{data[j]:02X}' if offset <= (offset + j) < offset + data_len
+                            else '..'
+                            for j in range(max(0, i - 8), min(data_len, i + 9))
+                        )
+                        msg = (f"Hex safeguard: byte mismatch at file offset "
+                               f"0x{abs_offset:X} in field '{nd['name']}' — "
+                               f"parsed 0x{data[i]:02X}, "
+                               f"file has 0x{file_chunk[i]:02X}")
+                        detail = (f"  Field: '{nd['name']}' at 0x{offset:X}, "
+                                  f"byte {i} of {data_len}\n"
+                                  f"  File context around 0x{abs_offset:X}:\n"
+                                  f"    {file_ctx}")
+                        logging.warning(msg)
+                        logging.warning(detail)
+                        self.master.after(0, lambda m=msg: self._show_hex_safeguard_warning(m))
+                        return
+        
+        # Step 4: Sequential stream verification — reconstruct the byte stream
+        # as concatenated from nodes in display order and compare against file
+        reconstructed = bytearray()
+        node_boundaries = []  # (stream_pos, name, file_offset) for lookups
+        for nd in self.collected_nodes:
+            if nd['data_len'] > 0:
+                node_boundaries.append((len(reconstructed), nd['name'], nd['offset']))
+                reconstructed.extend(nd['child'].data)
+        
+        min_len = min(len(reconstructed), len(file_data))
+        for i in range(min_len):
+            if reconstructed[i] != file_data[i]:
+                # Find which node owns this stream position
+                field_name = "unknown"
+                field_file_offset = 0
+                byte_within = 0
+                for idx, (stream_pos, name, foffset) in enumerate(node_boundaries):
+                    next_pos = (node_boundaries[idx + 1][0]
+                                if idx + 1 < len(node_boundaries)
+                                else len(reconstructed))
+                    if stream_pos <= i < next_pos:
+                        field_name = name
+                        field_file_offset = foffset
+                        byte_within = i - stream_pos
+                        break
+                
+                # Context: ±8 bytes around mismatch
+                ctx_start = max(0, i - 8)
+                ctx_end = min(min_len, i + 9)
+                parsed_line = ' '.join(f'{reconstructed[j]:02X}' for j in range(ctx_start, ctx_end))
+                actual_line = ' '.join(f'{file_data[j]:02X}' for j in range(ctx_start, ctx_end))
+                marker_offset = (i - ctx_start) * 3
+                marker = ' ' * marker_offset + '^^'
+                
+                msg = (f"Hex safeguard: stream mismatch at position "
+                       f"0x{i:X} (file offset 0x{field_file_offset + byte_within:X}) "
+                       f"in field '{field_name}' — "
+                       f"parsed 0x{reconstructed[i]:02X}, "
+                       f"file has 0x{file_data[i]:02X}")
+                detail = (f"  Stream position {i}, byte {byte_within} of "
+                          f"'{field_name}' (file offset 0x{field_file_offset:X})\n"
+                          f"  Parsed:  {parsed_line}\n"
+                          f"  Actual:  {actual_line}\n"
+                          f"           {marker}")
+                logging.warning(msg)
+                logging.warning(detail)
+                self.master.after(0, lambda m=msg: self._show_hex_safeguard_warning(m))
+                return
+    
+    def _show_hex_safeguard_warning(self, message):
+        """
+        Display a hex safeguard warning to the user via a non-blocking
+        warning dialog and update the status bar.
+        """
+        self.update_status(f"\u26A0 {message}")
+        messagebox.showwarning("Hex Integrity Warning", message)
     
     def _update_gui_batch(self, start_idx):
         """

@@ -6,6 +6,7 @@
     "magic_bytes": "504B0304",
     "magic_offset": 0,
     "endianness": "little",
+    "file_extensions": [".zip"],
     "references": [
         "https://pkware.cachefly.net/webdocs/APPNOTE/APPNOTE-6.3.9.TXT",
         "https://en.wikipedia.org/wiki/ZIP_(file_format)"

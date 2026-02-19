@@ -6,6 +6,7 @@
     "magic_bytes": "456C6646696C6500",
     "magic_offset": 0,
     "endianness": "little",
+    "file_extensions": [".evtx"],
     "references": [
         "https://github.com/libyal/libevtx/blob/main/documentation/Windows%20XML%20Event%20Log%20(EVTX).asciidoc",
         "https://www.forensicswiki.org/wiki/Windows_XML_Event_Log_(EVTX)"

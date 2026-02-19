@@ -7,6 +7,7 @@
     "magic_bytes": "53434341",
     "magic_offset": 4,
     "endianness": "little",
+    "file_extensions": [".pf"],
     "references": [
         "https://github.com/libyal/libscca/blob/main/documentation/Windows%20Prefetch%20File%20(PF)%20format.asciidoc",
         "https://www.forensicswiki.org/wiki/Prefetch",

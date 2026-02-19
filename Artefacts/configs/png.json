@@ -6,6 +6,7 @@
     "magic_bytes": "89504E470D0A1A0A",
     "magic_offset": 0,
     "endianness": "big",
+    "file_extensions": [".png"],
     "references": [
         "https://www.w3.org/TR/PNG/",
         "http://www.libpng.org/pub/png/spec/1.2/PNG-Structure.html"

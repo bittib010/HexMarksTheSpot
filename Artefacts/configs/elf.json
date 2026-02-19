@@ -7,6 +7,7 @@
     "magic_bytes": "7F454C460201",
     "magic_offset": 0,
     "endianness": "little",
+    "file_extensions": [".elf", ".so", ".o"],
     "references": [
         "https://refspecs.linuxfoundation.org/elf/elf.pdf",
         "https://www.uclibc.org/docs/elf-64-gen.pdf",

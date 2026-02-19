@@ -237,6 +237,22 @@ class ColorGenerator:
         return color
     
     @classmethod
+    def get_deprecated_color(cls) -> str:
+        """
+        Get a muted gray color for deprecated fields.
+        Visually signals that the field is outdated but still parsed.
+        """
+        # Low saturation gray tones to indicate deprecation
+        l = 0.70 + random.random() * 0.10  # Light gray range
+        s = 0.05 + random.random() * 0.05  # Very low saturation
+        h = random.random()                 # Any hue (barely visible at this saturation)
+        r, g, b = colorsys.hls_to_rgb(h, l, s)
+        color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+        color = cls._ensure_distinct(color)
+        cls._last_color = color
+        return color
+
+    @classmethod
     def get_next_color(cls) -> str:
         """
         Generate the next default color (blue/purple/neutral pastel).

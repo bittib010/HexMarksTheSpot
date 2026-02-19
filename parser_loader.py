@@ -66,16 +66,47 @@ class ParserRegistry:
         """Clear all registered parsers."""
         self._parsers.clear()
     
-    def find_parser_for_file(self, file: BinaryIO) -> Optional[Type["FileParser"]]:
+    def find_parser_for_file(self, file: BinaryIO, filename: Optional[str] = None) -> Optional[Type["FileParser"]]:
         """
-        Find a parser that recognizes the given file.
+        Find a parser that recognizes the given file using three-tier precedence:
+        1. File extension match (fastest, most specific for known formats)
+        2. Primary magic bytes match (reliable binary identification)
+        3. Alternative magic bytes match (fallback for variant formats)
         
         Args:
             file: The file to check
+            filename: Optional filename for extension-based matching
             
         Returns:
             The parser class if found, None otherwise
         """
+        # Tier 1: Extension-based matching (highest priority)
+        if filename:
+            for parser_class in self._parsers:
+                try:
+                    if hasattr(parser_class, 'matches_extension') and parser_class.matches_extension(filename):
+                        # Verify with magic bytes too if available, to avoid false positives
+                        file.seek(0)
+                        if parser_class.recognizes(file):
+                            file.seek(0)
+                            logger.debug(f"Matched {parser_class.__name__} by extension + magic")
+                            return parser_class
+                        file.seek(0)
+                except Exception as e:
+                    logger.debug(f"Error checking extension for {parser_class.__name__}: {e}")
+            
+            # Extension matched but magic didn't — still use extension match
+            # (file might have wrong/missing magic but correct extension)
+            for parser_class in self._parsers:
+                try:
+                    if hasattr(parser_class, 'matches_extension') and parser_class.matches_extension(filename):
+                        file.seek(0)
+                        logger.debug(f"Matched {parser_class.__name__} by extension only (magic mismatch)")
+                        return parser_class
+                except Exception as e:
+                    logger.debug(f"Error checking extension for {parser_class.__name__}: {e}")
+        
+        # Tier 2: Primary magic bytes matching
         for parser_class in self._parsers:
             try:
                 file.seek(0)
@@ -84,6 +115,18 @@ class ParserRegistry:
                     return parser_class
             except Exception as e:
                 logger.debug(f"Error checking {parser_class.__name__}: {e}")
+        
+        # Tier 3: Alternative magic bytes matching (lowest priority)
+        for parser_class in self._parsers:
+            try:
+                file.seek(0)
+                if hasattr(parser_class, 'recognizes_alternative') and parser_class.recognizes_alternative(file):
+                    file.seek(0)
+                    logger.debug(f"Matched {parser_class.__name__} by alternative magic")
+                    return parser_class
+            except Exception as e:
+                logger.debug(f"Error checking alt magic for {parser_class.__name__}: {e}")
+        
         file.seek(0)
         return None
 
@@ -144,15 +187,18 @@ def discover_all_parsers() -> List[Type["FileParser"]]:
     return registry.get_parsers()
 
 
-def get_file_parser(file: BinaryIO) -> "FileParser":
+def get_file_parser(file: BinaryIO, filename: Optional[str] = None) -> "FileParser":
     """
     Get the appropriate parser for a file.
     
-    This function will automatically discover all available parsers
-    and return an instance of the first parser that recognizes the file.
+    Uses three-tier precedence when filename is provided:
+    1. File extension match
+    2. Primary magic bytes match
+    3. Alternative magic bytes match
     
     Args:
         file: The file to parse
+        filename: Optional filename for extension-based matching
         
     Returns:
         An instance of the appropriate parser
@@ -168,7 +214,7 @@ def get_file_parser(file: BinaryIO) -> "FileParser":
     if not registry.get_parsers():
         discover_all_parsers()
     
-    parser_class = registry.find_parser_for_file(file)
+    parser_class = registry.find_parser_for_file(file, filename)
     
     if parser_class:
         return parser_class(file)

@@ -46,6 +46,35 @@
                 "format": "uri"
             }
         },
+        "file_extensions": {
+            "type": "array",
+            "description": "File extensions this parser handles (e.g., [\".lnk\", \".png\"]). Used for extension-based parser matching (highest priority).",
+            "items": {
+                "type": "string",
+                "pattern": "^\\."
+            }
+        },
+        "alternative_magic": {
+            "type": "array",
+            "description": "Alternative magic byte sequences for variant formats (lowest priority matching).",
+            "items": {
+                "type": "object",
+                "required": ["bytes"],
+                "properties": {
+                    "bytes": {
+                        "type": "string",
+                        "description": "Hex string of alternative magic bytes",
+                        "pattern": "^[0-9A-Fa-f]+$"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Offset where these magic bytes appear",
+                        "default": 0,
+                        "minimum": 0
+                    }
+                }
+            }
+        },
         "fields": {
             "type": "array",
             "description": "Array of field definitions",
@@ -240,6 +269,14 @@
                 "color_gradient": {
                     "type": "boolean",
                     "description": "When true on a struct/section, children inherit the parent's base color with progressively brighter tones. Creates a visual gradient indicating related fields belonging to the same logical group.",
+                    "default": false
+                },
+                "deprecated": {
+                    "oneOf": [
+                        { "type": "boolean" },
+                        { "type": "string" }
+                    ],
+                    "description": "Marks a field as deprecated. Unlike 'enabled: false' (which skips the field entirely), deprecated fields are still parsed and displayed but shown in a muted gray color with a deprecation notice in the description. Set to true for a generic notice, or provide a string explaining the deprecation reason or migration path.",
                     "default": false
                 },
                 "output_format": {

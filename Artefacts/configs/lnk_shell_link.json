@@ -7,6 +7,7 @@
     "magic_bytes": "4C000000",
     "magic_offset": 0,
     "endianness": "little",
+    "file_extensions": [".lnk"],
     "references": [
         "https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-shllink",
         "[MS-SHLLINK]: Shell Link (.LNK) Binary File Format - Microsoft Open Specifications",
@@ -692,9 +693,8 @@
                     "fields": [
                         {
                             "name": "LocalBasePathString",
-                            "size": 260,
+                            "size": "$CommonPathSuffixOffset - $LocalBasePathOffset",
                             "type": "string",
-                            "max_size": true,
                             "description": "**Local Base Path String**\n\nNull-terminated ANSI string containing the full local path to the target file or folder.\n\n*Example:* `C:\\Users\\JohnDoe\\Documents\\report.docx`\n\n**What this path reveals:**\n- **Drive letter:** Which volume the target was on (compare with DriveSerialNumber)\n- **User profile name:** If the path includes `\\Users\\<username>\\`, it reveals the Windows user account\n- **Folder structure:** Application install paths, custom folder organization\n- **Filename:** The target's name at the time the shortcut was created\n\n*Format:* Null-terminated ANSI string with a maximum read of 260 bytes (MAX_PATH). The actual string may be shorter - the parser reads until the null terminator.\n\n*Forensic Value:* **Extremely valuable** - Even if the target file has been deleted, this field preserves the original full path.\n\n**Forensic TODO:** Extract and analyze the path components:\n- Username in path = identifies the user account\n- Program Files paths = identifies installed software\n- Unusual locations (Temp, AppData, Recycle Bin) = investigate further\n- Path no longer exists on disk = file was deleted or moved after shortcut creation",
                             "forensic_value": true
                         }
@@ -854,9 +854,8 @@
                 },
                 {
                     "name": "CommonPathSuffix",
-                    "size": 260,
+                    "size": "$LinkInfoSize - $CommonPathSuffixOffset",
                     "type": "string",
-                    "max_size": true,
                     "description": "**Common Path Suffix**\n\nThe path portion common to both local and network references, typically the relative path from the share root or volume root to the target file.\n\n*Example:* For a target at `\\\\Server\\Share\\Projects\\report.docx`, the common path suffix would be `Projects\\report.docx` (the part after the share name).\n\n**Why this exists:**\nWhen a target can be accessed both locally (via a mapped drive like `Z:\\`) and via UNC path (`\\\\Server\\Share\\`), the common suffix is the portion of the path that is the same regardless of access method. This avoids duplicating the filename and relative path in both the local and network sections.\n\n*Forensic Value:* Provides the filename and immediate path context even when the full path fields are truncated or damaged."
                 }
             ]
@@ -876,8 +875,7 @@
                 {
                     "name": "NameString",
                     "size": "$NameStringSize * 2",
-                    "type": "string",
-                    "encoding": "utf-16-le",
+                    "type": "utf16le",
                     "description": "**Name/Description String**\n\nA user-friendly description of the shortcut. This is the text shown in the 'Comment' field of the shortcut's Properties dialog.\n\n**Common contents:**\n- Application descriptions set by installers: 'Opens Microsoft Excel'\n- Tooltips: Text displayed when hovering over the shortcut icon\n- Custom descriptions entered by users\n- Empty strings (structure present but no meaningful text)\n\n*Encoding:* UTF-16LE if the `IsUnicode` flag (bit 7) is set in LinkFlags (most modern LNK files), otherwise system ANSI code page.\n\n*Forensic Value:* May reveal the creator's intent or the tool used to create the shortcut. Some malware builders leave identifiable descriptions or embed metadata in this field.",
                     "forensic_value": true
                 }
@@ -898,8 +896,7 @@
                 {
                     "name": "RelativePath",
                     "size": "$RelativePathSize * 2",
-                    "type": "string",
-                    "encoding": "utf-16-le",
+                    "type": "utf16le",
                     "description": "**Relative Path**\n\nPath relative to the shortcut's own location on disk. Uses `..\\` notation to navigate up the directory tree.\n\n*Example:* `..\\..\\Windows\\System32\\cmd.exe` means 'go up two folders from the LNK file's location, then into Windows\\System32\\cmd.exe.'\n\n**Why relative paths matter:**\nA relative path allows the shortcut to work even if the entire folder tree is moved to a different drive or root location, as long as the relative positions remain the same. Windows tries the relative path as a fallback when the absolute path fails.\n\n*Forensic Value:* Reveals the original folder structure relationship between the shortcut file and its target. This can expose:\n- Where the LNK file was originally located\n- User folder structures and organization habits\n- Whether the shortcut was moved from its original location (broken relative path)\n\n**Forensic TODO:** Compare the relative path with LocalBasePath. If they point to different targets, the LNK file was moved after creation.",
                     "forensic_value": true
                 }
@@ -920,8 +917,7 @@
                 {
                     "name": "WorkingDir",
                     "size": "$WorkingDirSize * 2",
-                    "type": "string",
-                    "encoding": "utf-16-le",
+                    "type": "utf16le",
                     "description": "**Working Directory Path**\n\nThe directory that becomes the 'current directory' when the target application launches.\n\n**What is a working directory?**\nWhen a program starts, it has a 'current working directory' - the default folder for file operations that use relative paths. If a program opens `data.txt` without a full path, it looks in the working directory. For shortcuts, this field overrides the default.\n\n*Example:* `C:\\Users\\JohnDoe\\Documents`\n\n*Forensic Value:* Reveals the intended execution context. This is especially important for:\n- Scripts that reference files by relative paths\n- Applications with configuration files in specific directories\n- Malware that drops payloads into the working directory\n\n**Forensic TODO:** Compare the working directory with the target path. If they differ significantly, investigate why:\n- Working dir in %TEMP% with target in System32 = possible dropper scenario\n- Working dir pointing to a network share = remote file dependency\n- Working dir that no longer exists = shortcut may predate a cleanup operation",
                     "forensic_value": true
                 }
@@ -942,8 +938,7 @@
                 {
                     "name": "CommandLineArguments",
                     "size": "$ArgumentsSize * 2",
-                    "type": "string",
-                    "encoding": "utf-16-le",
+                    "type": "utf16le",
                     "description": "**Command Line Arguments**\n\nThe exact command-line string passed to the target application when the shortcut is activated, stored as a counted Unicode string (see ArgumentsSize above for encoding details).\n\n**What are command-line arguments?**\nWhen a program launches, it can receive additional instructions via text parameters provided after the program name. For example, `notepad.exe C:\\file.txt` passes `C:\\file.txt` as an argument telling Notepad which file to open.\n\n*Legitimate examples:*\n- `/silent /install` - Installer running quietly\n- `-file report.pdf` - Open a specific file\n- `--port 8080 --verbose` - Server configuration flags\n\n*Suspicious examples (investigate these patterns):*\n- `-ExecutionPolicy Bypass -File script.ps1` - Bypasses PowerShell security policy\n- `-enc BASE64STRING` - PowerShell encoded command (hides true intent)\n- `http://malicious.example.com/payload` - Downloads from internet\n- `/c echo Y|cacls C:\\ /grant everyone:F` - Grants full disk access to everyone\n- `mshta javascript:...` - Executes script via HTML Application host\n\n*Forensic Value:* **Critical evidence** - This field often contains the most damaging evidence in malicious LNK files.\n\n**Forensic TODO:** If arguments are present, investigate:\n- Decode any Base64 or otherwise encoded/obfuscated strings\n- Resolve any environment variables (%TEMP%, %APPDATA%)\n- Check referenced files and URLs for existence and content\n- Search for the same argument patterns across other LNK files on the system\n- Timeline the shortcut creation against network logs if URLs are present\n- Look for Living-off-the-Land Binaries (LOLBins): powershell, cmd, mshta, certutil, bitsadmin, wscript, cscript, regsvr32, rundll32",
                     "forensic_value": true
                 }
@@ -964,8 +959,7 @@
                 {
                     "name": "IconLocation",
                     "size": "$IconLocationSize * 2",
-                    "type": "string",
-                    "encoding": "utf-16-le",
+                    "type": "utf16le",
                     "description": "**Icon Location Path**\n\nThe file path containing the icon resource to display for this shortcut.\n\n**How icon resources work:**\nWindows PE files (.exe, .dll, .ico) can contain multiple icon images at different sizes and color depths. The path here identifies which file to extract the icon from, and the `IconIndex` field in the header selects which icon within that file.\n\n*Common legitimate examples:*\n- `%SystemRoot%\\System32\\shell32.dll` - Windows built-in icons\n- `%SystemRoot%\\System32\\imageres.dll` - Windows image resources\n- `C:\\Program Files\\MyApp\\app.exe` - Application's own icon\n\n*Suspicious examples:*\n- Icon file in `%TEMP%` or `%APPDATA%` directories\n- Remote path (UNC or URL) for icon source\n- Icon from an executable that doesn't match the target (disguise)\n\n*Forensic Value:* The icon choice can reveal social engineering attempts. A shortcut to `cmd.exe` using a PDF icon is designed to trick users.\n\n**Forensic TODO:** Compare the icon source with the actual target:\n- Mismatch = likely social engineering (e.g., script disguised as document)\n- Icon path no longer exists = the resource file was deleted or was temporary\n- Icon from a dropped DLL = possible multi-stage attack",
                     "forensic_value": true
                 }
@@ -1047,9 +1041,7 @@
                 },
                 {
                     "name": "RemainingExtraData",
-                    "size": 1024,
-                    "type": "bytes",
-                    "max_size": true,
+                    "type": "remaining",
                     "description": "**Remaining Extra Data Blocks**\n\nAdditional extra data blocks that may be present:\n\n**ConsoleDataBlock (0xA0000002)** - 204 bytes:\nConsole window configuration for shortcuts to console applications.\n- FillAttributes (2 bytes): Screen buffer colors\n- PopupFillAttributes (2 bytes): Popup window colors\n- ScreenBufferSize (4 bytes): Console buffer dimensions\n- WindowSize (4 bytes): Window size in characters\n- WindowOrigin (4 bytes): Window position\n- Font (4 bytes): Font index\n- InputBufferSize (4 bytes): Input buffer size\n- FontSize (4 bytes): Font dimensions\n- FontFamily (4 bytes): Font family\n- FontWeight (4 bytes): Font weight (400=normal, 700=bold)\n- FaceName (64 bytes): Font name (Unicode)\n- CursorSize (4 bytes): Cursor size percentage\n- FullScreen (4 bytes): Full screen mode flag\n- QuickEdit (4 bytes): Quick edit mode flag\n- InsertMode (4 bytes): Insert mode flag\n- AutoPosition (4 bytes): Auto window position\n- HistoryBufferSize (4 bytes): Command history size\n- NumberOfHistoryBuffers (4 bytes): History buffer count\n- HistoryNoDup (4 bytes): Remove duplicate history\n- ColorTable (64 bytes): 16 COLORREF values\n\n**ConsoleFEDataBlock (0xA0000004)** - 12 bytes:\n- CodePage (4 bytes): Console code page for Far East systems\n\n**DarwinDataBlock (0xA0000006)** - 788 bytes:\n- DarwinDataAnsi (260 bytes): MSI product code (ANSI)\n- DarwinDataUnicode (520 bytes): MSI product code (Unicode)\n*Forensic Value:* Identifies MSI-installed applications\n\n**EnvironmentVariableDataBlock (0xA0000001)** - 788 bytes:\n- TargetAnsi (260 bytes): Path with %VARIABLES%\n- TargetUnicode (520 bytes): Unicode path with %VARIABLES%\n*Forensic Value:* Shows %USERPROFILE%, %SYSTEMROOT%, etc.\n\n**IconEnvironmentDataBlock (0xA0000007)** - 788 bytes:\nSame structure as EnvironmentVariableDataBlock but for icon path.\n\n**KnownFolderDataBlock (0xA000000B)** - 28 bytes:\n- KnownFolderID (16 bytes): GUID identifying known folder\n- Offset (4 bytes): Offset into the folder\n*Common GUIDs:*\n  - {FDD39AD0-238F-46AF-ADB4-6C85480369C7}: Documents\n  - {374DE290-123F-4565-9164-39C4925E467B}: Downloads\n  - {B4BFCC3A-DB2C-424C-B029-7FE99A87C641}: Desktop\n  - {4BD8D571-6D19-48D3-BE97-422220080E43}: Music\n  - {33E28130-4E1E-4676-835A-98395C3BC3BB}: Pictures\n  - {18989B1D-99B5-455B-841C-AB7C74E4DDFC}: Videos\n\n**PropertyStoreDataBlock (0xA0000009)** - Variable:\nSerialized property store containing extended file metadata.\nCan include: Title, Author, Tags, Comments, creation software, etc.\n*Forensic Value:* Rich metadata about the target or shortcut creator.\n\n**ShimDataBlock (0xA0000008)** - Variable:\n- LayerName (Unicode): Application compatibility shim layer\n*Examples:* 'WIN95', 'WIN98', 'WIN2000', etc.\n*Forensic Value:* Indicates compatibility mode for legacy applications.\n\n**SpecialFolderDataBlock (0xA0000005)** - 16 bytes:\n- SpecialFolderID (4 bytes): CSIDL constant\n- Offset (4 bytes): Offset within IDList\n*CSIDL Values:*\n  - 0: Desktop\n  - 5: My Documents\n  - 16: Desktop Directory\n  - 26: Application Data\n  - 36: Windows\n  - 37: System32\n  - 38: Program Files\n  - More at docs.microsoft.com\n\n**VistaAndAboveIDListDataBlock (0xA000000C)** - Variable:\nAlternative IDList format for Windows Vista and later.\nMay contain additional path information not in the main IDList.\n\n**TerminalBlock:**\nThe ExtraData section ends when a block with Size < 4 is encountered (typically 0x00000000).",
                     "forensic_value": true
                 }
