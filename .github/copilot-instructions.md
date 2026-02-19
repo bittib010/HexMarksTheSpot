@@ -297,9 +297,9 @@ Adjacent colors guaranteed distinct. `color_gradient: true` creates progressive 
 - **`mft.json`** — Type-dispatched attributes, prefixed field names, timestomping documentation
 - **`prefetch.json`** — Multi-version with conditions, full metrics/chains/volume parsing
 
-## Existing Parsers (15 JSON configs)
+## Existing Parsers (18 JSON configs)
 
-`elf.json`, `evtx.json`, `jpeg.json`, `lnk_shell_link.json`, `mft.json`, `midi.json`, `ntfs_boot.json`, `pdf.json`, `pe_exe.json`, `png.json`, `prefetch.json`, `registry_hive.json`, `sqlite.json`, `wav.json`, `zip.json`
+`bmp.json`, `elf.json`, `evtx.json`, `gif.json`, `jpeg.json`, `lnk_shell_link.json`, `mft.json`, `midi.json`, `ntfs_boot.json`, `pdf.json`, `pe_exe.json`, `png.json`, `prefetch.json`, `registry_hive.json`, `sqlite.json`, `wal.json`, `wav.json`, `zip.json`
 
 ## File Structure
 

@@ -1,0 +1,93 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "GIF",
+    "description": "Graphics Interchange Format (GIF) — a widely used image format supporting animation, transparency, and lossless compression (LZW). GIF89a added animation, transparency, and comment/application extensions.",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "474946",
+    "magic_offset": 0,
+    "endianness": "little",
+    "file_extensions": [".gif"],
+    "forensic_notes": "GIF files are forensically relevant in multiple contexts:\n\n1. **Comment extensions:** GIF89a supports comment blocks (0x21 0xFE) that can contain arbitrary text invisible to normal viewers. These may store metadata, authorship info, or hidden messages. Comment data is in the data blocks section after the header.\n\n2. **Application extensions:** The NETSCAPE2.0 application extension controls animation looping. Other application extensions can store arbitrary application-specific data. The XMP extension (XMP Data/XMP) can embed XML metadata.\n\n3. **Steganography:** GIF's palette-based structure enables palette-order steganography (reordering palette entries without changing the image appearance but encoding data in the order). LSB steganography in palette indices is also possible.\n\n4. **Animation frames:** Each frame in an animated GIF can have its own local color table and graphic control settings. Individual frames may reveal content not visible in the final composed animation (e.g., disposal method artifacts).\n\n5. **Trailing data:** Data after the GIF trailer byte (0x3B) is ignored by viewers but can contain appended files, hidden data, or forensic artifacts from file concatenation.\n\n6. **Version string:** `GIF87a` vs `GIF89a` can help date file creation tools. GIF87a predates transparency and animation support (1987), while GIF89a (1989) supports all modern GIF features.\n\n**Tools:** ExifTool, Gifsicle, ImageMagick (`identify -verbose`), Stegdetect, Binwalk",
+    "references": [
+        "https://www.w3.org/Graphics/GIF/spec-gif89a.txt",
+        "https://en.wikipedia.org/wiki/GIF",
+        "https://www.fileformat.info/format/gif/egff.htm"
+    ],
+    "fields": [
+        {
+            "name": "GIFHeader",
+            "type": "struct",
+            "description": "**GIF Header** (6 bytes) — Identifies the file as a GIF and specifies the version. The header is always exactly 6 ASCII bytes.",
+            "forensic_value": true,
+            "fields": [
+                {
+                    "name": "Signature",
+                    "size": 3,
+                    "type": "string",
+                    "description": "**File signature** — must be the ASCII string `\"GIF\"`. This 3-byte magic number identifies the file as a Graphics Interchange Format image.",
+                    "forensic_value": "identifier"
+                },
+                {
+                    "name": "Version",
+                    "size": 3,
+                    "type": "string",
+                    "description": "**GIF version string:**\n- **`87a`** — GIF87a (original 1987 specification). Supports basic images with a global color table but no transparency, animation, or extensions.\n- **`89a`** — GIF89a (1989 revision). Adds transparency, animation (via graphic control and application extensions), comment blocks, and plain text rendering.\n\n**Forensic note:** GIF87a files are rare in modern usage. If encountered, the image was likely created by very old software or a tool that deliberately uses the older format. Most modern GIF files (including all animated GIFs) use version 89a.",
+                    "informational": true
+                }
+            ]
+        },
+        {
+            "name": "LogicalScreenDescriptor",
+            "type": "struct",
+            "description": "**Logical Screen Descriptor** (7 bytes) — Defines the canvas dimensions and global color table properties. The logical screen is the virtual canvas on which all images and text in the GIF are rendered.",
+            "fields": [
+                {
+                    "name": "CanvasWidth",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Logical screen width** in pixels. This defines the width of the virtual canvas. Individual images within the GIF may be smaller and positioned within this canvas using image descriptor offsets.\n\nFor single-frame GIFs, this typically equals the image width. For animated GIFs, all frames are composited within this canvas area."
+                },
+                {
+                    "name": "CanvasHeight",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Logical screen height** in pixels. Defines the height of the virtual canvas."
+                },
+                {
+                    "name": "PackedFields",
+                    "size": 1,
+                    "type": "bitfield",
+                    "description": "**Packed bit fields** controlling the global color table:\n- **Bit 7:** Global Color Table Flag (1 = GCT follows this descriptor)\n- **Bits 4-6:** Color Resolution (bits per primary color minus 1, so 7 means 8 bits = 256 levels per channel)\n- **Bit 3:** Sort Flag (1 = GCT is sorted by decreasing importance)\n- **Bits 0-2:** Size of Global Color Table (GCT has `2^(N+1)` entries, where N is this 3-bit value; e.g., 7 → 256 entries)\n\n**Forensic note:** The Sort Flag can indicate the GIF encoder used. Most modern encoders set it to 0. The GCT size determines how many palette entries follow.",
+                    "bit_flags": {
+                        "7": "Global Color Table Present",
+                        "6": "Color Resolution Bit 2",
+                        "5": "Color Resolution Bit 1",
+                        "4": "Color Resolution Bit 0",
+                        "3": "GCT Sort Flag",
+                        "2": "GCT Size Bit 2",
+                        "1": "GCT Size Bit 1",
+                        "0": "GCT Size Bit 0"
+                    }
+                },
+                {
+                    "name": "BackgroundColorIndex",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**Background color index** — an index into the Global Color Table. The color at this index is used for pixels on the logical screen not covered by any image.\n\nThis value is only meaningful if the Global Color Table Flag is set. If there is no GCT, this should be 0.\n\n**Forensic note:** For animated GIFs with transparency, the background color determines what appears behind transparent regions during animation playback."
+                },
+                {
+                    "name": "PixelAspectRatio",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "**Pixel aspect ratio** — if non-zero, the actual aspect ratio is computed as `(PixelAspectRatio + 15) / 64`. A value of 0 means no aspect ratio information is given (square pixels assumed).\n\nCommon values:\n- **0** — Square pixels (most common)\n- **49** — 1:1 aspect ratio (equivalent to 0)\n\nIn practice, this field is almost always 0. Non-zero values may indicate the image was created for a display with non-square pixels."
+                }
+            ]
+        },
+        {
+            "name": "DataAndTrailer",
+            "type": "remaining",
+            "description": "**Global Color Table, Image Data, Extensions, and Trailer** — the remainder of the GIF file containing:\n\n1. **Global Color Table** (if PackedFields bit 7 is set) — `3 × 2^(N+1)` bytes, where N is the GCT Size value (bits 0-2 of PackedFields). Each entry is 3 bytes (R, G, B). For N=7 (most common), the table is 768 bytes (256 colors).\n\n2. **Data blocks** — a sequence of the following block types:\n   - **Image Descriptor** (0x2C) — position, size, and local color table for a frame\n   - **Graphic Control Extension** (0x21 0xF9) — transparency, disposal method, delay time\n   - **Comment Extension** (0x21 0xFE) — hidden text comments (forensically interesting)\n   - **Application Extension** (0x21 0xFF) — e.g., NETSCAPE2.0 for animation looping\n   - **Plain Text Extension** (0x21 0x01) — rendered text overlay (rarely used)\n\n3. **Trailer** (0x3B) — single byte marking the end of the GIF data stream\n\n**Forensic note:** Look for Comment Extensions containing hidden text, Application Extensions with non-standard data, and any bytes after the 0x3B trailer (appended/hidden data). Use `strings` or hex search for readable text within this section."
+        }
+    ]
+}

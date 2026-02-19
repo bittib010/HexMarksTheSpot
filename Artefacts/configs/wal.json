@@ -1,0 +1,169 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "SQLite WAL",
+    "description": "SQLite Write-Ahead Log (WAL) file format — the transaction journal used when SQLite operates in WAL mode. WAL files record database page modifications as a sequence of frames, enabling concurrent readers and faster writes.",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "377F0682",
+    "magic_offset": 0,
+    "endianness": "big",
+    "file_extensions": [".db-wal"],
+    "alternative_magic": [
+        {
+            "bytes": "377F0683",
+            "offset": 0
+        }
+    ],
+    "forensic_notes": "SQLite WAL files are high-value forensic artifacts because they capture recent database modifications that may not yet be reflected in the main `.db` file.\n\n**Forensic significance:**\n\n1. **Recent activity window:** WAL frames contain the most recent changes to the database, including INSERT, UPDATE, and DELETE operations. If a checkpoint has not occurred, the WAL holds the *only* copy of these changes.\n\n2. **Transaction reconstruction:** Each commit frame (where CommitPageCount > 0) marks a transaction boundary. By walking the frames in order, you can reconstruct the exact sequence of page modifications per transaction.\n\n3. **Deleted data recovery:** When a record is deleted via SQL DELETE, the modified page (with the record removed) is written to the WAL. However, the *original* page in the main database file still contains the deleted record until a checkpoint copies the WAL page over it. Comparing WAL pages to their main-database counterparts can reveal what was deleted.\n\n4. **Checkpoint history:** The checkpoint sequence number in the WAL header is incremented with each checkpoint. A high value indicates the database has been heavily used. Salt values change on each checkpoint/reset, helping identify which frames belong to the current WAL generation vs. stale leftovers from prior checkpoints.\n\n5. **Byte order indicator:** The magic number reveals whether checksums use native byte order (0x377F0682 = little-endian) or big-endian (0x377F0683). This is relevant for checksum verification and cross-platform analysis.\n\n6. **Companion files:** A WAL file always has a companion `-shm` (shared memory / WAL-index) file that is transient and rebuilt from the WAL on recovery. The WAL-index is architecture-specific and not cross-platform portable.\n\n**Tools:** DB Browser for SQLite, `sqlite3` CLI (`.dump`), `wal-forensics`, Autopsy SQLite module, Belkasoft Evidence Center",
+    "references": [
+        "https://www.sqlite.org/fileformat.html#walformat",
+        "https://www.sqlite.org/wal.html",
+        "https://www.sqlite.org/walformat.html",
+        "https://www.sqlite.org/fileformat.html"
+    ],
+    "fields": [
+        {
+            "name": "WALHeader",
+            "type": "struct",
+            "description": "WAL file header (32 bytes) — Contains magic number, format version, page size, and checkpoint/salt/checksum values. All values are stored as big-endian 32-bit unsigned integers regardless of the native byte order indicated by the magic number.",
+            "forensic_value": true,
+            "fields": [
+                {
+                    "name": "MagicNumber",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**WAL magic number** identifying this file as a SQLite Write-Ahead Log.\n\nTwo valid values exist:\n- **0x377F0682** — Checksums are computed using **native little-endian** byte order. This is the common case on x86/x64 systems (Windows, Linux, macOS on Intel).\n- **0x377F0683** — Checksums are computed using **big-endian** byte order.\n\nThe magic number determines how the 32-bit integers in page data are interpreted *for checksum computation only*. The WAL header and frame header fields are always stored big-endian regardless of this value.\n\n**Forensic note:** The byte order can hint at the platform that created the WAL. Little-endian (0x377F0682) strongly suggests x86/x64 or ARM in little-endian mode. Big-endian (0x377F0683) may indicate PowerPC, SPARC, or big-endian ARM systems.",
+                    "output_format": "hex",
+                    "forensic_value": "identifier",
+                    "expected_values": [930909826, 930909827],
+                    "value_map": {
+                        "930909826": "0x377F0682 (LE checksums)",
+                        "930909827": "0x377F0683 (BE checksums)"
+                    }
+                },
+                {
+                    "name": "FormatVersion",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**WAL file format version number.** Currently always `3007000` (representing SQLite version 3.7.0, which introduced WAL mode in 2010-07-21).\n\nThis version number indicates the WAL format, not the SQLite library version that wrote the file. If a future SQLite release changes the WAL format, this number will increase. A reader that encounters an unrecognized version should refuse to read the WAL.\n\n**Forensic note:** A value other than 3007000 would be highly unusual and could indicate file corruption, a future SQLite version, or deliberate tampering.",
+                    "informational": true,
+                    "expected_values": [3007000]
+                },
+                {
+                    "name": "PageSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Database page size** in bytes. This must match the page size declared in the main database file header (offset 16–17 of the `.db` file).\n\nValid values are powers of two between 512 and 65536 inclusive. Common values are:\n- **1024** — SQLite default prior to version 3.12.0\n- **4096** — SQLite default since 3.12.0 and the most common value\n- **8192** or **16384** — Used by some applications for performance with large BLOBs\n- **65536** — Maximum page size\n\nEach WAL frame carries exactly this many bytes of page data after its 24-byte frame header.\n\n**Forensic note:** Cross-reference this value with the main database's page size. A mismatch indicates corruption or that this WAL belongs to a different database.",
+                    "forensic_value": "critical",
+                    "output_format": "size_bytes",
+                    "expected_values": [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536]
+                },
+                {
+                    "name": "CheckpointSequence",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Checkpoint sequence number** — incremented each time a checkpoint operation transfers WAL content back into the main database file.\n\nThis counter starts at 0 when the database first enters WAL mode and increases monotonically. It provides a rough measure of how many checkpoint cycles the database has undergone.\n\n**Forensic note:** A high checkpoint sequence number indicates sustained database activity over time. A value of 0 or 1 suggests the database recently switched to WAL mode or was freshly created. Combined with file timestamps, this helps establish a timeline of database usage.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "Salt1",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Salt-1** — a random integer that is **incremented** with each checkpoint/WAL reset.\n\nWhen the WAL is reset (after a complete checkpoint with no active readers), Salt-1 is incremented by 1. This invalidates any old frames left in the WAL from the previous generation, because valid frames must have Salt-1 and Salt-2 values matching the WAL header.\n\n**Forensic note:** Salt-1 effectively counts how many times the WAL has been reset. A large Salt-1 value (relative to CheckpointSequence) may indicate frequent full checkpoints. Comparing Salt-1 across multiple WAL snapshots can reveal checkpoint frequency.",
+                    "output_format": "hex",
+                    "forensic_value": true
+                },
+                {
+                    "name": "Salt2",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Salt-2** — a **random** value regenerated on each checkpoint/WAL reset.\n\nUnlike Salt-1 (which increments), Salt-2 is a fresh random number chosen at each WAL reset. Together, Salt-1 and Salt-2 form a unique pair that identifies the current WAL generation. Frame headers must contain matching salt values to be considered valid.\n\n**Forensic note:** Salt-2 prevents false matches with stale frame data from previous WAL generations. If frames are found with salt values that don't match the header, they are remnants from a prior checkpoint cycle and may contain older (potentially forensically interesting) data.",
+                    "output_format": "hex",
+                    "forensic_value": true
+                },
+                {
+                    "name": "HeaderChecksum1",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Checksum-1** — first 32-bit component of the cumulative checksum computed over the first 24 bytes of this WAL header (offsets 0–23, i.e., MagicNumber through Salt-2).\n\nThe checksum algorithm interprets the input as an array of 32-bit integers in the byte order specified by the magic number, then computes two running sums using a Fibonacci-weighted scheme.\n\n**Integrity verification:** If this checksum does not match a recomputation over the header bytes, the WAL is considered corrupt or incomplete.",
+                    "output_format": "hex",
+                    "informational": true
+                },
+                {
+                    "name": "HeaderChecksum2",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Checksum-2** — second 32-bit component of the cumulative checksum computed over the first 24 bytes of this WAL header.\n\nTogether with Checksum-1, this provides a 64-bit integrity check on the WAL header. The two-part checksum is a Fibonacci-weighted rolling sum that detects both accidental corruption and truncation.\n\n**Integrity verification:** Both checksum components must match for the WAL header to be considered valid. A mismatch indicates the header was partially written (e.g., due to a crash during WAL reset) or has been tampered with.",
+                    "output_format": "hex",
+                    "informational": true
+                }
+            ]
+        },
+        {
+            "name": "Frame ${_count}",
+            "type": "struct",
+            "repeat": "eof",
+            "description": "**WAL Frame ${_count}** — Each frame records a single modified database page. A frame consists of a 24-byte header followed by exactly PageSize bytes of page data.\n\nFrames are appended sequentially as transactions modify pages. A frame with a non-zero CommitPageCount marks a **transaction commit boundary** — all frames from the previous commit (or WAL start) up to and including this frame constitute one atomic transaction.",
+            "color_gradient": true,
+            "fields": [
+                {
+                    "name": "FrameHeader_${_count}",
+                    "type": "struct",
+                    "description": "Frame header (24 bytes) — metadata identifying which page this frame modifies, whether it's a commit record, and integrity checksums.",
+                    "fields": [
+                        {
+                            "name": "FramePageNumber_${_count}",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Database page number** that this frame modifies. Pages are numbered starting at 1 (page 1 contains the database header and the root page of the sqlite_schema table).\n\nWhen reading the database in WAL mode, the reader scans frames backwards from the end of the WAL. The *last* valid frame for any given page number contains the most current version of that page.\n\n**Forensic note:** Page 1 modifications indicate schema changes or sqlite_schema table updates. Pages with low numbers often correspond to B-tree root pages or internal nodes. Tracking which page numbers appear and in what order can help reconstruct the sequence of database modifications.",
+                            "forensic_value": "critical"
+                        },
+                        {
+                            "name": "CommitPageCount_${_count}",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Commit marker** — If this value is **non-zero**, this frame is the final frame of a committed transaction, and the value represents the total size of the database file **in pages** after the commit.\n\nIf this value is **zero**, the frame is an intermediate modification within an ongoing transaction (not yet committed).\n\n**Forensic note:** This is one of the most important fields for transaction reconstruction. By scanning frames and noting where CommitPageCount > 0, you can identify exact transaction boundaries. The page count value also reveals whether the database grew or shrank during the transaction (compare with the main database file size).",
+                            "forensic_value": "critical"
+                        },
+                        {
+                            "name": "FrameSalt1_${_count}",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Salt-1 copy** — must match the Salt-1 value in the WAL header for this frame to be considered valid.\n\nFrames with non-matching salt values are remnants from a previous WAL generation (before the last checkpoint/reset) and should be ignored by the reader.\n\n**Forensic note:** Frames with mismatched salts are 'zombie' frames — leftover data from prior checkpoint cycles. These may contain forensically valuable older page versions that survived because the WAL file was not truncated on reset.",
+                            "output_format": "hex"
+                        },
+                        {
+                            "name": "FrameSalt2_${_count}",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Salt-2 copy** — must match the Salt-2 value in the WAL header for this frame to be considered valid.\n\nBoth Salt-1 and Salt-2 must match the header values. If either mismatches, the frame is invalid (stale data from a prior WAL generation).",
+                            "output_format": "hex"
+                        },
+                        {
+                            "name": "FrameChecksum1_${_count}",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Cumulative checksum part 1** — covers all WAL content from the beginning of the file header through this frame's header (first 8 bytes) and page data.\n\nThe checksum is cumulative: each frame's checksum extends the running checksum from the previous frame. This chain-of-checksums design means that if any earlier frame or the header is corrupted, all subsequent frame checksums will fail.\n\n**Integrity note:** A checksum mismatch at frame N means either frame N or some earlier content is corrupt. All frames from N onward are considered invalid.",
+                            "output_format": "hex",
+                            "informational": true
+                        },
+                        {
+                            "name": "FrameChecksum2_${_count}",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "**Cumulative checksum part 2** — second component of the running checksum through this frame.\n\nTogether with FrameChecksum1, provides 64-bit integrity verification of the WAL content up to this point.",
+                            "output_format": "hex",
+                            "informational": true
+                        }
+                    ]
+                },
+                {
+                    "name": "FramePageData_${_count}",
+                    "size": "$PageSize",
+                    "type": "bytes",
+                    "description": "**Page data** — the complete contents of database page FramePageNumber after modification. This is exactly PageSize bytes and represents the full page as it should appear in the database file.\n\nFor **page 1**, the first 100 bytes contain the database file header (magic string, page size, schema version, etc.), followed by the B-tree page header and cell data for the sqlite_schema table.\n\nFor other pages, the content is a complete B-tree page (interior or leaf, table or index), a freelist page, an overflow page, or a pointer-map page.\n\n**Forensic note:** Comparing this page data with the corresponding page in the main `.db` file reveals exactly what changed. Tools like `sqlite3 .dump` only show the final state; examining individual WAL frames shows the *progression* of changes over time. For deleted record recovery, look for page data that contains zeroed-out cell pointers but still has record content in the cell content area."
+                }
+            ]
+        }
+    ]
+}

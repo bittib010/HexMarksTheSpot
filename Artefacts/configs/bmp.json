@@ -1,0 +1,157 @@
+{
+    "$schema": "./parser-config.schema.json",
+    "name": "BMP",
+    "description": "Windows Bitmap Image File Format (BMP/DIB) — one of the oldest and simplest raster image formats. BMP files store pixel data with optional compression, supporting 1-bit monochrome through 32-bit color with alpha channel.",
+    "author": "HexMarksTheSpot",
+    "version": "1.0",
+    "magic_bytes": "424D",
+    "magic_offset": 0,
+    "endianness": "little",
+    "file_extensions": [".bmp", ".dib"],
+    "forensic_notes": "BMP files are forensically relevant in several contexts:\n\n1. **Screenshot evidence:** Windows screenshot tools and some applications save images as BMP. Uncompressed BMPs preserve exact pixel data without compression artifacts, making them useful for integrity verification.\n\n2. **Steganography:** BMP's simple structure and lack of compression (in most cases) make it a popular container for steganographic data hiding. The least significant bits of pixel data can be modified to embed hidden messages without visible change to the image. Tools like OpenStego and Steghide commonly target BMP files.\n\n3. **Thumbnail caches:** Windows stores thumbnails in BMP format within thumbcache files and IconCache.db. These can contain previews of deleted images.\n\n4. **Metadata absence:** Unlike JPEG or PNG, standard BMP files contain no Exif or other metadata. The absence of camera/software metadata can itself be forensically significant (suggesting the image was converted or generated programmatically).\n\n5. **Pixel data offset:** The bfOffBits field tells where pixel data begins. A gap between the end of headers/color table and pixel data start could contain hidden data.\n\n6. **File size consistency:** Compare bfSize with actual file size and biSizeImage with expected pixel data size. Discrepancies may indicate appended data, truncation, or tampering.\n\n**Tools:** ExifTool (limited BMP support), hex editors, Stegdetect, OpenStego, Binwalk",
+    "references": [
+        "https://en.wikipedia.org/wiki/BMP_file_format",
+        "https://learn.microsoft.com/en-us/windows/win32/gdi/bitmap-storage",
+        "https://www.fileformat.info/format/bmp/egff.htm"
+    ],
+    "fields": [
+        {
+            "name": "BitmapFileHeader",
+            "type": "struct",
+            "description": "**BITMAPFILEHEADER** (14 bytes) — The file-level header that identifies the file as a BMP and provides offsets to the pixel data. This header is specific to the BMP file format (as opposed to the DIB header which describes the image itself).",
+            "forensic_value": true,
+            "fields": [
+                {
+                    "name": "bfType",
+                    "size": 2,
+                    "type": "string",
+                    "description": "**File type signature** — must be `\"BM\"` (0x42 0x4D) for Windows bitmap files.\n\nOther (rare) signatures exist in the BMP family:\n- `\"BA\"` — OS/2 bitmap array\n- `\"CI\"` — OS/2 color icon\n- `\"CP\"` — OS/2 color pointer\n- `\"IC\"` — OS/2 icon\n- `\"PT\"` — OS/2 pointer\n\nIn practice, virtually all BMP files use `\"BM\"`.",
+                    "forensic_value": "identifier"
+                },
+                {
+                    "name": "bfSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Total file size** in bytes. This should match the actual file size on disk.\n\n**Forensic note:** Compare this value with the actual file size. If `bfSize` is smaller than the file, there may be data appended after the bitmap (hidden data, steganographic payload, or file concatenation). If `bfSize` is larger, the file is truncated or corrupt.",
+                    "output_format": "size_bytes",
+                    "forensic_value": true
+                },
+                {
+                    "name": "bfReserved1",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Reserved field 1** — must be zero in standard BMP files.\n\n**Forensic note:** Some applications repurpose these reserved bytes. For example, certain steganography tools store metadata here. Any non-zero value is suspicious and warrants investigation.",
+                    "expected_values": [0]
+                },
+                {
+                    "name": "bfReserved2",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Reserved field 2** — must be zero in standard BMP files.\n\nSame as bfReserved1: non-zero values may indicate steganographic data or a non-standard BMP variant.",
+                    "expected_values": [0]
+                },
+                {
+                    "name": "bfOffBits",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Pixel data offset** — the byte offset from the beginning of the file to the start of the pixel (bitmap) data.\n\nFor a standard 24-bit BMP with no color table: `14 (file header) + 40 (info header) = 54`.\nFor an 8-bit BMP with 256-color palette: `14 + 40 + (256 × 4) = 1078`.\n\n**Forensic note:** If this offset is larger than expected (given the header sizes and color table), the gap between the headers and pixel data could contain hidden information. Calculate the expected offset and compare.",
+                    "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "BitmapInfoHeader",
+            "type": "struct",
+            "description": "**BITMAPINFOHEADER** (40 bytes) — The DIB (Device-Independent Bitmap) header that describes the image dimensions, color depth, compression, and resolution. This is the most common DIB header version (Windows 3.x and later).\n\nOther DIB header sizes exist but are rare:\n- 12 bytes: BITMAPCOREHEADER (OS/2 1.x)\n- 64 bytes: OS/2 BITMAPINFOHEADER2\n- 108 bytes: BITMAPV4HEADER (Windows 95/NT4)\n- 124 bytes: BITMAPV5HEADER (Windows 98/2000)",
+            "informational": true,
+            "fields": [
+                {
+                    "name": "biSize",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**DIB header size** in bytes. Determines which header version is in use:\n- **12** — BITMAPCOREHEADER (OS/2, very old)\n- **40** — BITMAPINFOHEADER (standard, most common)\n- **52** — BITMAPV2INFOHEADER (undocumented Adobe)\n- **56** — BITMAPV3INFOHEADER (undocumented Adobe)\n- **108** — BITMAPV4HEADER (ICC color profiles)\n- **124** — BITMAPV5HEADER (ICC color profiles + intent)\n\nThis parser assumes the standard 40-byte BITMAPINFOHEADER.",
+                    "informational": true,
+                    "expected_values": [12, 40, 52, 56, 108, 124]
+                },
+                {
+                    "name": "biWidth",
+                    "size": 4,
+                    "type": "int",
+                    "description": "**Image width** in pixels. Must be a positive value.\n\nThe actual number of bytes per scanline is calculated as: `ceil(biWidth × biBitCount / 8)`, then padded to the next 4-byte boundary."
+                },
+                {
+                    "name": "biHeight",
+                    "size": 4,
+                    "type": "int",
+                    "description": "**Image height** in pixels. The sign determines the scanline order:\n- **Positive (most common):** Bottom-up — the first row of pixel data is the bottom row of the image\n- **Negative:** Top-down — the first row of pixel data is the top row of the image\n\nTop-down BMPs (negative height) cannot use RLE compression.\n\n**Forensic note:** The absolute value gives the actual height. A negative value is unusual and may indicate programmatic generation rather than a standard image editor."
+                },
+                {
+                    "name": "biPlanes",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Number of color planes** — must always be 1. This field exists for historical compatibility with planar display adapters (EGA/VGA). Any value other than 1 indicates corruption or a non-standard file.",
+                    "expected_values": [1]
+                },
+                {
+                    "name": "biBitCount",
+                    "size": 2,
+                    "type": "uint",
+                    "description": "**Bits per pixel** — determines the color depth:\n- **1** — Monochrome (2-color palette)\n- **4** — 16 colors (with palette)\n- **8** — 256 colors (with palette)\n- **16** — 65,536 colors (High Color, typically 5-5-5 or 5-6-5)\n- **24** — 16.7 million colors (True Color, no palette, 8-8-8 RGB)\n- **32** — True Color with alpha channel (8-8-8-8 BGRA)\n\nBit depths ≤ 8 require a color table (palette). 24-bit and 32-bit BMPs store pixel colors directly.",
+                    "expected_values": [1, 4, 8, 16, 24, 32],
+                    "forensic_value": true
+                },
+                {
+                    "name": "biCompression",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Compression method** used for the pixel data:\n- **0** (BI_RGB) — No compression (most common)\n- **1** (BI_RLE8) — Run-length encoding for 8-bit BMPs\n- **2** (BI_RLE4) — Run-length encoding for 4-bit BMPs\n- **3** (BI_BITFIELDS) — Bit field masks (16-bit and 32-bit)\n- **4** (BI_JPEG) — JPEG compression (rare)\n- **5** (BI_PNG) — PNG compression (rare)\n\nMost forensically relevant BMPs use BI_RGB (uncompressed) since compression can interfere with steganographic analysis.",
+                    "value_map": {
+                        "0": "BI_RGB (Uncompressed)",
+                        "1": "BI_RLE8 (8-bit RLE)",
+                        "2": "BI_RLE4 (4-bit RLE)",
+                        "3": "BI_BITFIELDS (Bit Fields)",
+                        "4": "BI_JPEG (JPEG)",
+                        "5": "BI_PNG (PNG)"
+                    },
+                    "expected_values": [0, 1, 2, 3, 4, 5]
+                },
+                {
+                    "name": "biSizeImage",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Image data size** in bytes. For BI_RGB (uncompressed), this can be 0 (the size is calculable from width, height, and bit depth). For compressed formats, this gives the actual size of the compressed data.\n\nExpected uncompressed size: `((biWidth × biBitCount + 31) / 32) × 4 × |biHeight|`\n\n**Forensic note:** For uncompressed BMPs, verify this against the calculated size. A mismatch could indicate hidden data within the pixel region.",
+                    "output_format": "size_bytes"
+                },
+                {
+                    "name": "biXPelsPerMeter",
+                    "size": 4,
+                    "type": "int",
+                    "description": "**Horizontal resolution** in pixels per meter. Common values:\n- **0** — Resolution not specified (very common)\n- **2835** — 72 DPI (standard screen)\n- **3780** — 96 DPI (Windows default)\n- **11811** — 300 DPI (print quality)\n\n**Forensic note:** Resolution values can hint at the image's origin. Screen captures typically have 96 DPI, scanned documents have 300+ DPI, and 0 suggests programmatic creation."
+                },
+                {
+                    "name": "biYPelsPerMeter",
+                    "size": 4,
+                    "type": "int",
+                    "description": "**Vertical resolution** in pixels per meter. Usually matches biXPelsPerMeter. A mismatch between horizontal and vertical resolution is unusual and may indicate manual editing of the header."
+                },
+                {
+                    "name": "biClrUsed",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Number of palette colors** actually used by the bitmap. If 0 and biBitCount ≤ 8, the full palette is used (`2^biBitCount` entries).\n\nFor 24-bit and 32-bit BMPs, this is usually 0 (no palette).\n\n**Forensic note:** A non-zero value smaller than `2^biBitCount` means only a subset of the palette is used. The unused palette entries could potentially hide data."
+                },
+                {
+                    "name": "biClrImportant",
+                    "size": 4,
+                    "type": "uint",
+                    "description": "**Number of important colors.** If 0, all colors are considered important. Otherwise, this indicates the minimum number of colors needed for faithful display.\n\nThis field is rarely used in modern BMPs and is typically 0."
+                }
+            ]
+        },
+        {
+            "name": "PixelData",
+            "type": "remaining",
+            "description": "**Pixel and color table data** — contains the optional color palette (for ≤ 8-bit images) followed by the actual pixel data.\n\nFor **paletted images** (1, 4, 8-bit), this begins with an array of RGBQUAD entries (4 bytes each: Blue, Green, Red, Reserved/Alpha), followed by indexed pixel data.\n\nFor **direct color images** (16, 24, 32-bit), the pixel data follows immediately.\n\n**Scanline padding:** Each row of pixel data is padded to a 4-byte boundary. For a 24-bit image that is 1 pixel wide, each row is 3 bytes of color + 1 byte of padding = 4 bytes.\n\n**Bottom-up order:** Unless biHeight is negative, the first scanline in the file is the *bottom* row of the image.\n\n**Forensic note:** For steganographic analysis, examine the least significant bits of pixel values. For hidden data detection, look for data appended after the expected end of pixel data (compare file size with bfSize). Also check padding bytes at the end of each scanline — they should be zero but could contain hidden information."
+        }
+    ]
+}
