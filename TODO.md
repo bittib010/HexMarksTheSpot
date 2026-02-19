@@ -5,6 +5,7 @@
 - Add support for WAL files so that it makes those parsings easier. This would involve implementing the logic to read and parse the Write-Ahead Log (WAL) file format used by SQLite, which contains changes that have not yet been committed to the main database file. By parsing WAL files, users can see uncommitted changes and recover data that may not be present in the main database file, providing a more comprehensive view of the database state.
 - We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
 - Remember to update Copilot instructions if necessary on new implementations. 
+- Improve search. We should be able to search in the necessary part of the file we select: Hex content, ASCII Content, Parsed Value content. Use checkbox for selection. We should also be able to search for field names, not just values. This would allow users to quickly find specific fields or values within the parsed data, enhancing the usability of the application and improving the bookmarks relevance for investigating. 
 
 
 ## Future Parser Enhancements

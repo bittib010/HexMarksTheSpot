@@ -192,7 +192,9 @@ When identifying a file's format, parsers are matched in three tiers:
 - `$field.N` — bit N of a bitfield (e.g., `$flags.0`)
 - Arithmetic: `$header_size - 16`, `$count * 2`
 - Conditions: `$type == 5 or $type == 2`, `$flags.0`, `$flags & 0x01`
+- Parenthesized expressions: `($field or 65536) - 8` — supports Python ternaries and `or` fallback for default values
 - All expressions evaluated via Python `eval()` after `$reference` substitution
+- Expressions can start with `(` — the parser detects `$` references anywhere in the string
 - VLQ fields auto-store `${name}_bytes` for size tracking
 
 ### Repeat Modes
@@ -268,7 +270,7 @@ Adjacent colors guaranteed distinct. `color_gradient: true` creates progressive 
 
 ## Reference Parsers
 
-- **`sqlite.json`** — Big-endian, extensive `expected_values`, `enabled: false` for WAL/journal
+- **`sqlite.json`** — Big-endian, extensive `expected_values`, `enabled: false` for WAL/journal, structured page content (CellPointerArray, UnallocatedSpace, CellContentArea per page), parenthesized expressions for default values (`$field or 65536`)
 - **`lnk_shell_link.json`** — Complex conditionals, `forensic_notes`, `repeat: "until"`, deeply nested
 - **`mft.json`** — Type-dispatched attributes, prefixed field names, timestomping documentation
 - **`prefetch.json`** — Multi-version with conditions, full metrics/chains/volume parsing

@@ -297,6 +297,7 @@ class ConfigBasedParser(FileParser):
         - $field_name - direct field reference
         - $field_name.N - bit N of a bitfield
         - $field_name * 2 - expressions
+        - ($field or default) - expressions with parentheses
         """
         if not isinstance(ref, str):
             return ref
@@ -305,7 +306,10 @@ class ConfigBasedParser(FileParser):
             try:
                 return int(ref)
             except:
-                return ref
+                # If the string contains $references, fall through to expression
+                # handling (e.g. "($CellContentAreaStart or 65536) - 8")
+                if '$' not in ref:
+                    return ref
         
         # Handle bit access like $flags.0
         bit_match = re.match(r'\$(\w+)\.(\d+)', ref)

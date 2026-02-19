@@ -290,20 +290,64 @@
             ]
         },
         {
-            "name": "Page1Content",
-            "size": "$PageSize - 112",
-            "type": "bytes",
-            "description": "Remaining content of page 1 (cell pointer array and cell data). Page 1 contains the sqlite_master/sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers).",
+            "name": "Page1InteriorContent",
+            "type": "section",
             "condition": "$PageType == 5 or $PageType == 2",
-            "informational": true
+            "description": "Page 1 interior B-tree content. Page 1 always contains the sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers). Interior page means the schema table spans multiple pages.",
+            "color_gradient": true,
+            "fields": [
+                {
+                    "name": "P1CellPointerArray",
+                    "size": "$CellCount * 2",
+                    "type": "bytes",
+                    "description": "Array of 2-byte big-endian offsets (relative to page start, byte 0) pointing to each cell's location. For page 1 interior, each cell contains a child page pointer + varint rowid for the sqlite_schema table.",
+                    "informational": true
+                },
+                {
+                    "name": "P1UnallocatedSpace",
+                    "size": "($CellContentAreaStart or 65536) - 112 - $CellCount * 2",
+                    "type": "bytes",
+                    "description": "**Forensically critical** — unallocated gap between cell pointers and cell content on page 1. May contain remnants of dropped tables, deleted indexes, or modified schema objects. Schema changes (ALTER TABLE, DROP TABLE) leave traces here.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "P1CellContentArea",
+                    "size": "$PageSize - ($CellContentAreaStart or 65536)",
+                    "type": "bytes",
+                    "description": "Cell content area of page 1 containing sqlite_schema records. Each cell holds schema definition SQL (CREATE TABLE, CREATE INDEX, etc.) along with table/index root page numbers. Critical for understanding database structure.",
+                    "forensic_value": true
+                }
+            ]
         },
         {
-            "name": "Page1Content",
-            "size": "$PageSize - 108",
-            "type": "bytes",
-            "description": "Remaining content of page 1 (cell pointer array and cell data). Page 1 contains the sqlite_master/sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers).",
+            "name": "Page1LeafContent",
+            "type": "section",
             "condition": "$PageType != 5 and $PageType != 2",
-            "informational": true
+            "description": "Page 1 leaf B-tree content. Page 1 always contains the sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers). Leaf page means all schema entries fit on this single page.",
+            "color_gradient": true,
+            "fields": [
+                {
+                    "name": "P1CellPointerArray",
+                    "size": "$CellCount * 2",
+                    "type": "bytes",
+                    "description": "Array of 2-byte big-endian offsets (relative to page start, byte 0) pointing to each cell's location. For page 1 leaf, each cell contains a sqlite_schema record with table/index definitions.",
+                    "informational": true
+                },
+                {
+                    "name": "P1UnallocatedSpace",
+                    "size": "($CellContentAreaStart or 65536) - 108 - $CellCount * 2",
+                    "type": "bytes",
+                    "description": "**Forensically critical** — unallocated gap between cell pointers and cell content on page 1. May contain remnants of dropped tables, deleted indexes, or modified schema objects. Schema changes (ALTER TABLE, DROP TABLE) leave traces here.",
+                    "forensic_value": "critical"
+                },
+                {
+                    "name": "P1CellContentArea",
+                    "size": "$PageSize - ($CellContentAreaStart or 65536)",
+                    "type": "bytes",
+                    "description": "Cell content area of page 1 containing sqlite_schema records. Each cell holds schema definition SQL (CREATE TABLE, CREATE INDEX, etc.) along with table/index root page numbers. Critical for understanding database structure.",
+                    "forensic_value": true
+                }
+            ]
         },
         {
             "name": "WALHeader",
@@ -1101,20 +1145,80 @@
                     "condition": "$PageType == 5 or $PageType == 2"
                 },
                 {
-                    "name": "PageContent",
-                    "size": "$PageSize - 12",
-                    "type": "bytes",
-                    "description": "Cell pointer array and cell content area. Contains the actual database records (for leaf pages) or child page pointers (for interior pages). Freeblocks and unallocated space between cell pointers and cell content may contain recoverable deleted data.",
-                    "condition": "$PageType == 5 or $PageType == 2",
-                    "informational": true
+                    "name": "NonBTreeContent",
+                    "type": "section",
+                    "condition": "$PageType == 0",
+                    "description": "Non-btree page content. Could be a freelist trunk page (linked list of freed pages), freelist leaf page (reclaimed space), overflow page (large record spill), or pointer-map page (auto-vacuum back-pointers). Forensically valuable — freelist and overflow pages often retain deleted record data.",
+                    "forensic_value": true,
+                    "fields": [
+                        {
+                            "name": "RawPageData",
+                            "size": "$PageSize - 8",
+                            "type": "bytes",
+                            "description": "Raw page data. For freelist trunk pages: first 4 bytes = next trunk page number, next 4 bytes = leaf page count, remaining = array of 4-byte leaf page numbers. For overflow pages: first 4 bytes = next overflow page, remaining = payload data. For freelist leaf pages: content is unused but may contain remnants of deleted records.",
+                            "forensic_value": true
+                        }
+                    ]
                 },
                 {
-                    "name": "PageContent",
-                    "size": "$PageSize - 8",
-                    "type": "bytes",
-                    "description": "Cell pointer array and cell content area. Contains the actual database records (for leaf pages) or child page pointers (for interior pages). Freeblocks and unallocated space between cell pointers and cell content may contain recoverable deleted data.",
-                    "condition": "$PageType != 5 and $PageType != 2",
-                    "informational": true
+                    "name": "InteriorBTreeContent",
+                    "type": "section",
+                    "condition": "$PageType == 5 or $PageType == 2",
+                    "description": "Interior B-tree page content, structured into cell pointer array, unallocated space, and cell content area. Interior pages contain child page pointers for tree navigation.",
+                    "color_gradient": true,
+                    "fields": [
+                        {
+                            "name": "CellPointerArray",
+                            "size": "$CellCount * 2",
+                            "type": "bytes",
+                            "description": "Array of 2-byte big-endian offsets (relative to page start) pointing to each cell's location within the cell content area. Sorted in key order — leftmost (smallest key) first. Each offset enables direct navigation to individual cell records.",
+                            "informational": true
+                        },
+                        {
+                            "name": "UnallocatedSpace",
+                            "size": "($CellContentAreaStart or 65536) - 12 - $CellCount * 2",
+                            "type": "bytes",
+                            "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area. This region frequently contains remnants of deleted records that have not yet been overwritten. Data recovery tools can extract deleted rows, dropped table data, and modified record fragments from this space.",
+                            "forensic_value": "critical"
+                        },
+                        {
+                            "name": "CellContentArea",
+                            "size": "$PageSize - ($CellContentAreaStart or 65536)",
+                            "type": "bytes",
+                            "description": "Cell content area containing actual cell records, packed toward the end of the page. For interior table pages (0x05): each cell is a 4-byte left-child page number + varint rowid. For interior index pages (0x02): each cell is a 4-byte left-child page number + varint payload size + index key payload.",
+                            "informational": true
+                        }
+                    ]
+                },
+                {
+                    "name": "LeafBTreeContent",
+                    "type": "section",
+                    "condition": "$PageType != 5 and $PageType != 2 and $PageType != 0",
+                    "description": "Leaf B-tree page content, structured into cell pointer array, unallocated space, and cell content area. Leaf pages contain the actual database records (table data or index keys).",
+                    "color_gradient": true,
+                    "fields": [
+                        {
+                            "name": "CellPointerArray",
+                            "size": "$CellCount * 2",
+                            "type": "bytes",
+                            "description": "Array of 2-byte big-endian offsets (relative to page start) pointing to each cell's location within the cell content area. Sorted in key order — leftmost (smallest key) first. Each offset enables direct navigation to individual cell records.",
+                            "informational": true
+                        },
+                        {
+                            "name": "UnallocatedSpace",
+                            "size": "($CellContentAreaStart or 65536) - 8 - $CellCount * 2",
+                            "type": "bytes",
+                            "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area. This region frequently contains remnants of deleted records that have not yet been overwritten. Data recovery tools can extract deleted rows, dropped table data, and modified record fragments from this space.",
+                            "forensic_value": "critical"
+                        },
+                        {
+                            "name": "CellContentArea",
+                            "size": "$PageSize - ($CellContentAreaStart or 65536)",
+                            "type": "bytes",
+                            "description": "Cell content area containing actual cell records, packed toward the end of the page. For table leaf pages (0x0D): each cell is varint payload size + varint rowid + record payload (header + column data). For index leaf pages (0x0A): each cell is varint payload size + index key record.",
+                            "informational": true
+                        }
+                    ]
                 }
             ]
         }
