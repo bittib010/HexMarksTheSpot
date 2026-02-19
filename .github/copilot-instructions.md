@@ -60,7 +60,7 @@ Container nodes (`struct`, `section`) have `data=b''` to avoid double-counting b
 Open File, Stop Parse (primary actions only — all other actions in menu bar)
 
 ### Keyboard Shortcuts
-`F11` fullscreen, `Ctrl+Shift+H/D/A/V` copy as hex/decimal/ASCII/parsed value, `Escape` close modals
+`F11` fullscreen, `Ctrl+Shift+H/D/A/V` copy as hex/decimal/ASCII/parsed value, `Enter` in search field triggers search, `Escape` close modals
 
 ### Right-Click Context Menu (parsed fields)
 Copy as Hex, Copy as Decimal, Copy as ASCII, Copy Parsed Value, Bookmark
@@ -81,10 +81,12 @@ Copy as Hex, Copy as Decimal, Copy as ASCII, Copy Parsed Value, Bookmark
 
 ### Other Features
 - Offset format toggle (hex/decimal) with live re-formatting
-- Search/filter on field names
+- Search/filter on field names (Enter key or button)
 - File info modal (name, path, size, SHA-256, field count)
 - Hex dump export, hex text import (multiple formats)
-- Click synchronization between hex viewer and treeview
+- Click synchronization between hex viewer and treeview (black border highlight on selected hex bytes and treeview item)
+- Hex/ASCII column headers pixel-aligned with content (same font, matched padding)
+- Large file warning dialog (>10 MB) before parsing
 - Parse logging to `logs/` directory
 - Loading overlay with progress estimation
 

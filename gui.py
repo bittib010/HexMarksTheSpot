@@ -12,7 +12,7 @@ from datetime import datetime
 
 # Third-Party Libraries
 from tkinter import Tk, Text, N, S, E, W, Frame, Canvas
-from tkinter import filedialog, Button, Scrollbar, Label
+from tkinter import filedialog, messagebox, Button, Scrollbar, Label
 from tkinter import SEL, SEL_LAST, SEL_FIRST, END
 from tkinter import TclError, Entry, Listbox, ttk
 from tkinter import StringVar, DoubleVar, IntVar, NO, Toplevel, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM, Spinbox
@@ -793,14 +793,14 @@ class TextWidget:
         )
         info_label.grid(row=0, column=4, sticky=W, padx=(15, 0), pady=(0, 3))
         
-        # Column headers row
+        # Column headers row — use same mono_font as content to ensure pixel-perfect alignment
         # Offset column header
         offset_header = Label(
             self.container,
             text="  Offset  ",
             bg=ModernTheme.HEX_BG,
             fg=ModernTheme.TEXT_LIGHT,
-            font=header_font,
+            font=mono_font,
             anchor=W,
             padx=6,
             pady=3,
@@ -810,15 +810,16 @@ class TextWidget:
         offset_header.grid(row=1, column=0, sticky=E+W+N+S)
         
         # Hex column header (00 01 02 ... 0F)
+        # padx must match textWidget's padx (6) for column alignment
         hex_header_text = " ".join(f"{i:02X}" for i in range(16))
         hex_column_header = Label(
             self.container,
-            text=f" {hex_header_text}",
+            text=hex_header_text,
             bg=ModernTheme.HEX_BG,
             fg=ModernTheme.TEXT_LIGHT,
-            font=header_font,
+            font=mono_font,
             anchor=W,
-            padx=12,
+            padx=6,
             pady=3,
             relief='flat',
             bd=0
@@ -826,15 +827,16 @@ class TextWidget:
         hex_column_header.grid(row=1, column=1, sticky=E+W+N+S)
         
         # ASCII column header (0123456789ABCDEF)
+        # padx must match asciiText's padx (6) for column alignment
         ascii_header_text = "0123456789ABCDEF"
         ascii_column_header = Label(
             self.container,
-            text=f" {ascii_header_text}",
+            text=ascii_header_text,
             bg=ModernTheme.HEX_BG,
             fg=ModernTheme.TEXT_LIGHT,
-            font=header_font,
+            font=mono_font,
             anchor=W,
-            padx=2,
+            padx=6,
             pady=3,
             relief='flat',
             bd=0
@@ -1367,8 +1369,7 @@ class Main:
 
     def _show_about(self):
         """Show the About dialog with app version and description."""
-        from tkinter.messagebox import showinfo
-        showinfo(
+        messagebox.showinfo(
             "About HexMarksTheSpot",
             "HexMarksTheSpot\n\n"
             "Forensic Hex File Analysis Tool\n\n"
@@ -2353,6 +2354,20 @@ class Main:
                 filetypes=file_types
             )
         if filename:
+            # Warn for large files (>10MB) — parsing may be slow or cause high memory usage
+            file_size = os.path.getsize(filename)
+            if file_size > 10 * 1024 * 1024:  # 10 MB threshold
+                size_str = self._format_file_size(file_size)
+                proceed = messagebox.askyesno(
+                    "Large File Warning",
+                    f"The selected file is {size_str}.\n\n"
+                    "Parsing a large file may take a while and consume "
+                    "significant memory.\n\nDo you want to continue?",
+                    icon='warning'
+                )
+                if not proceed:
+                    return
+            
             # reset previous file treeview
             self.sequence_treeview.delete(
                 *self.sequence_treeview.get_children())  # Clear previous entries
@@ -2363,7 +2378,6 @@ class Main:
             self.progress_message.set("Loading...")
             
             # Show loading overlay for better UX
-            file_size = os.path.getsize(filename)
             self._show_loading_overlay(f"Loading {os.path.basename(filename)}...")
             self._update_loading_message(
                 f"Loading {os.path.basename(filename)}...",
