@@ -15,7 +15,7 @@ from tkinter import Tk, Text, N, S, E, W, Frame, Canvas
 from tkinter import filedialog, messagebox, Button, Scrollbar, Label
 from tkinter import SEL, SEL_LAST, SEL_FIRST, END
 from tkinter import TclError, Entry, Listbox, ttk
-from tkinter import StringVar, DoubleVar, IntVar, NO, Toplevel, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM, Spinbox
+from tkinter import StringVar, DoubleVar, IntVar, BooleanVar, NO, Toplevel, BOTH, LEFT, RIGHT, X, Y, TOP, BOTTOM, Spinbox, Checkbutton
 from tkinter import Menu as tk_Menu
 from tkhtmlview import HTMLText
 
@@ -1099,6 +1099,33 @@ class Main:
         self.offset_format_combo.grid(row=0, column=2, sticky=E)
         self.offset_format_combo.bind("<<ComboboxSelected>>", self._on_offset_format_changed)
         
+        # Search scope checkboxes — let user choose which columns to search
+        scope_frame = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
+        scope_frame.grid(row=1, column=0, columnspan=2, sticky=W, pady=(0, 4))
+        
+        self.search_scope_name = BooleanVar(value=True)
+        self.search_scope_value = BooleanVar(value=True)
+        self.search_scope_hex = BooleanVar(value=False)
+        self.search_scope_ascii = BooleanVar(value=False)
+        
+        scope_font = ('Segoe UI', 8)
+        scope_fg = ModernTheme.TEXT_SECONDARY
+        scope_bg = ModernTheme.BG_PRIMARY
+        scope_active_bg = ModernTheme.BG_PRIMARY
+        
+        Checkbutton(scope_frame, text="Name", variable=self.search_scope_name,
+                    font=scope_font, fg=scope_fg, bg=scope_bg, activebackground=scope_active_bg,
+                    selectcolor=ModernTheme.BG_SECONDARY).pack(side=LEFT, padx=(0, 4))
+        Checkbutton(scope_frame, text="Value", variable=self.search_scope_value,
+                    font=scope_font, fg=scope_fg, bg=scope_bg, activebackground=scope_active_bg,
+                    selectcolor=ModernTheme.BG_SECONDARY).pack(side=LEFT, padx=(0, 4))
+        Checkbutton(scope_frame, text="Hex", variable=self.search_scope_hex,
+                    font=scope_font, fg=scope_fg, bg=scope_bg, activebackground=scope_active_bg,
+                    selectcolor=ModernTheme.BG_SECONDARY).pack(side=LEFT, padx=(0, 4))
+        Checkbutton(scope_frame, text="ASCII", variable=self.search_scope_ascii,
+                    font=scope_font, fg=scope_fg, bg=scope_bg, activebackground=scope_active_bg,
+                    selectcolor=ModernTheme.BG_SECONDARY).pack(side=LEFT, padx=(0, 4))
+        
         self.search_var = StringVar()
         self.search_entry = RoundedEntry(
             search_frame,
@@ -1106,15 +1133,15 @@ class Main:
             font=('Segoe UI', 10),
             radius=8
         )
-        self.search_entry.grid(row=1, column=0, sticky=E+W, padx=(0, 5))
-        self.search_entry.insert(0, "Search fields...")
-        self.search_entry.bind("<FocusIn>", lambda e: self.search_entry.delete(0, END) if self.search_entry.get() == "Search fields..." else None)
-        self.search_entry.bind("<FocusOut>", lambda e: self.search_entry.insert(0, "Search fields...") if not self.search_entry.get() else None)
+        self.search_entry.grid(row=2, column=0, sticky=E+W, padx=(0, 5))
+        self.search_entry.insert(0, "Search...")
+        self.search_entry.bind("<FocusIn>", lambda e: self.search_entry.delete(0, END) if self.search_entry.get() == "Search..." else None)
+        self.search_entry.bind("<FocusOut>", lambda e: self.search_entry.insert(0, "Search...") if not self.search_entry.get() else None)
         # Trigger search on Enter key press
         self.search_entry.bind("<Return>", lambda e: self.search_sequence())
         
         search_buttons = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
-        search_buttons.grid(row=1, column=1, sticky=E)
+        search_buttons.grid(row=2, column=1, sticky=E)
         
         self.search_button = RoundedButton(
             search_buttons,
@@ -1137,6 +1164,36 @@ class Main:
             height=38
         )
         self.clear_button.pack(side=LEFT, padx=2)
+        
+        # Search results info row — shows match count and prev/next navigation
+        results_frame = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
+        results_frame.grid(row=3, column=0, columnspan=2, sticky=E+W, pady=(2, 0))
+        results_frame.grid_columnconfigure(0, weight=1)
+        
+        self._search_results_label = Label(
+            results_frame, text="", bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.TEXT_SECONDARY, font=('Segoe UI', 8), anchor=W
+        )
+        self._search_results_label.grid(row=0, column=0, sticky=W)
+        
+        nav_frame = Frame(results_frame, bg=ModernTheme.BG_PRIMARY)
+        nav_frame.grid(row=0, column=1, sticky=E)
+        
+        self._search_prev_btn = RoundedButton(
+            nav_frame, text="▲", command=self._search_prev,
+            style="small", radius=6, width=28, height=24
+        )
+        self._search_prev_btn.pack(side=LEFT, padx=1)
+        
+        self._search_next_btn = RoundedButton(
+            nav_frame, text="▼", command=self._search_next,
+            style="small", radius=6, width=28, height=24
+        )
+        self._search_next_btn.pack(side=LEFT, padx=1)
+        
+        # Track search match state for prev/next navigation
+        self._search_match_items = []  # list of treeview item IDs from current search
+        self._search_match_index = -1  # current index within matches
         
         # Treeview with modern styling
         treeview_frame = Frame(sidebar_frame, bg=ModernTheme.BG_PRIMARY)
@@ -1564,23 +1621,118 @@ class Main:
 
     def search_sequence(self):
         """
-        Search the sequence items based on the search term entered by the user.
+        Search fields across selected scopes (Name, Value, Hex, ASCII).
+        Filters the treeview to show only matching items, with match count
+        and prev/next navigation.
         """
-        search_term = self.search_var.get().strip().lower()
-        matching_items = [item for item in self.sequence_items if item[0][1] and search_term in item[0][1].lower()]
+        search_term = self.search_var.get().strip()
+        if not search_term or search_term == "Search...":
+            return
+        
+        search_lower = search_term.lower()
+        # For hex search, also prepare a no-space uppercase version so users
+        # can search for "4D5A" or "4D 5A" and both match
+        search_hex_upper = search_term.upper().replace(' ', '')
+        
+        check_name = self.search_scope_name.get()
+        check_value = self.search_scope_value.get()
+        check_hex = self.search_scope_hex.get()
+        check_ascii = self.search_scope_ascii.get()
+        
+        # If no scope selected, default to searching name + value
+        if not any([check_name, check_value, check_hex, check_ascii]):
+            check_name = True
+            check_value = True
+        
+        matching_items = []
+        for item in self.sequence_items:
+            data_tuple = item[0]
+            # Unpack — handles both old 3-tuple and new 5-tuple formats
+            offset, name, table_val = data_tuple[0], data_tuple[1], data_tuple[2]
+            hex_str = data_tuple[3] if len(data_tuple) > 3 else ''
+            ascii_str = data_tuple[4] if len(data_tuple) > 4 else ''
+            
+            matched = False
+            if check_name and name and search_lower in name.lower():
+                matched = True
+            if not matched and check_value and table_val is not None:
+                if search_lower in str(table_val).lower():
+                    matched = True
+            if not matched and check_hex and hex_str:
+                # Match with and without spaces for flexible hex search
+                if search_hex_upper in hex_str.replace(' ', ''):
+                    matched = True
+            if not matched and check_ascii and ascii_str:
+                if search_lower in ascii_str.lower():
+                    matched = True
+            
+            if matched:
+                matching_items.append(item)
+        
+        # Rebuild the treeview with matching items
         self.sequence_treeview.delete(*self.sequence_treeview.get_children())
-        for (raw_offset, name, table_val), tags in matching_items:
+        self._search_match_items = []
+        for data_tuple, tags in matching_items:
+            raw_offset = data_tuple[0]
+            name = data_tuple[1]
+            table_val = data_tuple[2]
             display_offset = self._format_offset(raw_offset)
-            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, self._truncate_value(table_val)), tags=tags)
+            item_id = self.sequence_treeview.insert('', 'end', values=(
+                display_offset, name, self._truncate_value(table_val)), tags=tags)
             self._item_raw_offsets[item_id] = raw_offset
+            self._search_match_items.append(item_id)
+        
+        # Update results label and reset navigation index
+        total = len(self.sequence_items)
+        found = len(matching_items)
+        self._search_results_label.config(text=f"{found} of {total} fields")
+        self._search_match_index = 0 if found > 0 else -1
+        
+        # Auto-select and scroll to the first match
+        if self._search_match_items:
+            first = self._search_match_items[0]
+            self.sequence_treeview.selection_set(first)
+            self.sequence_treeview.see(first)
 
     def clear_search(self):
+        """Clear the search filter and restore all items in the treeview."""
         self.search_var.set('')
+        self._search_results_label.config(text="")
+        self._search_match_items = []
+        self._search_match_index = -1
         self.sequence_treeview.delete(*self.sequence_treeview.get_children())
-        for (raw_offset, name, table_val), tags in self.sequence_items:
+        for data_tuple, tags in self.sequence_items:
+            raw_offset = data_tuple[0]
+            name = data_tuple[1]
+            table_val = data_tuple[2]
             display_offset = self._format_offset(raw_offset)
-            item_id = self.sequence_treeview.insert('', 'end', values=(display_offset, name, self._truncate_value(table_val)), tags=tags)
+            item_id = self.sequence_treeview.insert('', 'end', values=(
+                display_offset, name, self._truncate_value(table_val)), tags=tags)
             self._item_raw_offsets[item_id] = raw_offset
+
+    def _search_prev(self):
+        """Navigate to the previous search result in the treeview."""
+        if not self._search_match_items:
+            return
+        self._search_match_index = (self._search_match_index - 1) % len(self._search_match_items)
+        item_id = self._search_match_items[self._search_match_index]
+        self.sequence_treeview.selection_set(item_id)
+        self.sequence_treeview.see(item_id)
+        n = len(self._search_match_items)
+        self._search_results_label.config(
+            text=f"{self._search_match_index + 1}/{n} of {len(self.sequence_items)} fields")
+
+    def _search_next(self):
+        """Navigate to the next search result in the treeview."""
+        if not self._search_match_items:
+            return
+        self._search_match_index = (self._search_match_index + 1) % len(self._search_match_items)
+        item_id = self._search_match_items[self._search_match_index]
+        self.sequence_treeview.selection_set(item_id)
+        self.sequence_treeview.see(item_id)
+        n = len(self._search_match_items)
+        self._search_results_label.config(
+            text=f"{self._search_match_index + 1}/{n} of {len(self.sequence_items)} fields")
 
     def get_complementary_color(hex_color):
         # TODO: add posibility to change text color to this to avoid "hiding" text in same color
@@ -3360,8 +3512,11 @@ class Main:
         self.text_widget.textWidget.tag_configure(tag, background=color, foreground=fg_color)
         self.text_widget.asciiText.tag_configure(tag, background=color, foreground=fg_color)
         
-        # Store for search/format switching
-        self.sequence_items.append(((offset, node_data['name'], table_val), (tag,)))
+        # Store for search/format switching — include hex and ASCII strings
+        # for multi-scope search (Name, Value, Hex, ASCII)
+        hex_search = node_data['hex_str'].upper().rstrip() if node_data['hex_str'] else ''
+        ascii_search = node_data['ascii_str'] if node_data.get('ascii_str') else ''
+        self.sequence_items.append(((offset, node_data['name'], table_val, hex_search, ascii_search), (tag,)))
         
         # Bulk-insert hex and ASCII data with newline splitting at 16-byte boundaries
         data_len = node_data['data_len']

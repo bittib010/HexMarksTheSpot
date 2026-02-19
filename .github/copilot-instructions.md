@@ -81,7 +81,7 @@ Copy as Hex, Copy as Decimal, Copy as ASCII, Copy Parsed Value, Bookmark
 
 ### Other Features
 - Offset format toggle (hex/decimal) with live re-formatting
-- Search/filter on field names (Enter key or button)
+- Multi-scope search with Name/Value/Hex/ASCII checkboxes, result count display ("N of M fields"), and ▲/▼ prev/next navigation (cyclic). Hex search normalizes spaces so "4D5A" and "4D 5A" both match. Defaults to Name+Value if no checkboxes selected. Search data stored in `sequence_items` as 5-tuples: `((offset, name, table_val, hex_str, ascii_str), (tag,))`.
 - File info modal (name, path, size, SHA-256, field count)
 - Hex dump export, hex text import (multiple formats)
 - Click synchronization between hex viewer and treeview (black border highlight on selected hex bytes and treeview item)
