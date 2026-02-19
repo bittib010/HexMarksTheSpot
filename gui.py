@@ -1341,6 +1341,13 @@ class Main:
         # Treeview border highlight (4 thin frames forming a black border)
         self._highlight_item_id = None
         self._border_frames = []
+        # Parent container border highlight (4 thin frames, colored border)
+        self._parent_highlight_item_id = None
+        self._parent_border_frames = []
+        self._current_parent_highlight_tag = None
+        self._current_parent_sibling_tags = []
+        self._tag_to_parent_tag = {}
+        self._parent_tag_to_children = {}
         self._from_hex_click = False  # Flag to prevent scroll loop on hex click
         
         # Raw offset storage for format switching
@@ -1370,8 +1377,9 @@ class Main:
         self.master.bind("<Control-Shift-V>", self.copy_as_parsed_value)
         
         # Bind scroll/resize events to update treeview highlight border position
-        self.sequence_treeview.bind('<Configure>', lambda e: self.master.after_idle(self._update_treeview_border_position))
-        self.sequence_treeview.bind('<MouseWheel>', lambda e: self.master.after(10, self._update_treeview_border_position))
+        # (both the selection border and the parent container border)
+        self.sequence_treeview.bind('<Configure>', lambda e: self.master.after_idle(self._update_all_treeview_borders))
+        self.sequence_treeview.bind('<MouseWheel>', lambda e: self.master.after(10, self._update_all_treeview_borders))
 
     def _create_menu_bar(self):
         """Create the application menu bar (File, Edit, View, Help).
@@ -1804,9 +1812,9 @@ class Main:
         self.stop_button.config(state="disabled")
 
     def _treeview_yscroll_callback(self, *args):
-        """Wrapper for treeview yscrollcommand that also updates the highlight border."""
+        """Wrapper for treeview yscrollcommand that also updates the highlight borders."""
         self.sequence_vscrollbar.set(*args)
-        self.master.after_idle(self._update_treeview_border_position)
+        self.master.after_idle(self._update_all_treeview_borders)
 
     def _create_highlight_border(self):
         """Create 4 thin Frame widgets to form a black border around treeview items."""
@@ -1850,6 +1858,63 @@ class Main:
         for f in self._border_frames:
             f.place_forget()
         self._highlight_item_id = None
+
+    def _update_all_treeview_borders(self):
+        """Update both selection and parent border positions (called on scroll/resize)."""
+        self._update_treeview_border_position()
+        self._update_parent_treeview_border_position()
+
+    def _create_parent_highlight_border(self, color='#888888'):
+        """Create 4 thin Frame widgets for a colored parent border in the treeview.
+        
+        Uses a distinct color (derived from the parent container's color) to
+        differentiate from the black selection border. This visually shows
+        'this is the parent structure that contains your selected field.'
+        """
+        # Destroy old frames if they exist (color may change per parent)
+        for f in self._parent_border_frames:
+            f.destroy()
+        self._parent_border_frames = []
+        for _ in range(4):  # top, bottom, left, right
+            f = Frame(self.sequence_treeview, bg=color)
+            self._parent_border_frames.append(f)
+
+    def _show_parent_treeview_border(self, item_id, color='#888888'):
+        """Show a colored border around the parent container's treeview item.
+        
+        The border color matches the parent container's color, providing a
+        visual link between the selected child and its containing structure.
+        """
+        self._create_parent_highlight_border(color)
+        self._parent_highlight_item_id = item_id
+        self.master.after_idle(self._update_parent_treeview_border_position)
+
+    def _update_parent_treeview_border_position(self):
+        """Update the parent border frame positions based on current item bbox."""
+        if not self._parent_highlight_item_id or not self._parent_border_frames:
+            return
+        try:
+            bbox = self.sequence_treeview.bbox(self._parent_highlight_item_id)
+        except TclError:
+            self._hide_parent_treeview_border()
+            return
+        if not bbox:
+            for f in self._parent_border_frames:
+                f.place_forget()
+            return
+        x, y, w, h = bbox
+        bw = 2  # border width
+        top, bottom, left, right = self._parent_border_frames
+        top.place(x=x, y=y, width=w, height=bw)
+        bottom.place(x=x, y=y + h - bw, width=w, height=bw)
+        left.place(x=x, y=y, width=bw, height=h)
+        right.place(x=x + w - bw, y=y, width=bw, height=h)
+
+    def _hide_parent_treeview_border(self):
+        """Hide the parent container treeview border."""
+        for f in self._parent_border_frames:
+            f.place_forget()
+        self._parent_highlight_item_id = None
 
     def _format_offset(self, offset):
         """Format an integer offset based on the current display preference."""
@@ -3030,9 +3095,18 @@ class Main:
         self.offset_to_tag = {}
         self.tag_to_display_pos = {}   # tag -> display byte position in hex widget
         self.current_highlight_tag = None
+        self._current_parent_highlight_tag = None  # Currently highlighted parent container tag
+        self._current_parent_sibling_tags = []     # Tags currently showing parent border
         self._hide_treeview_border()
+        self._hide_parent_treeview_border()
         self._from_hex_click = False
         self._item_raw_offsets = {}
+        
+        # Parent-child relationship tracking (derived from JSON nesting structure)
+        # Maps each tag to its nearest parent container tag (struct/section)
+        self._tag_to_parent_tag = {}       # child_tag -> parent_container_tag
+        # Maps each parent container tag to its list of child tags
+        self._parent_tag_to_children = {}  # parent_tag -> [child_tags]
         
         # Pre-build lookup table for ASCII conversion (avoids per-byte branching)
         self._ascii_table = ''.join(
@@ -3060,6 +3134,8 @@ class Main:
         Recursively collect all node data for display.
         Pre-builds hex and ASCII strings for bulk insertion.
         Also pre-computes formatted offsets and contrast colors.
+        Tracks parent-child relationships from the JSON nesting structure
+        so the GUI can highlight parent containers when a child is selected.
         This can safely run in a background thread.
         """
         if self.stop_parsing:
@@ -3073,10 +3149,15 @@ class Main:
         is_hex_fmt = self.offset_format_var.get() == "Hex"
         max_val_width = self.VALUE_COLUMN_MAX_WIDTH
         stop_check = lambda: self.stop_parsing
+        tag_to_parent = self._tag_to_parent_tag
+        parent_to_children = self._parent_tag_to_children
         
-        stack = [(node, 0)]  # iterative DFS to avoid recursion limit
+        # Stack entries: (node, child_idx, parent_container_tag)
+        # parent_container_tag is the tag of the nearest ancestor container
+        # (struct/section with data=b'') — None for top-level fields.
+        stack = [(node, 0, None)]  # iterative DFS to avoid recursion limit
         while stack:
-            current_node, child_idx = stack[-1]
+            current_node, child_idx, parent_container_tag = stack[-1]
             children = current_node.children
             
             if child_idx >= len(children) or stop_check():
@@ -3084,7 +3165,7 @@ class Main:
                 continue
             
             # Advance index for next iteration
-            stack[-1] = (current_node, child_idx + 1)
+            stack[-1] = (current_node, child_idx + 1, parent_container_tag)
             
             key, child = children[child_idx]
             offset = key if key is not None else byte_counter
@@ -3092,6 +3173,14 @@ class Main:
             data = child.data
             data_len = len(data) if data else 0
             color = child.color or '#ffffff'
+            
+            # Track parent-child relationships from the JSON nesting.
+            # Every node records which container it belongs to.
+            if parent_container_tag is not None:
+                tag_to_parent[tag] = parent_container_tag
+                if parent_container_tag not in parent_to_children:
+                    parent_to_children[parent_container_tag] = []
+                parent_to_children[parent_container_tag].append(tag)
             
             # Pre-compute contrast text color (cached)
             fg_color = contrast_cache.get(color)
@@ -3138,9 +3227,15 @@ class Main:
             
             byte_counter += data_len
             
-            # Push child for DFS traversal
+            # Push child for DFS traversal.
+            # If this node is a container (has children but no data), it becomes
+            # the parent_container_tag for all its descendants. This follows the
+            # JSON nesting: struct/section nodes wrap their child fields.
             if child.children:
-                stack.append((child, 0))
+                # Container nodes (data=b'') become the new parent context.
+                # Leaf-with-children (rare) also become parent context.
+                new_parent_tag = tag if data_len == 0 else parent_container_tag
+                stack.append((child, 0, new_parent_tag))
         
         self.byte_counter = byte_counter
     
@@ -3696,32 +3791,22 @@ class Main:
         """
         Highlight a specific tag in the hex and ASCII views.
         Removes highlighting from previously highlighted tag.
+        Also highlights the parent container: applies a colored border to all
+        sibling tags (children of the same parent struct/section) in the hex
+        viewer, and shows a colored border on the parent's treeview item.
         
         :param tag: The tag to highlight
         """
-        # Remove previous active highlight
+        # Remove previous active highlight (selected field)
         if self.current_highlight_tag:
-            # Restore to original color AND remove border
-            try:
-                for node_data in self.collected_nodes:
-                    if node_data['tag'] == self.current_highlight_tag:
-                        original_color = node_data['color']
-                        fg = ColorGenerator.get_contrast_text_color(original_color or '#ffffff')
-                        self.text_widget.textWidget.tag_configure(
-                            self.current_highlight_tag,
-                            background=original_color,
-                            foreground=fg,
-                            borderwidth=0,
-                            relief='flat')
-                        self.text_widget.asciiText.tag_configure(
-                            self.current_highlight_tag,
-                            background=original_color,
-                            foreground=fg,
-                            borderwidth=0,
-                            relief='flat')
-                        break
-            except:
-                pass
+            self._restore_tag_style(self.current_highlight_tag)
+        
+        # Remove previous parent highlight (sibling borders in hex viewer)
+        self._clear_parent_hex_highlight()
+        
+        # Apply parent container highlight BEFORE the selection border,
+        # so the selection border draws on top of the parent border.
+        self._apply_parent_highlight(tag)
         
         # Apply a black border highlight with bright background for clear visibility.
         # relief='solid' draws the border using the foreground color, so we set
@@ -3732,6 +3817,112 @@ class Main:
             tag, foreground='#000000', borderwidth=2, relief='solid')
         
         self.current_highlight_tag = tag
+
+    def _restore_tag_style(self, tag):
+        """Restore a tag to its original color and flat border in the hex viewer."""
+        try:
+            for node_data in self.collected_nodes:
+                if node_data['tag'] == tag:
+                    original_color = node_data['color']
+                    fg = ColorGenerator.get_contrast_text_color(original_color or '#ffffff')
+                    self.text_widget.textWidget.tag_configure(
+                        tag,
+                        background=original_color,
+                        foreground=fg,
+                        borderwidth=0,
+                        relief='flat')
+                    self.text_widget.asciiText.tag_configure(
+                        tag,
+                        background=original_color,
+                        foreground=fg,
+                        borderwidth=0,
+                        relief='flat')
+                    break
+        except Exception:
+            pass
+
+    def _apply_parent_highlight(self, selected_tag):
+        """
+        Highlight the parent container of the selected tag.
+        
+        Looks up the parent container (struct/section) from the JSON nesting
+        structure and applies a colored border to all sibling tags in the hex
+        viewer. Also shows a colored border on the parent's treeview row.
+        
+        This provides visual context: 'these fields all belong to the same
+        parent structure as the one you selected.'
+        """
+        parent_tag = self._tag_to_parent_tag.get(selected_tag)
+        if not parent_tag:
+            # No parent (top-level field) — hide parent border
+            self._hide_parent_treeview_border()
+            return
+        
+        # Get the parent container's color for the border
+        parent_color = '#888888'
+        if parent_tag in self.tag_to_child:
+            parent_node = self.tag_to_child[parent_tag]
+            parent_color = parent_node.color or '#888888'
+        
+        # Darken the parent color slightly for a visible border
+        parent_border_color = self._darken_color(parent_color, factor=0.6)
+        
+        # Apply a subtle colored border (groove relief) to all sibling tags
+        # in the hex viewer — this visually groups them as 'same parent'
+        sibling_tags = self._parent_tag_to_children.get(parent_tag, [])
+        self._current_parent_sibling_tags = []
+        for sibling_tag in sibling_tags:
+            if sibling_tag == selected_tag:
+                continue  # Skip selected — it gets the black border instead
+            # Only apply border to leaf nodes that have hex data
+            self.text_widget.textWidget.tag_configure(
+                sibling_tag, borderwidth=1, relief='groove')
+            self.text_widget.asciiText.tag_configure(
+                sibling_tag, borderwidth=1, relief='groove')
+            self._current_parent_sibling_tags.append(sibling_tag)
+        
+        # Also store the parent tag itself for tracking
+        self._current_parent_highlight_tag = parent_tag
+        
+        # Show colored border on the parent's treeview row
+        if parent_tag in self.tag_to_treeview_item:
+            parent_item_id = self.tag_to_treeview_item[parent_tag]
+            self._show_parent_treeview_border(parent_item_id, parent_border_color)
+        else:
+            self._hide_parent_treeview_border()
+
+    def _clear_parent_hex_highlight(self):
+        """Remove the parent highlight (groove borders) from all sibling tags."""
+        for sibling_tag in self._current_parent_sibling_tags:
+            # Restore each sibling to flat border (original color stays)
+            try:
+                self.text_widget.textWidget.tag_configure(
+                    sibling_tag, borderwidth=0, relief='flat')
+                self.text_widget.asciiText.tag_configure(
+                    sibling_tag, borderwidth=0, relief='flat')
+            except Exception:
+                pass
+        self._current_parent_sibling_tags = []
+        self._current_parent_highlight_tag = None
+
+    @staticmethod
+    def _darken_color(hex_color, factor=0.7):
+        """Darken a hex color by a factor (0.0=black, 1.0=unchanged).
+        
+        Used to create a visible border color from a parent container's
+        potentially light pastel color.
+        """
+        try:
+            hex_color = hex_color.lstrip('#')
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+            r = int(r * factor)
+            g = int(g * factor)
+            b = int(b * factor)
+            return f'#{r:02X}{g:02X}{b:02X}'
+        except (ValueError, IndexError):
+            return '#888888'
 
 
 def main():

@@ -85,6 +85,7 @@ Copy as Hex, Copy as Decimal, Copy as ASCII, Copy Parsed Value, Bookmark
 - File info modal (name, path, size, SHA-256, field count)
 - Hex dump export, hex text import (multiple formats)
 - Click synchronization between hex viewer and treeview (black border highlight on selected hex bytes and treeview item)
+- Parent container highlighting — when a field is selected, its parent struct/section (from the JSON nesting) is visually indicated: sibling fields in the hex viewer get a groove border, and the parent container's treeview row gets a colored border (darkened version of parent's color). This leverages the existing JSON hierarchy so no manual configuration is needed. Tracked via `_tag_to_parent_tag` and `_parent_tag_to_children` mappings built during `_collect_nodes()` DFS.
 - Hex/ASCII column headers pixel-aligned with content (same font, matched padding)
 - Large file warning dialog (>10 MB) before parsing
 - Hex integrity safeguard — post-parse verification of parsed bytes vs actual file (count + content), warning dialog on mismatch
