@@ -132,8 +132,7 @@
                     "name": "SchemaFormatNumber",
                     "size": 4,
                     "type": "uint",
-                    "description": "Schema format number - indicates minimum SQLite version compatibility.",
-                    "forensic_value": true,
+                    "description": "Schema format number — identifies which SQL features the schema uses. SQLite has evolved its on-disk B-tree record format over time:\n\n- **1:** Original format (SQLite 3.0.0, 2004). No DESC indexes, no boolean type affinity.\n- **2:** Added DESC index support (SQLite 3.1.3, 2005). Index B-trees can store entries in descending order.\n- **3:** Added boolean type affinity (SQLite 3.1.4, 2005). Allows `CHECK` constraints with boolean semantics.\n- **4:** Current format (SQLite 3.3.0, 2006). Adds support for `IF NOT EXISTS` and other modern SQL features.\n\nMost databases created since 2006 will be format 4. A lower value means the database was created by a very old SQLite version and has never been rebuilt with `VACUUM`.",
                     "expected_values": [1, 2, 3, 4],
                     "value_map": {
                         "1": "SQLite 3.0.0 (2004-06-18)",
@@ -1172,14 +1171,14 @@
                             "name": "CellPointerArray",
                             "size": "$CellCount * 2",
                             "type": "bytes",
-                            "description": "Array of 2-byte big-endian offsets (relative to page start) pointing to each cell's location within the cell content area. Sorted in key order — leftmost (smallest key) first. Each offset enables direct navigation to individual cell records.",
+                            "description": "Cell pointer array — `CellCount` entries of 2-byte big-endian offsets, each pointing to a cell within the cell content area below. Maintained in sorted key order (ascending rowid for table pages, ascending index key for index pages) to support binary search.\n\nFor interior pages, each pointed-to cell contains: a 4-byte left-child page number + a varint rowid (for table interior, 0x05) or a varint payload-size + index key payload (for index interior, 0x02). These cells only navigate — they don't hold actual row data.",
                             "informational": true
                         },
                         {
                             "name": "UnallocatedSpace",
                             "size": "($CellContentAreaStart or 65536) - 12 - $CellCount * 2",
                             "type": "bytes",
-                            "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area. This region frequently contains remnants of deleted records that have not yet been overwritten. Data recovery tools can extract deleted rows, dropped table data, and modified record fragments from this space.",
+                            "description": "**Forensically critical** — unallocated gap between the cell pointer array (growing down from the header) and the cell content area (growing up from the page bottom). When cells are deleted from an interior page, their pointer is removed but the cell bytes persist here until new cells are inserted over them.\n\nFor interior pages, deleted cells contain child page numbers — recovering these can reveal which subtrees existed before a table was restructured or dropped.",
                             "forensic_value": "critical"
                         },
                         {

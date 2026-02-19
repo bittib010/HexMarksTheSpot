@@ -60,7 +60,7 @@ Container nodes (`struct`, `section`) have `data=b''` to avoid double-counting b
 Open File, Stop Parse (primary actions only — all other actions in menu bar)
 
 ### Keyboard Shortcuts
-`F11` fullscreen, `Ctrl+Shift+H/D/A/V` copy as hex/decimal/ASCII/parsed value, `Enter` in search field triggers search, `Escape` close modals
+`F11` fullscreen, `Ctrl+Shift+H/D/A/V` copy as hex/decimal/ASCII/parsed value, `Enter` in search field triggers search or iterates to next match, `Escape` close modals / clear search
 
 ### Right-Click Context Menu (parsed fields)
 Copy as Hex, Copy as Decimal, Copy as ASCII, Copy Parsed Value, Bookmark

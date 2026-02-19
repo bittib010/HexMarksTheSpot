@@ -2,10 +2,10 @@
 - Add support for WAL files so that it makes those parsings easier. This would involve implementing the logic to read and parse the Write-Ahead Log (WAL) file format used by SQLite, which contains changes that have not yet been committed to the main database file. By parsing WAL files, users can see uncommitted changes and recover data that may not be present in the main database file, providing a more comprehensive view of the database state.
 - We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
 - Remember to update Copilot instructions if necessary on new implementations. 
-- For SQLITE format template, we need a lot more educational information: like what is the right most pointer, what does it point to and why is it relevant? Things like these should be added to each. The user might not know the relevance of each element/item/field, so we should add this information in the forensic notes/description. This would make the application more educational and useful for learning about file formats and their structures, especially for users who are new to digital forensics or file format analysis.
-- search functionality should be updated:
-  - next match button or implementation not visible and clicking enter once more should iterate through the matches.
-  - nulling the search field with either searching blank or clicking a clear button should reset the search and show all fields again.
+- ~~For SQLITE format template, we need a lot more educational information: like what is the right most pointer, what does it point to and why is it relevant? Things like these should be added to each. The user might not know the relevance of each element/item/field, so we should add this information in the forensic notes/description. This would make the application more educational and useful for learning about file formats and their structures, especially for users who are new to digital forensics or file format analysis.~~ ✅ Done — all 30+ fields enhanced with deep educational content (B-tree concepts, forensic significance, freelist mechanics, page layout, etc.)
+- ~~search functionality should be updated:~~
+  - ~~next match button or implementation not visible and clicking enter once more should iterate through the matches.~~ ✅ Done — Enter key now iterates through matches via `_on_search_enter()`, Escape clears search
+  - ~~nulling the search field with either searching blank or clicking a clear button should reset the search and show all fields again.~~ ✅ Done — blank/placeholder search triggers `clear_search()`, resets all fields
 
 ## Future Parser Enhancements
 
