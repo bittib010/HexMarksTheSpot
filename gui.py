@@ -3194,11 +3194,13 @@ class Main:
             except:
                 pass
         
-        # Apply new highlight with a distinctive border/outline effect
+        # Apply a black border highlight with bright background for clear visibility.
+        # relief='solid' draws the border using the foreground color, so we set
+        # foreground to black temporarily to get a visible black outline.
         self.text_widget.textWidget.tag_configure(
-            tag, borderwidth=2, relief='solid')
+            tag, foreground='#000000', borderwidth=2, relief='solid')
         self.text_widget.asciiText.tag_configure(
-            tag, borderwidth=2, relief='solid')
+            tag, foreground='#000000', borderwidth=2, relief='solid')
         
         self.current_highlight_tag = tag
 
