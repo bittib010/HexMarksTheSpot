@@ -1087,9 +1087,9 @@
             ]
         },
         {
-            "name": "DatabasePages",
+            "name": "Page ${_count + 1}",
             "type": "struct",
-            "description": "Remaining database pages (pages 2 through N). Each page is PageSize bytes and begins with a B-tree page header. Contains actual table/index data, freelist pages, overflow pages, and pointer-map pages.",
+            "description": "Database page ${_count + 1} of $DatabaseSizeInPages. Each page is $PageSize bytes and begins with a B-tree page header. Contains actual table/index data, freelist pages, overflow pages, and pointer-map pages.",
             "forensic_value": true,
             "repeat": "$DatabaseSizeInPages - 1",
             "repeat_step": "$PageSize",

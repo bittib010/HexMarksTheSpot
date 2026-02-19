@@ -289,6 +289,60 @@ class ConfigBasedParser(FileParser):
         from common import ColorGenerator
         return ColorGenerator.get_next_color()
     
+    def resolve_template_string(self, template: str) -> str:
+        """Resolve $references in a string template, returning a string.
+        
+        Unlike resolve_reference (which evaluates to a numeric/bool value),
+        this method performs string interpolation — replacing $field_name
+        patterns with their string values while preserving the rest of
+        the template text.
+        
+        Supports two syntaxes:
+        - Simple substitution: $field_name → value as string
+        - Expression evaluation: ${expr} → evaluated result as string
+          e.g., ${_count + 1} → "2" when _count is 1
+        
+        Useful for dynamic field names and descriptions:
+        - "Page ${_count + 1}" → "Page 2", "Page 3", ...
+        - "Record $_index of $_total" → "Record 0 of 100"
+        
+        Special loop variables:
+        - $_index — 0-based iteration index (set by repeat loops)
+        - $_count — 1-based iteration count (set by repeat loops)
+        """
+        if not isinstance(template, str) or '$' not in template:
+            return template
+        result = template
+        
+        # First, handle ${expression} patterns — allows arithmetic like ${_count + 1}
+        def eval_expr(match):
+            expr_str = match.group(1)
+            # Replace $-references within the expression
+            for key in sorted(self.parsed_values.keys(), key=len, reverse=True):
+                value = self.parsed_values[key]
+                if isinstance(value, ParsedBitfield):
+                    val_str = str(value.value)
+                else:
+                    val_str = str(value)
+                expr_str = re.sub(rf'\b{re.escape(key)}\b', lambda m, v=val_str: v, expr_str)
+            try:
+                return str(eval(expr_str))
+            except Exception:
+                return match.group(0)  # Return original on failure
+        
+        result = re.sub(r'\$\{([^}]+)\}', eval_expr, result)
+        
+        # Then, handle simple $field_name substitutions
+        # Sort keys by length descending so $field_name_long matches before $field_name
+        for key in sorted(self.parsed_values.keys(), key=len, reverse=True):
+            value = self.parsed_values[key]
+            if isinstance(value, ParsedBitfield):
+                val_str = str(value.value)
+            else:
+                val_str = str(value)
+            result = re.sub(rf'\${key}\b', lambda m, v=val_str: v, result)
+        return result
+
     def resolve_reference(self, ref: str) -> Any:
         """
         Resolve a reference to a parsed value.
@@ -705,6 +759,11 @@ class ConfigBasedParser(FileParser):
         forensic_value = field_dict.get("forensic_value", False)
         output_format = field_dict.get("output_format")
         
+        # Resolve $-template references in name and description (e.g., $_count in loops)
+        # The original name is kept for parsed_values dict key, the resolved name is for display
+        display_name = self.resolve_template_string(name) if '$' in name else name
+        description = self.resolve_template_string(description) if '$' in description else description
+        
         # Check enabled flag - skip disabled fields entirely
         enabled = field_dict.get("enabled", True)
         if not enabled:
@@ -861,7 +920,8 @@ class ConfigBasedParser(FileParser):
         is_unparsed = (str(display_value) == raw_hex)
         
         # Build HTML description (convert markdown in descriptions to HTML)
-        html_desc = f"<h1>{name}</h1>"
+        # Use display_name (with resolved $-templates) for user-facing content
+        html_desc = f"<h1>{display_name}</h1>"
         if description:
             html_desc += f"<p>{markdown_to_html(description)}</p>"
         if is_unparsed:
@@ -876,7 +936,7 @@ class ConfigBasedParser(FileParser):
         node = Node(
             data=data,
             info=html_desc,
-            name=name,
+            name=display_name,
             table_value=str(display_value),
             color=node_color
         )
@@ -903,6 +963,10 @@ class ConfigBasedParser(FileParser):
         forensic_value = field_dict.get("forensic_value")
         value_map = field_dict.get("value_map")
         output_format = field_dict.get("output_format")
+        
+        # Resolve $-template references in name and description (e.g., $_count in loops)
+        display_name = self.resolve_template_string(name) if '$' in name else name
+        description = self.resolve_template_string(description) if '$' in description else description
         
         offset = self.file.tell()
         
@@ -972,7 +1036,7 @@ class ConfigBasedParser(FileParser):
         
         # Build HTML description
         hex_repr = ' '.join(f'{b:02X}' for b in data)
-        html_desc = f"<h1>{name}</h1>"
+        html_desc = f"<h1>{display_name}</h1>"
         if description:
             html_desc += f"<p>{markdown_to_html(description)}</p>"
         html_desc += f"<p><b>Value:</b> {value}</p>"
@@ -984,7 +1048,7 @@ class ConfigBasedParser(FileParser):
         node = Node(
             data=data,
             info=html_desc,
-            name=name,
+            name=display_name,
             table_value=str(display_value),
             color=node_color
         )
@@ -1011,6 +1075,11 @@ class ConfigBasedParser(FileParser):
         repeat_until = field_dict.get("repeat_until")
         use_gradient = field_dict.get("color_gradient", False)
         
+        # Resolve $-template references in description (e.g., $_count in parent loop)
+        # Name resolution for repeat iterations is handled in the loop below;
+        # for non-repeat sections, resolve here
+        description = self.resolve_template_string(description) if '$' in description else description
+        
         # Deprecated sections: still parsed but visually muted with a notice
         deprecated = field_dict.get("deprecated", False)
         if deprecated:
@@ -1024,8 +1093,9 @@ class ConfigBasedParser(FileParser):
         
         # Resolve repeat count
         if repeat is None:
-            # No repeat - parse once as before
-            return self._parse_section_once(name, description, color, nested_fields, parent_node,
+            # No repeat - parse once as before; resolve name for display
+            display_name = self.resolve_template_string(name) if '$' in name else name
+            return self._parse_section_once(display_name, description, color, nested_fields, parent_node,
                                             use_gradient=use_gradient)
         
         # Has repeat - resolve the count
@@ -1046,24 +1116,49 @@ class ConfigBasedParser(FileParser):
         if repeat_step is not None:
             resolved_step = self.resolve_size(repeat_step) if isinstance(repeat_step, str) else int(repeat_step)
         
-        # Create container node for all iterations
+        # Create container node for all iterations.
+        # If the name contains template expressions ($-references), strip them
+        # for the container label — individual iterations get the resolved name.
         offset = self.file.tell()
         if repeat_count == -1:
             count_label = "until condition" if repeat_until else "until EOF"
         else:
             count_label = str(repeat_count)
+        
+        # Detect whether the config author used $-template syntax in the name,
+        # so we can decide whether to auto-append [N] or use the resolved name
+        name_has_template = '$' in name
+        
+        if name_has_template:
+            # Clean container name: strip ${expr} and $variable patterns for the wrapper node
+            container_name = re.sub(r'\$\{[^}]+\}', '', name).strip()
+            container_name = re.sub(r'\$\w+', '', container_name).strip()
+            if not container_name:
+                container_name = "Repeated Section"
+        else:
+            container_name = name
+        
         container_node = Node(
             data=b'',
-            info=f"<h1>{name}</h1><p>{markdown_to_html(description)}</p><p><b>Repeat:</b> {count_label} iterations</p>",
-            name=name,
+            info=f"<h1>{container_name}</h1><p>{markdown_to_html(description)}</p><p><b>Repeat:</b> {count_label} iterations</p>",
+            name=container_name,
             color=color or self.get_next_color()
         )
         
         iteration = 0
         max_iterations = repeat_count if repeat_count > 0 else 100000  # Safety limit for EOF mode
         
+        # Save previous loop variables for nesting support — inner loops
+        # temporarily override $_index/$_count, outer values restored after
+        prev_index = self.parsed_values.get('_index')
+        prev_count = self.parsed_values.get('_count')
+        
         while iteration < max_iterations:
             iter_start = self.file.tell()
+            
+            # Set loop iteration variables before any field resolution in this iteration
+            self.parsed_values['_index'] = iteration        # 0-based
+            self.parsed_values['_count'] = iteration + 1    # 1-based (human-friendly)
             
             # Check for EOF - applies to all modes to prevent reading past file end
             peek = self.file.read(1)
@@ -1079,10 +1174,18 @@ class ConfigBasedParser(FileParser):
                 if iter_start + resolved_step > file_size:
                     break
             
-            # Create node for this iteration
-            iter_name = f"{name}[{iteration}]"
+            # Create node for this iteration — if the name contains $_index/$_count,
+            # resolve the template directly; otherwise fall back to Name[N] convention
+            if name_has_template:
+                iter_name = self.resolve_template_string(name)
+            else:
+                iter_name = f"{name}[{iteration}]"
+            
+            # Resolve $-references in description for this iteration
+            iter_desc = self.resolve_template_string(description) if '$' in description else description
+            
             iter_node = self._parse_section_once(
-                iter_name, f"{description} (iteration {iteration})", 
+                iter_name, f"{iter_desc} (iteration {iteration})", 
                 color, nested_fields, container_node,
                 use_gradient=use_gradient
             )
@@ -1107,6 +1210,14 @@ class ConfigBasedParser(FileParser):
                     pass
             
             iteration += 1
+        
+        # Restore previous loop variables (supports nested repeat loops)
+        if prev_index is not None:
+            self.parsed_values['_index'] = prev_index
+            self.parsed_values['_count'] = prev_count
+        else:
+            self.parsed_values.pop('_index', None)
+            self.parsed_values.pop('_count', None)
         
         parent_node.add_child(offset, container_node)
         return container_node

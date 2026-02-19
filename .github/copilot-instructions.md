@@ -197,6 +197,22 @@ When identifying a file's format, parsers are matched in three tiers:
 - Expressions can start with `(` — the parser detects `$` references anywhere in the string
 - VLQ fields auto-store `${name}_bytes` for size tracking
 
+### Template Strings in Names & Descriptions
+
+Field `name` and `description` properties support `$`-reference interpolation via `resolve_template_string()`:
+
+- **Simple substitution**: `$field_name` → replaced with string value of that field
+- **Expression evaluation**: `${expr}` → evaluated as Python expression, result inserted as string
+  - e.g., `"Page ${_count + 1}"` → `"Page 2"`, `"Page 3"`, ...
+
+**Special loop variables** (set automatically by repeat loops):
+- `$_index` — 0-based iteration index
+- `$_count` — 1-based iteration count (human-friendly)
+
+When a repeat section's name contains `$` references, the template is resolved per-iteration instead of appending `[N]`. The container (parent) node gets a cleaned name with template expressions stripped.
+
+Nested repeat loops properly save/restore `$_index` and `$_count`.
+
 ### Repeat Modes
 
 | Mode | Syntax | Behavior |
@@ -207,7 +223,7 @@ When identifying a file's format, parsers are matched in three tiers:
 | Until condition | `"repeat": "until"` + `"repeat_until": "$x == 0"` | Until condition is true |
 | With step | `"repeat_step": 1024` | Fixed-size record iteration |
 
-Children are named `Name[0]`, `Name[1]`, etc.
+Children are named `Name[0]`, `Name[1]`, etc. — unless the name contains `$` template references, in which case each iteration resolves the template (e.g., `"Page ${_count + 1}"` → `"Page 2"`, `"Page 3"`).
 
 ### Color System
 
@@ -236,6 +252,11 @@ Adjacent colors guaranteed distinct. `color_gradient: true` creates progressive 
 { "name": "AttrType", "size": 4, "type": "int" },
 { "name": "TypeA", "type": "section", "condition": "$AttrType == 16", "fields": [...] },
 { "name": "TypeB", "type": "section", "condition": "$AttrType == 48", "fields": [...] }
+
+// Dynamic page names using loop variables
+{ "name": "Page ${_count + 1}", "type": "struct", "repeat": "$PageCount - 1",
+  "repeat_step": "$PageSize", "description": "Page ${_count + 1} of $PageCount",
+  "fields": [...] }
 ```
 
 ### Important Notes

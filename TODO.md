@@ -6,8 +6,10 @@
 - We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
 - Remember to update Copilot instructions if necessary on new implementations. 
 - For SQLITE format template, we need a lot more educational information: like what is the right most pointer, what does it point to and why is it relevant? Things like these should be added to each. The user might not know the relevance of each element/item/field, so we should add this information in the forensic notes/description. This would make the application more educational and useful for learning about file formats and their structures, especially for users who are new to digital forensics or file format analysis.
-- Add iterator available inside a loop. like for sqlite pages, we should be able to say `.get_page_number()` to get the current page number, and use that in the field names or forensic notes. This would allow for more dynamic and informative parsing, as users can easily identify which page they are currently parsing and include that information in the field names or forensic notes for better context and understanding of the parsed data. ther might be other useful  similar functionality to add as well.
-
+- ~~Add iterator available inside a loop.~~ **DONE** — `$_index` (0-based), `$_count` (1-based) loop variables, `${expr}` syntax for arithmetic in names/descriptions. SQLite pages now show "Page 2", "Page 3", etc.
+- search functionality should be updated:
+  - next match button or implementation not visible and clicking enter once more should iterate through the matches.
+  - nulling the search field with either searching blank or clicking a clear button should reset the search and show all fields again.
 
 ## Future Parser Enhancements
 
