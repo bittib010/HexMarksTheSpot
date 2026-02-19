@@ -1010,6 +1010,11 @@ class Main:
         # Configure master background
         master.configure(bg=ModernTheme.BG_PRIMARY)
 
+        # ========== MENU BAR ==========
+        # Centralizes all actions previously spread across buttons,
+        # freeing sidebar space for the parsed fields treeview.
+        self._create_menu_bar()
+
         # Configure rows and columns in the master frame
         master.grid_rowconfigure(0, weight=0)  # Header row
         master.grid_rowconfigure(1, weight=1)  # Main content row
@@ -1103,6 +1108,8 @@ class Main:
         self.search_entry.insert(0, "Search fields...")
         self.search_entry.bind("<FocusIn>", lambda e: self.search_entry.delete(0, END) if self.search_entry.get() == "Search fields..." else None)
         self.search_entry.bind("<FocusOut>", lambda e: self.search_entry.insert(0, "Search fields...") if not self.search_entry.get() else None)
+        # Trigger search on Enter key press
+        self.search_entry.bind("<Return>", lambda e: self.search_sequence())
         
         search_buttons = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
         search_buttons.grid(row=1, column=1, sticky=E)
@@ -1171,7 +1178,8 @@ class Main:
         self.sequence_treeview.configure(xscrollcommand=self.sequence_hscrollbar.set)
         self.sequence_hscrollbar.config(command=self.sequence_treeview.xview)
         
-        # Action buttons
+        # Action buttons — only primary actions kept in sidebar;
+        # all other actions moved to the menu bar for a cleaner layout.
         actions_frame = Frame(sidebar_frame, bg=ModernTheme.BG_PRIMARY)
         actions_frame.grid(row=2, column=0, sticky=E+W+S, pady=(10, 0))
         actions_frame.grid_columnconfigure(0, weight=1)
@@ -1197,69 +1205,6 @@ class Main:
             radius=10
         )
         self.stop_button.grid(row=0, column=1, sticky=E+W, padx=(5, 0), pady=3)
-        
-        self.bookmark_button = RoundedButton(
-            actions_frame,
-            text="📌 Add Bookmark",
-            command=self.add_bookmark,
-            style="secondary",
-            radius=10
-        )
-        self.bookmark_button.grid(row=1, column=0, sticky=E+W, padx=(0, 5), pady=3)
-        
-        self.show_bookmarks_button = RoundedButton(
-            actions_frame,
-            text="📚 Bookmarks",
-            command=self.show_bookmarks,
-            style="secondary",
-            radius=10
-        )
-        self.show_bookmarks_button.grid(row=1, column=1, sticky=E+W, padx=(5, 0), pady=3)
-        
-        self.export_button = RoundedButton(
-            actions_frame,
-            text="📄 Export CSV",
-            command=self.export_to_csv,
-            style="secondary",
-            radius=10
-        )
-        self.export_button.grid(row=2, column=0, sticky=E+W, padx=(0, 5), pady=3)
-        
-        self.export_hex_button = RoundedButton(
-            actions_frame,
-            text="📋 Export Hex",
-            command=self.export_as_hex_txt,
-            style="secondary",
-            radius=10
-        )
-        self.export_hex_button.grid(row=2, column=1, sticky=E+W, padx=(5, 0), pady=3)
-        
-        self.import_hex_button = RoundedButton(
-            actions_frame,
-            text="📥 Import Hex",
-            command=self.import_hex_text,
-            style="secondary",
-            radius=10
-        )
-        self.import_hex_button.grid(row=3, column=0, sticky=E+W, padx=(0, 5), pady=3)
-        
-        self.file_info_button = RoundedButton(
-            actions_frame,
-            text="ℹ️ File Info",
-            command=self.show_file_info,
-            style="secondary",
-            radius=10
-        )
-        self.file_info_button.grid(row=3, column=1, sticky=E+W, padx=(5, 0), pady=3)
-        
-        self.exit_button = RoundedButton(
-            actions_frame,
-            text="Exit",
-            command=self.exit_app,
-            style="secondary",
-            radius=10
-        )
-        self.exit_button.grid(row=4, column=0, columnspan=2, sticky=E+W, pady=(3, 0))
         
         # ========== STATUS BAR ==========
         status_frame = Frame(master, bg=ModernTheme.BG_SECONDARY)
@@ -1349,6 +1294,91 @@ class Main:
         # Bind scroll/resize events to update treeview highlight border position
         self.sequence_treeview.bind('<Configure>', lambda e: self.master.after_idle(self._update_treeview_border_position))
         self.sequence_treeview.bind('<MouseWheel>', lambda e: self.master.after(10, self._update_treeview_border_position))
+
+    def _create_menu_bar(self):
+        """Create the application menu bar (File, Edit, View, Help).
+        
+        Centralizes actions that were previously spread across sidebar buttons,
+        freeing vertical space for the parsed fields treeview.
+        """
+        menubar = tk_Menu(self.master, bg=ModernTheme.BG_SECONDARY,
+                          fg=ModernTheme.TEXT_PRIMARY,
+                          activebackground=ModernTheme.ACCENT_PRIMARY,
+                          activeforeground='white',
+                          relief='flat', bd=0)
+        
+        # --- File menu ---
+        file_menu = tk_Menu(menubar, tearoff=0,
+                            bg=ModernTheme.BG_SECONDARY,
+                            fg=ModernTheme.TEXT_PRIMARY,
+                            activebackground=ModernTheme.ACCENT_PRIMARY,
+                            activeforeground='white')
+        file_menu.add_command(label="Open File...", command=self.open_file,
+                              accelerator="")
+        file_menu.add_command(label="Import Hex Text...", command=self.import_hex_text)
+        file_menu.add_separator()
+        file_menu.add_command(label="Export CSV...", command=self.export_to_csv)
+        file_menu.add_command(label="Export Hex Dump...", command=self.export_as_hex_txt)
+        file_menu.add_separator()
+        file_menu.add_command(label="File Info", command=self.show_file_info)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.exit_app)
+        menubar.add_cascade(label="File", menu=file_menu)
+        
+        # --- Edit menu ---
+        edit_menu = tk_Menu(menubar, tearoff=0,
+                            bg=ModernTheme.BG_SECONDARY,
+                            fg=ModernTheme.TEXT_PRIMARY,
+                            activebackground=ModernTheme.ACCENT_PRIMARY,
+                            activeforeground='white')
+        edit_menu.add_command(label="Copy as Hex", command=self.copy_as_hex,
+                              accelerator="Ctrl+Shift+H")
+        edit_menu.add_command(label="Copy as Decimal", command=self.copy_as_decimal,
+                              accelerator="Ctrl+Shift+D")
+        edit_menu.add_command(label="Copy as ASCII", command=self.copy_as_ascii,
+                              accelerator="Ctrl+Shift+A")
+        edit_menu.add_command(label="Copy Parsed Value", command=self.copy_as_parsed_value,
+                              accelerator="Ctrl+Shift+V")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Add Bookmark", command=self.add_bookmark)
+        edit_menu.add_command(label="Bookmarks...", command=self.show_bookmarks)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        
+        # --- View menu ---
+        view_menu = tk_Menu(menubar, tearoff=0,
+                            bg=ModernTheme.BG_SECONDARY,
+                            fg=ModernTheme.TEXT_PRIMARY,
+                            activebackground=ModernTheme.ACCENT_PRIMARY,
+                            activeforeground='white')
+        view_menu.add_command(label="Toggle Fullscreen", command=self.toggle_fullscreen,
+                              accelerator="F11")
+        menubar.add_cascade(label="View", menu=view_menu)
+        
+        # --- Help menu ---
+        help_menu = tk_Menu(menubar, tearoff=0,
+                            bg=ModernTheme.BG_SECONDARY,
+                            fg=ModernTheme.TEXT_PRIMARY,
+                            activebackground=ModernTheme.ACCENT_PRIMARY,
+                            activeforeground='white')
+        help_menu.add_command(label="About HexMarksTheSpot", command=self._show_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        
+        self.master.config(menu=menubar)
+
+    def _show_about(self):
+        """Show the About dialog with app version and description."""
+        from tkinter.messagebox import showinfo
+        showinfo(
+            "About HexMarksTheSpot",
+            "HexMarksTheSpot\n\n"
+            "Forensic Hex File Analysis Tool\n\n"
+            "A Python-based hex file analysis and annotation tool\n"
+            "for digital forensics. Parse binary file formats using\n"
+            "declarative JSON configurations and visualize their\n"
+            "structure with color-coded hex highlighting.\n\n"
+            "github.com/bittib010/HexMarksTheSpot",
+            parent=self.master
+        )
 
     def export_to_csv(self):
         # Ask the user where to save the CSV file

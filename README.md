@@ -409,8 +409,16 @@ class MyFileParser(FileParser):
 - **Mirrored Behavior**: Consistent experience between hex and ASCII views
 - **Selective Parsing**: Stop parsing when investigating specific segments
 - **Search**: Filter findings in the listview ![](images/20231004230845.png)
+- **Menu Bar**: File/Edit/View/Help menu structure for clean access to all actions
 - **Export CSV**: Export parsed data to CSV format
-- **Bookmarks**: Mark sequences for easier lookup
+- **Export Hex Dump**: Export file as a formatted hex dump (.txt)
+- **Import Hex Text**: Import hex text in multiple formats and parse it
+- **Bookmarks**: Mark sequences with parsed values and comments, persist per-file, export as JSON/CSV/Markdown reports
+- **File Info**: SHA-256 hash, size, field count in a modal overlay
+- **Offset Format Toggle**: Switch between hex and decimal offsets live
+- **Caching**: SHA-256-keyed pickle caching for fast reload of previously parsed files
+- **Copy Operations**: Copy selected field as hex, decimal, ASCII, or parsed value (keyboard shortcuts)
+- **Right-Click Context Menu**: Quick access to copy and bookmark actions
 
 ### Included Parsers
 
@@ -430,6 +438,10 @@ class MyFileParser(FileParser):
 - ZIP archives
 - PDF documents (enhanced from .bt with forensic keyword reference)
 - Windows Event Log (EVTX)
+- ELF executables
+- WAV audio files
+- Windows Registry hives
+- SQLite databases (JSON config)
 
 ### Known Limitations
 
@@ -453,6 +465,7 @@ HexMarksTheSpot/
 ├── main.py                # CLI and entry point
 ├── common.py              # Core Node and FileParser classes
 ├── config_parser.py       # JSON-based parser engine
+├── cache_manager.py       # SHA-256 caching, bookmark persistence, export
 ├── parser_loader.py       # Dynamic parser discovery
 ├── pyproject.toml         # Modern Python packaging
 ├── requirements.txt       # Dependencies

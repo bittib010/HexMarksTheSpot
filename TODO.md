@@ -1,6 +1,5 @@
 - Pages content on SQLite3 database. This is necessary to handle large databases without consuming excessive memory. Implement a mechanism to fetch and display results in chunks, allowing users to navigate through pages of results.
 - Consider outsourcing the parsing and reading the finished parsed file,  to avoid the app crashing.???
-- Rounded corners on buttons and input fields for a more modern look.
 - precedence logic to look at extension first, then magic bytes, then alternative magic bytes.
   - This forces us to also add file protocol versioning, so we can add new fields in the future without breaking old configs. We can also add a "deprecated" field to mark fields that should no longer be used but are still supported for backward compatibility.
 - Add a "deprecated" field to mark fields that should no longer be used but are still supported for backward compatibility. This allows us to phase out old fields gracefully while maintaining support for existing configurations.
@@ -9,12 +8,27 @@
 - clicking hexviewer marks the location in the parserfield currently, but the mark is hard to see unless you know which color it already had. lets change the mark to be a border change for the item instead. black border would be good.
 - Set size limit? as it keeps crashing on < 3mb files. Heavily improved parsing speed improved the experienced limit of a crashing application. Not tested yet. But a warning if a file is more than 10MB like "Parsing a large file might take a while, do you want to continue?" would be good.
 - Add a safeguard that looks at the last index of the hexviewer and verifies this with the actual last index of the file. We should parse no matter if this check fails, but warn the user and initiate a lookup of WHERE the parsing actually failes. This should be done by iteratively scan through the displayed hex and file hex - the first mismatch should be printed with the error message. This would help users identify if the file was truncated or if there was an issue during parsing that caused it to stop prematurely or maybe more reliably: an error with the parsing logic or template.
-- Making more space for the Field Parse section by moving all buttons into a typical "File", "Edit", "View", "Help" menu structure. This would allow us to add more features in the future without cluttering the UI, and also provide a more familiar interface for users.
-- Bookmark should have the value there as well, a snippet of it in the table, but the full value on export. 
-- The Bookmark modal/window should have an "export" button that allows you to export the bookmarks to a JSON or CSV file, maybe even as Markdown with some sort of table formatting or code formatting - something that makes the findings and comments stand out. This would allow users to save their bookmarks and share them with others, and use as some sort of report or reference in their investigations.
+- ~~Making more space for the Field Parse section by moving all buttons into a typical "File", "Edit", "View", "Help" menu structure.~~ **DONE** — Menu bar implemented with File/Edit/View/Help. Sidebar reduced to Open File + Stop only.
+  - ~~This would also force us into adding a "Help" or "Learn"/"About" section.~~ **DONE** — About dialog added in Help menu.
+- ~~Bookmark should have the value there as well, a snippet of it in the table, but the full value on export.~~ **DONE** — Value column added to bookmark treeview, full value stored, is_raw_hex detection.
+- ~~The Bookmark modal/window should have an "export" button that allows you to export the bookmarks to a JSON or CSV file, maybe even as Markdown.~~ **DONE** — Export as JSON/CSV/Markdown with configurable raw hex byte limit, formatted hex display, parsed values in full.
 - SQLITE should be updated. Pages are as an example pretty underparsed: we are currently not parsing the rows of data, the sqlite statements etc. Making these available as single sequences would be really beneficial. If we have implemented the logic to set a structure as a child of another, we should have a current page as parent for all those sub structures which in turn will highlight the belonging structures of that page as similar gradient of the same color. This would make it much easier to visually identify which structures belong together and navigate through the parsed data. If this is not implemented, we should strive for at least mentioning somehow that this is a structure within a page. https://www.sqlite.org/fileformat.html. The URL could also potentially show fields not considered yet. If any found, add it to this TODO list so we can keep track of progress and future enhancements.
 - Add support for WAL files so that it makes those parsings easier. This would involve implementing the logic to read and parse the Write-Ahead Log (WAL) file format used by SQLite, which contains changes that have not yet been committed to the main database file. By parsing WAL files, users can see uncommitted changes and recover data that may not be present in the main database file, providing a more comprehensive view of the database state.
-- 
+- LNK files should be btter parsed in terms of the parsed value `output_format`. Lots of the output format is not formatted correctly. 
+- Some files have double HEADER parsed. This might be intended, but seems wrong. 
+- We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
+- LNK Fields that need to be parsed better: 
+  - EntryModifiedDate (should be a timestamp, current example: 2c3969a3 (raw hex))
+  - EntryFileAttributes: should be hex: 0x... current example: 50
+  - ItemType: should be hex: 0x...
+  - LinkInfoHeaderSize: Should be bytes, currenlty 28, but should use the builtin for actual size meaning it should show `28 B`.
+  - ... After some lookup of the different fields, it seems to be discrepancies: we are using the correct parsed value some places but others not: the complete job would be immensely updated by looking at having the parsed value be the same for each field in:
+    - the parser field listview (the main one)
+    - the bookmark table (currently only some fields have the parsed value, others show the raw hex)
+    - the bookmark export (currently only some fields have the parsed value, others show the raw hex)
+    - The added information on the bottom of the Description field (Named File Details). It is most often correct here, and the place where it is mostly wrong is within the table in Parser Fields table.
+- Align the row header indexes for both ascii and hex related to the actual table below. Now it seems shifter, by having them aligning with the wrong column making it seem like the offset is not correct. 
+- Remember to update Copilot instructions if necessary on new implementations. 
 
 
 ## Future Parser Enhancements
