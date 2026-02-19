@@ -8,6 +8,7 @@
     "magic_offset": 0,
     "endianness": "big",
     "file_extensions": [".sqlite", ".sqlite3", ".db"],
+    "forensic_notes": "SQLite databases are among the most commonly encountered file formats in digital forensics. They are used by virtually every modern application: web browsers (Chrome, Firefox, Safari), messaging apps (iMessage, WhatsApp, Signal, Telegram), email clients, mobile OS components (iOS, Android), and desktop applications.\n\n**Key forensic properties of SQLite:**\n\n1. **Deleted data persists:** DELETE removes cell pointers and marks space as free, but does NOT zero the data. Records survive in freeblocks, unallocated page space, and freelist pages until explicitly overwritten.\n\n2. **VACUUM is rare:** Full VACUUM rebuilds the database and destroys all deleted data, but most applications never call it. Check IncrementalVacuumMode and LargestRootBTreePage to assess vacuum risk.\n\n3. **WAL files contain recent activity:** If WriteVersion = 2 (WAL mode), the .db-wal file may contain uncommitted or recently committed changes not yet in the main database file.\n\n4. **Three locations for deleted data:** (a) Unallocated space within active pages (gap between cell pointers and content), (b) Freeblocks within active pages (linked list of freed cells), (c) Freelist pages (entire pages returned to the free pool).\n\n5. **Journal files are evidence:** A leftover .db-journal file contains pre-transaction page images — the database state before the last modification.\n\n**Tools:** DB Browser for SQLite, sqlparse, undark, sqlite-deleted-records, Epilog, Belkasoft Evidence Center",
     "references": [
         "https://www.sqlite.org/fileformat.html",
         "https://www.sqlite.org/wal.html",
@@ -35,7 +36,7 @@
                     "name": "PageSize",
                     "size": 2,
                     "type": "uint",
-                    "description": "Database page size in bytes (power of 2, 512-65536). 1 means 65536. Critical for page boundary calculations.",
+                    "description": "Database page size in bytes. SQLite organizes all data into fixed-size pages — every table row, index entry, and metadata structure lives within a page of this size. Must be a power of 2 between 512 and 65536 (a stored value of 1 means 65536). The page size fundamentally affects storage efficiency: smaller pages waste less space for small records but add B-tree depth; larger pages reduce tree depth and improve sequential read performance but waste more space on partially-filled pages. This value is set at database creation (via `PRAGMA page_size`) and cannot be changed afterward without `VACUUM`. Multiply this by *DatabaseSizeInPages* to calculate the expected file size — any difference indicates truncation, appended data, or corruption.",
                     "forensic_value": true,
                     "expected_values": [1, 512, 1024, 2048, 4096, 8192, 16384, 32768]
                 },
@@ -43,7 +44,7 @@
                     "name": "WriteVersion",
                     "size": 1,
                     "type": "uint",
-                    "description": "File format write version. Indicates journal mode - check for associated -wal and -journal files.",
+                    "description": "File format write version — indicates which journal mode was used for the last write operation.\n\n- **Value 1 (Legacy/rollback journal):** Changes are written to a separate `.db-journal` file before modifying the main database. The journal contains *original* page images, allowing rollback if the write fails. After a successful commit the journal is deleted or truncated. A leftover `.db-journal` file indicates a crash during a transaction — SQLite will automatically roll back on next open.\n\n- **Value 2 (WAL mode):** Changes are appended to a `.db-wal` (Write-Ahead Log) file instead of modifying the database directly. Readers see a consistent snapshot while writers append new pages to the WAL. A `.db-shm` shared memory file coordinates access. WAL mode allows concurrent reads during writes and is the default for most modern applications (Chrome, iOS, Android).\n\n**Forensic significance:** WAL mode databases may have uncommitted data in the `.db-wal` file — always collect all three files (`.db`, `.db-wal`, `.db-shm`) together.",
                     "forensic_value": true,
                     "expected_values": [1, 2],
                     "value_map": {
@@ -55,7 +56,7 @@
                     "name": "ReadVersion",
                     "size": 1,
                     "type": "uint",
-                    "description": "File format read version. Must match WriteVersion for proper operation.",
+                    "description": "File format read version. Must be ≤ WriteVersion for the database to be readable. If ReadVersion > the SQLite library version's supported format, the library will refuse to open the database. A mismatch between ReadVersion and WriteVersion (e.g., ReadVersion=1 but WriteVersion=2) can indicate the database was converted between journal modes or was written by an unusual SQLite build.",
                     "forensic_value": true,
                     "expected_values": [1, 2],
                     "value_map": {
@@ -67,7 +68,7 @@
                     "name": "ReservedSpacePerPage",
                     "size": 1,
                     "type": "uint",
-                    "description": "Bytes of unused space at end of each page. Non-zero may indicate encryption (SQLCipher uses this).",
+                    "description": "Number of bytes reserved at the end of every page for extensions. The *usable* page size is `PageSize - ReservedSpacePerPage`. This reserved region is not used by the SQLite core engine but is available for extensions like **SQLCipher** (encrypted SQLite), which stores per-page HMAC authentication tags in this space. A non-zero value here is a strong indicator that the database is encrypted or uses a custom SQLite extension. For standard unencrypted databases, this should always be 0.",
                     "forensic_value": true,
                     "expected_values": {"min": 0, "max": 255}
                 },
@@ -75,56 +76,56 @@
                     "name": "MaxPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Maximum embedded payload fraction (must be 64). Non-64 value indicates corruption or non-standard database.",
+                    "description": "Maximum embedded payload fraction — must always be 64. This constant controls how much of a B-tree page can be occupied by a single cell's payload before it spills to overflow pages. The threshold is calculated as `(usable_size - 12) * MaxPayloadFraction / 255`. At the mandated value of 64, roughly 25% of a page can hold one cell's data inline. Any value other than 64 means the database is corrupted or was created by a non-standard SQLite fork.",
                     "expected_values": [64]
                 },
                 {
                     "name": "MinPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Minimum embedded payload fraction (must be 32). Non-32 value indicates corruption or non-standard database.",
+                    "description": "Minimum embedded payload fraction — must always be 32. When a cell's payload exceeds the overflow threshold, SQLite keeps at least this fraction of a page worth of data inline (the 'minimum payload') and moves the rest to overflow pages. This ensures each cell contributes a meaningful amount of data to the page rather than being mostly a pointer to overflow. At 32, the minimum is roughly `(usable_size - 12) * 32 / 255 - 23` bytes.",
                     "expected_values": [32]
                 },
                 {
                     "name": "LeafPayloadFraction",
                     "size": 1,
                     "type": "uint",
-                    "description": "Leaf payload fraction (must be 32). Non-32 value indicates corruption or non-standard database.",
+                    "description": "Leaf payload fraction — must always be 32. This is the equivalent of MinPayloadFraction but applies specifically to table leaf pages (type 0x0D) where actual row data resides. The distinction exists because table leaf cells have a different structure (payload size varint + rowid varint + payload) than index cells, resulting in different overhead calculations. Any value other than 32 indicates corruption.",
                     "expected_values": [32]
                 },
                 {
                     "name": "FileChangeCounter",
                     "size": 4,
                     "type": "uint",
-                    "description": "File change counter - incremented on each transaction commit. Compare with VersionValidFor to detect incomplete transactions.",
+                    "description": "File change counter — incremented with every transaction commit. This is how SQLite detects whether another process modified the database: each connection caches this value and compares it before reading. If it differs, the page cache is invalidated and the schema is re-read.\n\n**Forensic use:** Compare this with *VersionValidFor* — they should be equal. A mismatch means the database was last modified by SQLite < 3.7.0 (which didn't update VersionValidFor), or an incomplete transaction occurred. The absolute value indicates how many successful write transactions have been committed to this database — useful for assessing activity level.",
                     "forensic_value": true
                 },
                 {
                     "name": "DatabaseSizeInPages",
                     "size": 4,
                     "type": "uint",
-                    "description": "Size of database file in pages. Compare with actual file size to detect truncation or appended data.",
+                    "description": "Size of the database file measured in pages. Multiply by *PageSize* to get expected file size in bytes. If the actual file is **larger** than `DatabaseSizeInPages × PageSize`, extra bytes beyond the declared end may contain deleted page remnants or appended data — this is a forensic goldmine. If the file is **smaller**, the database was truncated (corruption or deliberate anti-forensics). A value of 0 is valid for databases written by SQLite < 3.7.0; in that case, size is computed from the file length.",
                     "forensic_value": true
                 },
                 {
                     "name": "FirstFreelistTrunkPage",
                     "size": 4,
                     "type": "uint",
-                    "description": "Page number of first freelist trunk page. Non-zero indicates deleted data may be recoverable in freelist pages.",
+                    "description": "Page number of the first freelist trunk page, or 0 if the freelist is empty. The freelist is a linked list of pages that were once in use but have been released (via `DELETE`, `DROP TABLE`, etc.).\n\n**How the freelist works:** Trunk pages form a singly-linked list. Each trunk page contains: a 4-byte pointer to the next trunk page (0 if last), a 4-byte count of leaf page numbers stored on this trunk, and then an array of 4-byte leaf page numbers. Leaf pages are the actual freed data pages — they retain their original content until overwritten by a future `INSERT`.\n\n**Forensic significance:** A non-zero value here means deleted data exists and may be recoverable. Freelist leaf pages often contain complete, unmodified copies of deleted records. Tools like `undark` and `sqlite-deleted-records` specifically target freelist pages for recovery.",
                     "forensic_value": true
                 },
                 {
                     "name": "TotalFreelistPages",
                     "size": 4,
                     "type": "uint",
-                    "description": "Total number of freelist pages. Higher count suggests more deleted/recoverable data. Knowing this might help prioritize recovery efforts and focus on databases with more recoverable content.",
+                    "description": "Total number of pages on the freelist (trunk + leaf pages combined). This is a quick indicator of how much deleted data the database contains. A high count relative to *DatabaseSizeInPages* suggests significant data deletion — the database may have been 'cleaned' but not vacuumed.\n\n**Why data persists:** `DELETE` in SQLite marks pages as free but does not zero them. Only `VACUUM` (which rebuilds the entire database) or `PRAGMA secure_delete=ON` (which zeros content on delete) removes data from freelist pages. Most applications do not enable secure_delete, so deleted records persist indefinitely until the pages are reused by new inserts.\n\n**Triage tip:** Compare `TotalFreelistPages × PageSize` with file size to estimate what percentage of the database is deleted content.",
                     "forensic_value": true
                 },
                 {
                     "name": "SchemaCookie",
                     "size": 4,
                     "type": "uint",
-                    "description": "Schema cookie - incremented when schema changes (CREATE/DROP/ALTER TABLE). Indicates schema modification history.",
+                    "description": "Schema cookie — incremented whenever the database schema changes (CREATE TABLE, DROP TABLE, ALTER TABLE, CREATE INDEX, etc.). SQLite caches the schema in memory; when this cookie differs from the cached version, the schema is re-read from the sqlite_schema table.\n\n**Forensic use:** A high schema cookie value suggests the database structure has been modified many times — possibly indicating schema evolution during development, or deliberate schema manipulation (e.g., dropping and recreating tables to destroy evidence). Compare with *FileChangeCounter* — a schema cookie close to the change counter means most transactions involved schema changes.",
                     "forensic_value": true
                 },
                 {
@@ -145,20 +146,20 @@
                     "name": "DefaultPageCacheSize",
                     "size": 4,
                     "type": "uint",
-                    "description": "Suggested cache size in pages. Application-specific setting."
+                    "description": "Suggested cache size in pages, set via `PRAGMA default_cache_size`. This tells SQLite how many pages to hold in memory for performance. The value is a hint only — SQLite may use more or less depending on memory pressure. A large value (thousands of pages) suggests the application expected heavy database workload. Zero means use the compile-time default (usually 2000 pages, or about 8 MB with 4 KB pages)."
                 },
                 {
                     "name": "LargestRootBTreePage",
                     "size": 4,
                     "type": "uint",
-                    "description": "Page number of largest root b-tree page in auto-vacuum/incremental-vacuum mode. Zero in non-auto-vacuum databases.",
+                    "description": "In auto-vacuum mode, this stores the page number of the largest root B-tree page (the highest-numbered page that is the root of a table or index B-tree). Zero means auto-vacuum is disabled (the default).\n\n**What auto-vacuum does:** When enabled, SQLite automatically moves pages to fill gaps left by deleted pages, keeping the file compact. The database file shrinks as data is deleted (unlike normal mode where freelist pages accumulate). This field helps SQLite track which pages are B-tree roots so it can safely relocate other pages.\n\n**Forensic impact:** Auto-vacuum is *destructive to evidence*. When a page is freed, its contents are immediately overwritten by relocating another page into its slot. There is no freelist to recover data from. If this value is non-zero, deleted data recovery is significantly harder. Fortunately, most SQLite databases do *not* enable auto-vacuum — it requires `PRAGMA auto_vacuum=1` before any tables are created.",
                     "forensic_value": true
                 },
                 {
                     "name": "TextEncoding",
                     "size": 4,
                     "type": "uint",
-                    "description": "Database text encoding. Critical for proper string interpretation.",
+                    "description": "Database text encoding — controls how all text strings are stored on disk.\n\n- **1 (UTF-8):** The most common encoding. ASCII-compatible, variable-width (1–4 bytes per character). Used by the vast majority of SQLite databases including Android, Chrome, Firefox, and most Unix/Linux applications.\n- **2 (UTF-16le):** Little-endian UTF-16. Each character uses 2 or 4 bytes. Used by some Windows applications and older .NET software.\n- **3 (UTF-16be):** Big-endian UTF-16. Rare in practice.\n\n**Critical for forensics:** This encoding applies to all text in the database — including table names in `sqlite_schema`, column names, and all text column values. If you're carving deleted records from freelist or unallocated pages, you *must* know this encoding to correctly interpret recovered strings. Set at database creation via `PRAGMA encoding` and cannot be changed afterward.",
                     "forensic_value": true,
                     "expected_values": [1, 2, 3],
                     "value_map": {
@@ -171,14 +172,14 @@
                     "name": "UserVersion",
                     "size": 4,
                     "type": "uint",
-                    "description": "User version number - application-defined value set via PRAGMA user_version. Can identify application or schema version.",
+                    "description": "User-defined version number — set by applications via `PRAGMA user_version = N`. SQLite itself does not use this value; it is entirely application-controlled. Apps often use it to track database schema migrations (e.g., user_version=1 for initial schema, 2 after adding a column, etc.).\n\n**Forensic use:** Can help identify which application version created or last migrated the database. For example, a messaging app might set this to track its internal data model version. Correlate with known version numbers from application source code or documentation to determine the app release that last touched this database.",
                     "forensic_value": true
                 },
                 {
                     "name": "IncrementalVacuumMode",
                     "size": 4,
                     "type": "uint",
-                    "description": "Incremental vacuum mode flag. Non-zero enables incremental vacuum which affects how deleted space is handled.",
+                    "description": "Incremental vacuum mode flag. Controls how freed pages are handled:\n\n- **0 (disabled, default):** Freed pages go to the freelist and stay there indefinitely — deleted data is preserved and recoverable until the pages are reused or a full `VACUUM` is run. This is the most common setting and the most favorable for forensics.\n\n- **Non-zero (enabled):** The application can call `PRAGMA incremental_vacuum(N)` to return N freelist pages to the OS (shrinking the file). This gradually destroys deleted data piecemeal. Combined with *LargestRootBTreePage* (auto-vacuum indicator), this setting means the database actively reclaims deleted space.\n\n**Forensic impact:** Enabled incremental vacuum reduces the window for data recovery. If this is non-zero and *TotalFreelistPages* is low, deleted data may have already been permanently destroyed.",
                     "forensic_value": true,
                     "value_map": {
                         "0": "Disabled - freelist pages retain deleted data",
@@ -189,7 +190,7 @@
                     "name": "ApplicationID",
                     "size": 4,
                     "type": "uint",
-                    "description": "Application ID - identifies the application that created/uses this database. Set via PRAGMA application_id.",
+                    "description": "Application ID — set via `PRAGMA application_id` to identify which application owns this database. When set, the `file` command (Unix) or other identification tools can recognize the file type beyond just 'SQLite database'.\n\n**Forensic use:** This is one of the fastest ways to identify what application created a database without examining the schema. Many major applications register unique IDs. If 0 (unspecified), fall back to examining the schema (table names, column names) to identify the source application.\n\nSee the value_map below for known application IDs from common forensic targets.",
                     "forensic_value": true,
                     "value_map": {
                         "0": "Unspecified/Generic SQLite",
@@ -211,21 +212,21 @@
                     "name": "ReservedForExpansion",
                     "size": 20,
                     "type": "bytes",
-                    "description": "Reserved space for future expansion. Should be all zeros. Non-zero bytes may indicate proprietary extensions or tampering.",
+                    "description": "Reserved space for future SQLite format expansion — 20 bytes that must all be zero in a valid database. Non-zero bytes here indicate one of: (1) database corruption, (2) a proprietary SQLite extension storing custom metadata, (3) deliberate tampering (e.g., steganographic data hiding), or (4) a future SQLite version using this space for new features. Always worth examining in a forensic investigation.",
                     "forensic_value": true
                 },
                 {
                     "name": "VersionValidFor",
                     "size": 4,
                     "type": "uint",
-                    "description": "Version-valid-for number. Should equal FileChangeCounter. Mismatch indicates database was modified by older SQLite or incomplete transaction.",
+                    "description": "Version-valid-for number — should equal *FileChangeCounter*. This value is set to the change counter at the time *SQLiteVersionNumber* (below) and *DatabaseSizeInPages* were last updated. If this doesn't match the current *FileChangeCounter*, SQLite ignores the stored DatabaseSizeInPages and instead calculates size from the actual file length.\n\n**Forensic use:** A mismatch between this value and *FileChangeCounter* indicates either: (1) the database was last written by SQLite < 3.7.0 (which didn't maintain these fields), (2) the database was modified by a tool that doesn't update the header properly, or (3) an incomplete transaction corrupted the header. This can help establish whether the database was tampered with by a non-standard tool.",
                     "forensic_value": true
                 },
                 {
                     "name": "SQLiteVersionNumber",
                     "size": 4,
                     "type": "uint",
-                    "description": "SQLite library version that last wrote to this database. Format: major*1000000 + minor*1000 + patch (e.g., 3039004 = 3.39.4)",
+                    "description": "SQLite library version number that last wrote to this database. Encoded as `major×1000000 + minor×1000 + patch` — for example, 3039004 = SQLite 3.39.4.\n\n**Forensic use:** This reveals which SQLite version (and by extension, which OS or application version) last modified the database. Cross-reference with known SQLite versions bundled with operating systems: iOS 15 ships SQLite ~3.36, Android 12 ships ~3.32, macOS 12 ships ~3.37, Python 3.10 ships ~3.37. This can help establish the platform and timeframe of the last modification.",
                     "forensic_value": true,
                     "expected_values": {"min": 3000000, "max": 3999999}
                 }
@@ -234,14 +235,14 @@
         {
             "name": "FirstPageBTreeHeader",
             "type": "struct",
-            "description": "B-tree page header for page 1 (starts at offset 100). Page 1 always contains the sqlite_master/sqlite_schema table.",
+            "description": "B-tree page header for page 1 (starts at offset 100, immediately after the 100-byte database header). Page 1 is special — it always contains the root page of the `sqlite_schema` table (formerly called `sqlite_master`). This system table catalogs every object in the database: every `CREATE TABLE`, `CREATE INDEX`, `CREATE VIEW`, and `CREATE TRIGGER` statement is stored as a row here. Reading page 1's B-tree is the starting point for understanding any SQLite database.",
             "forensic_value": true,
             "fields": [
                 {
                     "name": "PageType",
                     "size": 1,
                     "type": "uint",
-                    "description": "B-tree page type. Page 1 should be 0x0D (table leaf) or 0x05 (table interior).",
+                    "description": "B-tree page type flag. SQLite uses B-trees (balanced tree data structures) to organize all data. There are four page types, distinguished along two axes:\n\n**Table vs Index:**\n- *Table B-trees* store actual row data, keyed by integer rowid\n- *Index B-trees* store index entries that map column values to rowids\n\n**Interior vs Leaf:**\n- *Leaf pages* contain the actual data cells (this is where records live)\n- *Interior pages* are navigation nodes — they contain only keys and child page pointers, forming a tree structure that allows SQLite to find any record in O(log n) page reads\n\nFor page 1 (the `sqlite_schema` table root), expect 0x0D (leaf) for small databases or 0x05 (interior) for databases with many tables/indexes. An unexpected value here (like 0x02 or 0x0A) means the schema table is stored as an index B-tree, which would be highly unusual and possibly indicate corruption.",
                     "forensic_value": true,
                     "expected_values": [2, 5, 10, 13],
                     "value_map": {
@@ -255,35 +256,35 @@
                     "name": "FirstFreeblockOffset",
                     "size": 2,
                     "type": "uint",
-                    "description": "Offset to first freeblock in page, or 0 if none. Non-zero indicates deleted records in page.",
+                    "description": "Offset to the first freeblock within this page, or 0 if there are no freeblocks. Freeblocks form a singly-linked list within the page: each freeblock starts with a 2-byte pointer to the next freeblock (0 if last), followed by a 2-byte size field.\n\n**What creates freeblocks:** When a cell is deleted or updated with a smaller value, the freed space becomes a freeblock. SQLite tries to reuse freeblocks for new cells of similar size. Unlike freelist *pages* (whole pages returned to the free pool), freeblocks are *within-page* free space.\n\n**Forensic significance:** A non-zero value here means records have been deleted or modified on this page. The freeblock chain may still contain partially intact deleted records — especially if the delete was recent and the space hasn't been reused. Freeblock content can be carved with specialized SQLite forensic tools.",
                     "forensic_value": true
                 },
                 {
                     "name": "CellCount",
                     "size": 2,
                     "type": "uint",
-                    "description": "Number of cells in this page. For page 1, this is the number of schema objects.",
+                    "description": "Number of cells currently stored on this page. Each cell represents one record (in leaf pages) or one navigation key (in interior pages). For page 1 (`sqlite_schema` root), this is the number of database objects (tables + indexes + views + triggers) if this is a leaf page, or the number of child page pointers if interior.\n\n**Key insight:** This only counts *active* cells. Deleted cells become freeblocks or fragmented free bytes but are NOT counted here. So `CellCount` being lower than expected (e.g., you know a table was dropped) is normal — the dropped schema entry's cell space is now free.",
                     "forensic_value": true
                 },
                 {
                     "name": "CellContentAreaStart",
                     "size": 2,
                     "type": "uint",
-                    "description": "Offset to start of cell content area. 0 means 65536. Gap between header and content may contain deleted data.",
+                    "description": "Byte offset within the page where the cell content area begins (0 is interpreted as 65536). Understanding the page layout is key:\n\n**Page layout (top to bottom):**\n1. Page header (8 or 12 bytes)\n2. Cell pointer array (grows downward as cells are added)\n3. **Unallocated space** (gap between pointers and content)\n4. Cell content area (grows upward from the bottom of the page)\n\nThe cell pointer array and cell content area grow *toward each other* from opposite ends of the page. This value marks where the content area begins — the gap between the end of the pointer array and this offset is unallocated space.\n\n**Forensic significance:** The unallocated gap between pointers and content is prime forensic territory. When cells are deleted, their pointer is removed (array shrinks) but their content may persist in this gap until overwritten by new cells growing from the bottom.",
                     "forensic_value": true
                 },
                 {
                     "name": "FragmentedFreeBytes",
                     "size": 1,
                     "type": "uint",
-                    "description": "Number of fragmented free bytes in cell content area. Higher values indicate more deleted/modified records.",
+                    "description": "Total number of fragmented free bytes on this page. Fragments are free byte ranges that are too small to form a freeblock (which requires at least 4 bytes: 2 for the next-pointer + 2 for the size).\n\n**When fragments occur:** If a cell is deleted and leaves 1–3 free bytes that can't be merged with an adjacent freeblock, those bytes become fragments. SQLite tracks the total count here but does NOT maintain a list of where they are — they're effectively 'lost' to normal allocation.\n\n**Maximum value:** If this exceeds 255 (a single byte's max), SQLite defragments the page by compacting all cells toward the bottom and consolidating free space. So this value ranges 0–255.\n\n**Forensic significance:** A high value (especially > 50) indicates heavy deletion activity on this page. Combined with *FirstFreeblockOffset* and the unallocated space, fragments contribute to the total recoverable area on the page.",
                     "forensic_value": true
                 },
                 {
                     "name": "RightMostPointer",
                     "size": 4,
                     "type": "uint",
-                    "description": "Right-most child page number (interior pages only, not present in leaf pages). 0 or omitted for leaf pages.",
+                    "description": "Right-most child page pointer — only present on interior (non-leaf) pages, adding 4 bytes to the header.\n\n**Why this exists:** In a B-tree, each interior cell contains a key and a *left* child pointer (the subtree with all keys ≤ that cell's key). But there's always one more child subtree than there are keys — the subtree containing all keys *greater than* the last cell's key. That final subtree is pointed to by this field.\n\n**Example:** If an interior page has cells with keys [10, 20, 30], there are 4 child subtrees: [≤10], [11–20], [21–30], and [>30]. The first three are stored in the cells; the fourth (>30) is this right-most pointer.\n\n**Forensic note:** This page number should reference a valid page within the database. If it points beyond *DatabaseSizeInPages*, the page is corrupt or was part of a larger database that was truncated.",
                     "forensic_value": true,
                     "condition": "$PageType == 5 or $PageType == 2"
                 }
@@ -293,28 +294,28 @@
             "name": "Page1InteriorContent",
             "type": "section",
             "condition": "$PageType == 5 or $PageType == 2",
-            "description": "Page 1 interior B-tree content. Page 1 always contains the sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers). Interior page means the schema table spans multiple pages.",
+            "description": "Page 1 B-tree content (interior layout). Since this is an interior page, it means the `sqlite_schema` table has grown large enough to span multiple pages. Each cell here contains a child page pointer and a rowid key — not the actual schema SQL text. The schema records themselves are on the child pages.\n\nThis typically happens when a database has dozens or hundreds of tables/indexes, as each schema entry includes the full `CREATE TABLE` or `CREATE INDEX` SQL statement.",
             "color_gradient": true,
             "fields": [
                 {
                     "name": "P1CellPointerArray",
                     "size": "$CellCount * 2",
                     "type": "bytes",
-                    "description": "Array of 2-byte big-endian offsets (relative to page start, byte 0) pointing to each cell's location. For page 1 interior, each cell contains a child page pointer + varint rowid for the sqlite_schema table.",
+                    "description": "Cell pointer array — an array of `CellCount` 2-byte big-endian offsets, each pointing to a cell's start position within this page. The pointers are kept in key-sorted order for efficient binary search.\n\nOn an interior page, each cell is structured as: 4-byte left child page number + varint rowid key. The pointers let SQLite jump directly to any cell without scanning through variable-length records.",
                     "informational": true
                 },
                 {
                     "name": "P1UnallocatedSpace",
                     "size": "($CellContentAreaStart or 65536) - 112 - $CellCount * 2",
                     "type": "bytes",
-                    "description": "**Forensically critical** — unallocated gap between cell pointers and cell content on page 1. May contain remnants of dropped tables, deleted indexes, or modified schema objects. Schema changes (ALTER TABLE, DROP TABLE) leave traces here.",
+                    "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area on page 1. When schema objects are dropped (`DROP TABLE`, `DROP INDEX`), their cell pointer is removed and their cell data remains in this or the freeblock chain until overwritten.\n\nThis space may contain remnants of:\n- Dropped table schemas (full `CREATE TABLE` SQL statements)\n- Deleted index definitions\n- Modified trigger or view definitions\n\nSchema SQL text is often highly informative because it reveals column names, types, and constraints of deleted tables — even when the table data itself has been overwritten.",
                     "forensic_value": "critical"
                 },
                 {
                     "name": "P1CellContentArea",
                     "size": "$PageSize - ($CellContentAreaStart or 65536)",
                     "type": "bytes",
-                    "description": "Cell content area of page 1 containing sqlite_schema records. Each cell holds schema definition SQL (CREATE TABLE, CREATE INDEX, etc.) along with table/index root page numbers. Critical for understanding database structure.",
+                    "description": "Cell content area of page 1 — contains the actual B-tree cells for the `sqlite_schema` table. On an interior page, each cell is compact: just a 4-byte child page number and a varint rowid key. The actual schema records (with the SQL `CREATE` statements) reside in the child pages pointed to by these cells and the *RightMostPointer*.\n\nThe cell content area starts at the bottom of the page and grows upward. Cells within this area are NOT necessarily in order — they're placed wherever free space is available. The cell pointer array (above) provides the sorted access order.",
                     "forensic_value": true
                 }
             ]
@@ -323,28 +324,28 @@
             "name": "Page1LeafContent",
             "type": "section",
             "condition": "$PageType != 5 and $PageType != 2",
-            "description": "Page 1 leaf B-tree content. Page 1 always contains the sqlite_schema table which catalogs all database objects (tables, indexes, views, triggers). Leaf page means all schema entries fit on this single page.",
+            "description": "Page 1 B-tree content (leaf layout). As a leaf page, this means all `sqlite_schema` entries fit on this single page — the actual SQL schema text is right here. Each cell contains a complete schema record with: `type` (table/index/view/trigger), `name`, `tbl_name`, `rootpage` (the page number where that table's data begins), and `sql` (the full `CREATE` statement).\n\nThis is the most common case for small-to-medium databases with fewer than ~50 tables.",
             "color_gradient": true,
             "fields": [
                 {
                     "name": "P1CellPointerArray",
                     "size": "$CellCount * 2",
                     "type": "bytes",
-                    "description": "Array of 2-byte big-endian offsets (relative to page start, byte 0) pointing to each cell's location. For page 1 leaf, each cell contains a sqlite_schema record with table/index definitions.",
+                    "description": "Cell pointer array — an array of `CellCount` 2-byte big-endian offsets, each pointing to a cell's start position within this page. On a leaf page, each cell contains the actual `sqlite_schema` record: payload size varint, rowid varint, and then the record data (type, name, tbl_name, rootpage, sql).\n\nPointers are maintained in key order (ascending rowid) for binary search. When a schema object is dropped, its pointer is removed and the array shrinks — but the cell content remains on the page.",
                     "informational": true
                 },
                 {
                     "name": "P1UnallocatedSpace",
                     "size": "($CellContentAreaStart or 65536) - 108 - $CellCount * 2",
                     "type": "bytes",
-                    "description": "**Forensically critical** — unallocated gap between cell pointers and cell content on page 1. May contain remnants of dropped tables, deleted indexes, or modified schema objects. Schema changes (ALTER TABLE, DROP TABLE) leave traces here.",
+                    "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area on page 1. This is the primary location for recovering dropped schema definitions.\n\nWhen `DROP TABLE` or `DROP INDEX` is executed, the schema entry's cell pointer is removed but the cell data (including the full `CREATE TABLE` SQL) often persists here until overwritten. Recovering dropped table schemas from this space reveals column names, types, and constraints — essential for interpreting carved records from other pages.",
                     "forensic_value": "critical"
                 },
                 {
                     "name": "P1CellContentArea",
                     "size": "$PageSize - ($CellContentAreaStart or 65536)",
                     "type": "bytes",
-                    "description": "Cell content area of page 1 containing sqlite_schema records. Each cell holds schema definition SQL (CREATE TABLE, CREATE INDEX, etc.) along with table/index root page numbers. Critical for understanding database structure.",
+                    "description": "Cell content area of page 1 — contains the actual `sqlite_schema` cells. On a leaf page, each cell holds a complete schema record: the `type` ('table', 'index', 'view', 'trigger'), `name`, `tbl_name`, `rootpage` (where the table's data B-tree starts), and `sql` (the full CREATE statement).\n\nThe `rootpage` values in these cells are the entry points for navigating to each table's data. For forensic analysis, this is the roadmap: each table's root page number tells you where to start reading its B-tree.",
                     "forensic_value": true
                 }
             ]
@@ -1089,7 +1090,7 @@
         {
             "name": "Page ${_count + 1}",
             "type": "struct",
-            "description": "Database page ${_count + 1} of $DatabaseSizeInPages. Each page is $PageSize bytes and begins with a B-tree page header. Contains actual table/index data, freelist pages, overflow pages, and pointer-map pages.",
+            "description": "Database page ${_count + 1} of $DatabaseSizeInPages. Each page is exactly $PageSize bytes and starts at file offset `(page_number - 1) × PageSize` (page numbers are 1-based). The first byte of each page indicates its type: B-tree pages (0x02, 0x05, 0x0A, 0x0D) have structured headers and cell data; non-B-tree pages (0x00 first byte) are freelist, overflow, or pointer-map pages.\n\n**Page types you'll encounter:**\n- **Table leaf (0x0D):** Contains actual row data — this is where your records live\n- **Table interior (0x05):** Navigation nodes pointing to child pages in the B-tree\n- **Index leaf (0x0A):** Contains index entries mapping column values to rowids\n- **Index interior (0x02):** Navigation nodes for index B-trees\n- **Non-B-tree (0x00):** Freelist leaf (deleted page), overflow (large record spillover), or pointer-map page",
             "forensic_value": true,
             "repeat": "$DatabaseSizeInPages - 1",
             "repeat_step": "$PageSize",
@@ -1098,7 +1099,7 @@
                     "name": "PageType",
                     "size": 1,
                     "type": "uint",
-                    "description": "B-tree page type flag. Determines the structure of cells on this page. Value 0x00 indicates a freelist leaf, overflow, or pointer-map page.",
+                    "description": "B-tree page type flag. The first byte of every page determines its role in the database. For B-tree pages (values 2, 5, 10, 13), the remaining header bytes follow a defined structure. A value of 0x00 means this page is NOT a B-tree page — it's either a freelist leaf (deleted/freed page retaining old data), an overflow page (continuation of a large record), or a pointer-map page (auto-vacuum back-references). Even though we still parse the next few bytes as B-tree header fields for non-B-tree pages, those values are not meaningful — refer to the NonBTreeContent section for the actual structure.",
                     "forensic_value": true,
                     "value_map": {
                         "0": "Not a b-tree page (freelist leaf / overflow / ptrmap)",
@@ -1112,35 +1113,35 @@
                     "name": "FirstFreeblockOffset",
                     "size": 2,
                     "type": "uint",
-                    "description": "Offset to first freeblock on this page, or 0 if none. Freeblocks contain fragments of deleted records - forensically valuable for data recovery.",
+                    "description": "Offset to the first freeblock on this page, or 0 if there are no freeblocks. Freeblocks are a within-page linked list of freed cell space, distinct from the freelist (which tracks entire freed pages). Each freeblock contains: 2-byte next-pointer, 2-byte size, then the original cell data.\n\n**Forensic tip:** Non-zero here means deleted records may be recoverable. Walk the freeblock chain (follow the next-pointers) to find all freed cells. The freeblock content often retains the complete original record payload, especially for smaller records that weren't overwritten by subsequent inserts.",
                     "forensic_value": true
                 },
                 {
                     "name": "CellCount",
                     "size": 2,
                     "type": "uint",
-                    "description": "Number of cells (records) on this page.",
+                    "description": "Number of active cells on this page. For table leaf pages, each cell = one row of data (one record in the table). For interior pages, each cell = one navigation key + child pointer. For index pages, each cell = one index entry.\n\nCompare this with the theoretical maximum cells per page to estimate how full the page is. A very low count on a large page suggests heavy deletion.",
                     "forensic_value": true
                 },
                 {
                     "name": "CellContentAreaStart",
                     "size": 2,
                     "type": "uint",
-                    "description": "Byte offset to start of cell content area (0 means 65536). Gap between cell pointers and content area may contain remnants of deleted records.",
+                    "description": "Start offset of the cell content area within this page (0 is interpreted as 65536). The page layout is: header at top, cell pointer array growing downward, cell content area growing upward from the bottom. The gap in between is unallocated space — prime forensic territory where deleted record remnants persist.\n\nLower values (closer to the header) mean the page is more full. A value equal to the header + pointer array size means the page is completely packed with no unallocated space.",
                     "forensic_value": true
                 },
                 {
                     "name": "FragmentedFreeBytes",
                     "size": 1,
                     "type": "uint",
-                    "description": "Total fragmented free bytes on this page. Fragments are free spaces too small to form a freeblock (<4 bytes). High values suggest heavy record churn.",
+                    "description": "Total fragmented free bytes on this page — small free spaces (1–3 bytes) too tiny to form a freeblock. These accumulate from delete/update operations that leave odd-sized gaps. When this reaches 255, SQLite defragments the page by compacting all cells together.\n\nA high fragment count combined with active freeblocks and a large unallocated gap paints a picture of heavy page churn — many inserts, updates, and deletes over the page's lifetime.",
                     "forensic_value": true
                 },
                 {
                     "name": "RightMostPointer",
                     "size": 4,
                     "type": "uint",
-                    "description": "Right-most child page number (interior pages only).",
+                    "description": "Right-most child page pointer (interior pages only — this field does not exist on leaf pages). In a B-tree, N cells create N+1 child subtrees. Each cell stores a left-child pointer, covering keys ≤ that cell's key. This field stores the pointer for the (N+1)th subtree — all keys greater than the last cell's key. Without this pointer, the B-tree would be unable to locate the highest-key records in this subtree.\n\n**Validation:** This should point to a valid page number (1 to *DatabaseSizeInPages*). An out-of-range value indicates corruption.",
                     "forensic_value": true,
                     "condition": "$PageType == 5 or $PageType == 2"
                 },
@@ -1148,14 +1149,14 @@
                     "name": "NonBTreeContent",
                     "type": "section",
                     "condition": "$PageType == 0",
-                    "description": "Non-btree page content. Could be a freelist trunk page (linked list of freed pages), freelist leaf page (reclaimed space), overflow page (large record spill), or pointer-map page (auto-vacuum back-pointers). Forensically valuable — freelist and overflow pages often retain deleted record data.",
+                    "description": "Non-B-tree page content. A first byte of 0x00 means this page is NOT part of a B-tree — it serves one of three special roles:\n\n- **Freelist leaf page:** A page that was freed by `DELETE`/`DROP` and added to the freelist pool. Its original data (table rows, index entries) typically remains intact until the page is reused by a new `INSERT`. This is the #1 source for deleted record recovery.\n\n- **Overflow page:** When a record is too large to fit in one B-tree cell, the excess payload spills to overflow pages. The first 4 bytes are the next overflow page number (0 if last), followed by up to `PageSize - 4` bytes of payload continuation.\n\n- **Pointer-map page:** Only present in auto-vacuum databases. Contains 5-byte entries that map each page to its parent, enabling page relocation during vacuum.",
                     "forensic_value": true,
                     "fields": [
                         {
                             "name": "RawPageData",
                             "size": "$PageSize - 8",
                             "type": "bytes",
-                            "description": "Raw page data. For freelist trunk pages: first 4 bytes = next trunk page number, next 4 bytes = leaf page count, remaining = array of 4-byte leaf page numbers. For overflow pages: first 4 bytes = next overflow page, remaining = payload data. For freelist leaf pages: content is unused but may contain remnants of deleted records.",
+                            "description": "Raw page data for this non-B-tree page. The content depends on the page's role:\n\n- **Freelist trunk page:** First 4 bytes = next trunk page number (0 if last trunk), next 4 bytes = count of leaf page numbers stored here, remaining = array of 4-byte page numbers pointing to freelist leaf pages.\n\n- **Freelist leaf page:** Entire content is residual data from the page's former life as a B-tree page. Often contains complete, intact records that were deleted via `DELETE` statements.\n\n- **Overflow page:** First 4 bytes = next overflow page number (0 if final), remaining = continuation of a large record's payload.\n\n**Recovery approach:** For freelist leaves, try parsing the page as if it were still a B-tree page (table leaf 0x0D is most common). The old header and cell structures may still be readable.",
                             "forensic_value": true
                         }
                     ]
@@ -1164,7 +1165,7 @@
                     "name": "InteriorBTreeContent",
                     "type": "section",
                     "condition": "$PageType == 5 or $PageType == 2",
-                    "description": "Interior B-tree page content, structured into cell pointer array, unallocated space, and cell content area. Interior pages contain child page pointers for tree navigation.",
+                    "description": "Interior B-tree page content. Interior pages are the 'traffic signs' of the B-tree — they don't store actual data records, only keys and pointers that direct searches to the correct leaf page. Each cell contains a child page pointer and a key value. By comparing the search key to the cells' keys, SQLite navigates down the tree until it reaches a leaf page with the actual data.\n\nInterior pages have a 12-byte header (vs 8 for leaves) because of the extra *RightMostPointer* field.",
                     "color_gradient": true,
                     "fields": [
                         {
@@ -1185,7 +1186,7 @@
                             "name": "CellContentArea",
                             "size": "$PageSize - ($CellContentAreaStart or 65536)",
                             "type": "bytes",
-                            "description": "Cell content area containing actual cell records, packed toward the end of the page. For interior table pages (0x05): each cell is a 4-byte left-child page number + varint rowid. For interior index pages (0x02): each cell is a 4-byte left-child page number + varint payload size + index key payload.",
+                            "description": "Cell content area for this interior page. Cells are packed toward the bottom of the page and are NOT stored in order — the cell pointer array above provides sorted access. For interior table pages (0x05): each cell is `4-byte left-child page number + varint rowid`. For interior index pages (0x02): each cell is `4-byte left-child page number + varint payload-size + index key record`.\n\nThe left-child page number in each cell points to a subtree containing all keys less than or equal to this cell's key. The *RightMostPointer* (in the page header) handles keys greater than the last cell's key.",
                             "informational": true
                         }
                     ]
@@ -1194,28 +1195,28 @@
                     "name": "LeafBTreeContent",
                     "type": "section",
                     "condition": "$PageType != 5 and $PageType != 2 and $PageType != 0",
-                    "description": "Leaf B-tree page content, structured into cell pointer array, unallocated space, and cell content area. Leaf pages contain the actual database records (table data or index keys).",
+                    "description": "Leaf B-tree page content — this is where the actual data lives. Leaf pages are the bottom level of the B-tree: they contain the real records (for table B-trees) or the actual index entries (for index B-trees). When you query a table, SQLite navigates through interior pages and ultimately reads from leaf pages like this one.\n\nLeaf pages have an 8-byte header (no RightMostPointer since there are no children).",
                     "color_gradient": true,
                     "fields": [
                         {
                             "name": "CellPointerArray",
                             "size": "$CellCount * 2",
                             "type": "bytes",
-                            "description": "Array of 2-byte big-endian offsets (relative to page start) pointing to each cell's location within the cell content area. Sorted in key order — leftmost (smallest key) first. Each offset enables direct navigation to individual cell records.",
+                            "description": "Cell pointer array — `CellCount` entries of 2-byte big-endian offsets, each pointing to a cell within the cell content area. Maintained in sorted key order (ascending rowid for table pages, ascending index key for index pages) to support binary search.\n\nFor leaf pages, each pointed-to cell contains actual data: table leaf (0x0D) cells hold `varint payload-size + varint rowid + record payload`; index leaf (0x0A) cells hold `varint payload-size + index key record`. This is where the real database content is stored.",
                             "informational": true
                         },
                         {
                             "name": "UnallocatedSpace",
                             "size": "($CellContentAreaStart or 65536) - 8 - $CellCount * 2",
                             "type": "bytes",
-                            "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area. This region frequently contains remnants of deleted records that have not yet been overwritten. Data recovery tools can extract deleted rows, dropped table data, and modified record fragments from this space.",
+                            "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area. This is the richest source of deleted data within an active page. When records are deleted, their 2-byte pointer is removed from the array above, but the actual cell data (payload, rowid, column values) remains in this gap until overwritten by new records growing upward from the bottom.\n\nRecovery technique: scan this region for varint signatures (payload-size + rowid patterns) to locate deleted records. The SQLite record format is self-describing (each record has a header listing column types), so carved records can be fully parsed.",
                             "forensic_value": "critical"
                         },
                         {
                             "name": "CellContentArea",
                             "size": "$PageSize - ($CellContentAreaStart or 65536)",
                             "type": "bytes",
-                            "description": "Cell content area containing actual cell records, packed toward the end of the page. For table leaf pages (0x0D): each cell is varint payload size + varint rowid + record payload (header + column data). For index leaf pages (0x0A): each cell is varint payload size + index key record.",
+                            "description": "Cell content area for this leaf page — **this is where the actual database records live.** Cells are packed toward the bottom of the page and are NOT stored in insertion order — the cell pointer array provides sorted access. For table leaf pages (0x0D): each cell is `varint payload-size + varint rowid + record-payload`. The record payload consists of a header (listing column serial types in varints) followed by the column data. For index leaf pages (0x0A): each cell is `varint payload-size + index-key-record` with no separate rowid.\n\n**Record format:** The payload's first varint is the header size, followed by one varint per column defining its serial type (0=NULL, 1=8-bit int, 2=16-bit int, ..., 7=float64, 8=0, 9=1, ≥12 even=BLOB of (N-12)/2 bytes, ≥13 odd=TEXT of (N-13)/2 bytes). Column data follows immediately after the header in the same order.",
                             "informational": true
                         }
                     ]

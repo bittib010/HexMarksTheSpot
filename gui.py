@@ -928,8 +928,9 @@ class TextWidget:
             highlightcolor=ModernTheme.BORDER_FOCUS
         )
 
-        self.textWidget.configure(yscrollcommand=self.scrollbar.set)
-        self.asciiText.configure(yscrollcommand=self.scrollbar.set)
+        # Only textWidget drives the scrollbar position — this avoids
+        # two widgets fighting over scrollbar.set and causing jitter
+        self.textWidget.configure(yscrollcommand=self._on_textwidget_scroll)
 
         # Grid layout - hex and ASCII are fixed width (sticky=N+S only), info panel expands
         self.textWidget.grid(row=2, column=1, sticky=N+S)
@@ -943,16 +944,26 @@ class TextWidget:
         self.asciiText.tag_configure(
             "sel", background=ModernTheme.SELECTION_BG, foreground=ModernTheme.TEXT_PRIMARY)
 
-        # Link the scrollbars
+        # Link mouse wheel scrolling for all panes
         self.textWidget.bind("<MouseWheel>", self.scrollBoth)
         self.asciiText.bind("<MouseWheel>", self.scrollBoth)
         self.offsetText.bind("<MouseWheel>", self.scrollBoth)
 
-    def yscroll(self, *args):
-        """
-        Scroll the hex, ASCII, and offset text widgets vertically.
+    def _on_textwidget_scroll(self, *args):
+        """Callback for textWidget's yscrollcommand — keeps the scrollbar
+        and the sibling panes (ASCII, offset) in sync with the hex view.
+        This is the single source of truth for vertical scroll position."""
+        self.scrollbar.set(*args)
+        # Sync the other two panes to exactly match the hex view position
+        self.asciiText.yview_moveto(args[0])
+        self.offsetText.configure(state='normal')
+        self.offsetText.yview_moveto(args[0])
+        self.offsetText.configure(state='disabled')
 
-        :param args: Scrolling arguments passed by the scrollbar.
+    def yscroll(self, *args):
+        """Handle scrollbar drag — move all three text panes together.
+
+        :param args: Scrolling arguments passed by the scrollbar widget.
         """
         self.textWidget.yview(*args)
         self.asciiText.yview(*args)
@@ -961,17 +972,21 @@ class TextWidget:
         self.offsetText.configure(state='disabled')
 
     def scrollBoth(self, event):
-        """
-        Handle mouse wheel scrolling in all text widgets.
+        """Handle mouse wheel scrolling — move all three text panes together.
 
-        :param event: Event object containing information about the scrolling event.
-        """
-        adjusted_delta = int(-(event.delta / 10))
+        On Windows, event.delta is typically ±120 per wheel notch.
+        We scroll 3 lines per notch for smooth, responsive feel.
 
-        self.textWidget.yview("scroll", adjusted_delta, "units")
-        self.asciiText.yview("scroll", adjusted_delta, "units")
+        :param event: Mouse wheel event.
+        """
+        # Normalize: -1 for scroll down, +1 for scroll up, then scale
+        direction = -1 if event.delta > 0 else 1
+        scroll_lines = 3
+
+        self.textWidget.yview("scroll", direction * scroll_lines, "units")
+        self.asciiText.yview("scroll", direction * scroll_lines, "units")
         self.offsetText.configure(state='normal')
-        self.offsetText.yview("scroll", adjusted_delta, "units")
+        self.offsetText.yview("scroll", direction * scroll_lines, "units")
         self.offsetText.configure(state='disabled')
         return "break"
 
@@ -1137,8 +1152,11 @@ class Main:
         self.search_entry.insert(0, "Search...")
         self.search_entry.bind("<FocusIn>", lambda e: self.search_entry.delete(0, END) if self.search_entry.get() == "Search..." else None)
         self.search_entry.bind("<FocusOut>", lambda e: self.search_entry.insert(0, "Search...") if not self.search_entry.get() else None)
-        # Trigger search on Enter key press
-        self.search_entry.bind("<Return>", lambda e: self.search_sequence())
+        # Enter key: if search results already exist and query unchanged, advance
+        # to next match; otherwise perform a new search.  Blank/placeholder clears.
+        self.search_entry.bind("<Return>", lambda e: self._on_search_enter())
+        # Escape key clears the search and restores all fields
+        self.search_entry.bind("<Escape>", lambda e: self.clear_search())
         
         search_buttons = Frame(search_frame, bg=ModernTheme.BG_PRIMARY)
         search_buttons.grid(row=2, column=1, sticky=E)
@@ -1194,6 +1212,7 @@ class Main:
         # Track search match state for prev/next navigation
         self._search_match_items = []  # list of treeview item IDs from current search
         self._search_match_index = -1  # current index within matches
+        self._last_search_term = ''    # tracks the last executed search query
         
         # Treeview with modern styling
         treeview_frame = Frame(sidebar_frame, bg=ModernTheme.BG_PRIMARY)
@@ -1619,6 +1638,23 @@ class Main:
         self.master.quit()
         self.master.destroy()
 
+    def _on_search_enter(self):
+        """Handle Enter key in search field.
+        
+        If the query matches the previous search, advance to the next result.
+        If the field is empty or placeholder, clear the search.
+        Otherwise, run a new search.
+        """
+        search_term = self.search_var.get().strip()
+        if not search_term or search_term == "Search...":
+            self.clear_search()
+            return
+        if search_term == self._last_search_term and self._search_match_items:
+            # Same query — just cycle to next match
+            self._search_next()
+        else:
+            self.search_sequence()
+
     def search_sequence(self):
         """
         Search fields across selected scopes (Name, Value, Hex, ASCII).
@@ -1627,6 +1663,7 @@ class Main:
         """
         search_term = self.search_var.get().strip()
         if not search_term or search_term == "Search...":
+            self.clear_search()
             return
         
         search_lower = search_term.lower()
@@ -1687,6 +1724,7 @@ class Main:
         found = len(matching_items)
         self._search_results_label.config(text=f"{found} of {total} fields")
         self._search_match_index = 0 if found > 0 else -1
+        self._last_search_term = search_term
         
         # Auto-select and scroll to the first match
         if self._search_match_items:
@@ -1700,6 +1738,7 @@ class Main:
         self._search_results_label.config(text="")
         self._search_match_items = []
         self._search_match_index = -1
+        self._last_search_term = ''
         self.sequence_treeview.delete(*self.sequence_treeview.get_children())
         for data_tuple, tags in self.sequence_items:
             raw_offset = data_tuple[0]
