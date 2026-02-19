@@ -1864,14 +1864,13 @@ class Main:
         self._update_treeview_border_position()
         self._update_parent_treeview_border_position()
 
-    def _create_parent_highlight_border(self, color='#888888'):
-        """Create 4 thin Frame widgets for a colored parent border in the treeview.
+    def _create_parent_highlight_border(self, color='#FFFFFF'):
+        """Create 4 thin Frame widgets for a white parent border in the treeview.
         
-        Uses a distinct color (derived from the parent container's color) to
-        differentiate from the black selection border. This visually shows
-        'this is the parent structure that contains your selected field.'
+        Uses white to contrast with the black selection border, making it
+        immediately clear which treeview row is the parent container.
         """
-        # Destroy old frames if they exist (color may change per parent)
+        # Destroy old frames if they exist
         for f in self._parent_border_frames:
             f.destroy()
         self._parent_border_frames = []
@@ -1879,11 +1878,11 @@ class Main:
             f = Frame(self.sequence_treeview, bg=color)
             self._parent_border_frames.append(f)
 
-    def _show_parent_treeview_border(self, item_id, color='#888888'):
-        """Show a colored border around the parent container's treeview item.
+    def _show_parent_treeview_border(self, item_id, color='#FFFFFF'):
+        """Show a white border around the parent container's treeview item.
         
-        The border color matches the parent container's color, providing a
-        visual link between the selected child and its containing structure.
+        White contrasts with the black selection border, making the parent
+        container immediately visible alongside the selected child.
         """
         self._create_parent_highlight_border(color)
         self._parent_highlight_item_id = item_id
@@ -1903,7 +1902,7 @@ class Main:
                 f.place_forget()
             return
         x, y, w, h = bbox
-        bw = 2  # border width
+        bw = 3  # border width (thicker than selection border for visibility)
         top, bottom, left, right = self._parent_border_frames
         top.place(x=x, y=y, width=w, height=bw)
         bottom.place(x=x, y=y + h - bw, width=w, height=bw)
@@ -2043,7 +2042,7 @@ class Main:
                 if tag in self.tag_to_child:
                     child = self.tag_to_child[tag]
                     self.last_clicked = child
-                    self.popItUp(child.info, tag)
+                    self.popItUp(self._get_info_with_parent_context(child.info, tag), tag)
                     
                     # Update status bar with offset info
                     if hasattr(self, 'current_file') and self.current_file:
@@ -3752,7 +3751,7 @@ class Main:
         :param child: The child node associated with the clicked text.
         """
         self.last_clicked = child
-        self.popItUp(child.info, tag)
+        self.popItUp(self._get_info_with_parent_context(child.info, tag), tag)
         
         # Highlight the clicked tag
         self._highlight_tag(tag)
@@ -3858,14 +3857,14 @@ class Main:
             self._hide_parent_treeview_border()
             return
         
-        # Get the parent container's color for the border
+        # Get the parent container's color (still used for context, but border is white)
         parent_color = '#888888'
         if parent_tag in self.tag_to_child:
             parent_node = self.tag_to_child[parent_tag]
             parent_color = parent_node.color or '#888888'
         
-        # Darken the parent color slightly for a visible border
-        parent_border_color = self._darken_color(parent_color, factor=0.6)
+        # Use white for the parent border — contrasts with the black selection border
+        parent_border_color = '#FFFFFF'
         
         # Apply a subtle colored border (groove relief) to all sibling tags
         # in the hex viewer — this visually groups them as 'same parent'
@@ -3923,6 +3922,51 @@ class Main:
             return f'#{r:02X}{g:02X}{b:02X}'
         except (ValueError, IndexError):
             return '#888888'
+
+    def _get_info_with_parent_context(self, info_html, tag):
+        """Prepend parent container context to a field's info HTML.
+        
+        Adds a small header line showing which parent structure (struct/section)
+        contains this field, derived from the JSON nesting hierarchy. This gives
+        users immediate context about where in the file structure they are.
+        
+        Args:
+            info_html: The field's existing HTML description
+            tag: The field's display tag for parent lookup
+        
+        Returns:
+            Modified HTML with parent context prepended, or original if no parent
+        """
+        parent_tag = self._tag_to_parent_tag.get(tag)
+        if not parent_tag:
+            return info_html
+        
+        # Walk up the parent chain to build the full path (with cycle guard)
+        path_parts = []
+        current_tag = parent_tag
+        visited = set()
+        while current_tag and current_tag not in visited:
+            visited.add(current_tag)
+            if current_tag in self.tag_to_child:
+                parent_node = self.tag_to_child[current_tag]
+                parent_name = parent_node.name or 'Unknown'
+                path_parts.append(parent_name)
+            current_tag = self._tag_to_parent_tag.get(current_tag)
+        
+        if not path_parts:
+            return info_html
+        
+        # Reverse to get root → leaf order
+        path_parts.reverse()
+        path_str = ' \u203A '.join(path_parts)  # Use › (single right-pointing angle) as separator
+        
+        parent_line = (
+            f'<div style="margin-bottom:6px; padding:3px 6px; '
+            f'background-color:#e8e8e8; border-left:3px solid #888; '
+            f'font-size:0.9em; color:#555;">'
+            f'\U0001F4C2 <b>Parent:</b> {path_str}</div>'
+        )
+        return parent_line + info_html
 
 
 def main():
