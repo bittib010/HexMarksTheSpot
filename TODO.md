@@ -6,6 +6,7 @@
 - We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
 - Remember to update Copilot instructions if necessary on new implementations. 
 - Improve search. We should be able to search in the necessary part of the file we select: Hex content, ASCII Content, Parsed Value content. Use checkbox for selection. We should also be able to search for field names, not just values. This would allow users to quickly find specific fields or values within the parsed data, enhancing the usability of the application and improving the bookmarks relevance for investigating. 
+- For SQLITE format template, we need a lot more educational information: like what is the right most pointer, what does it point to and why is it relevant? Things like these should be added to each. The user might not know the relevance of each element/item/field, so we should add this information in the forensic notes. This would make the application more educational and useful for learning about file formats and their structures, especially for users who are new to digital forensics or file format analysis.
 
 
 ## Future Parser Enhancements
