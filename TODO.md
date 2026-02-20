@@ -1,8 +1,8 @@
 - Add a template for: 
   - We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
-    - Remaining: 7ZIP, ASF, AVI, BPlist, CAB, DOC, DS_Store, FLV, H264, IconCache, JPG (already have jpeg.json), MBR, MP4, MXF, ONE, PB, RegistryDhcpInterfaceOptions, RegistryPolicyFile, ThumbCache, Torrent
+    - Remaining: 7ZIP, ASF, AVI, BPlist, CAB, DOC, DS_Store, FLV, H264, IconCache, MBR, MP4, MXF, ONE, PB, RegistryDhcpInterfaceOptions, RegistryPolicyFile, ThumbCache, Torrent
+    - Potentially more artefacts found here: https://www.sweetscape.com/010editor/repository/templates/
 
-- Add an additional Bookmark possibility that build no the existing function to mark a section in the hexviewer. The existing functionality for makring a section simply by clicking a place and draging to select multiple bytes in the viewer is reflected with a background change in color as well as the selected border change in the opposite viewer (hex vs ascii). This functionality should be both be improved with realtime update to the color change as well as happen on the click+drag on the selected viewer (if clcik on drag on hexviewer it should reflect there too, not just on the opposite) - furthermore, if selection has been made we should enable a right-click option to save that sequence to bookmark, which would then be added to the bookmark list with the offset range and a user-provided name/description. This allows for more flexible bookmarking of arbitrary byte ranges, not just predefined fields.
 
 PS! Remember to update Copilot instructions if necessary on new implementations. 
 

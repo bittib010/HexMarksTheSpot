@@ -68,12 +68,46 @@ Open File, Stop Parse (primary actions only — all other actions in menu bar)
 ### Right-Click Context Menu (parsed fields)
 Copy as Hex, Copy as Decimal, Copy as ASCII, Copy Parsed Value, Bookmark
 
+### Right-Click Context Menu (hex/ASCII viewer)
+Appears when there is an active text selection in the hex or ASCII viewer:
+- Bookmark Selection (N bytes) — prompts for name/comment, saves the selected byte range as a raw hex bookmark
+- Copy Selection as Hex / ASCII / Decimal
+
+The selection byte range is computed from text widget positions: hex view uses `col // 3` for start, `(col + 2) // 3` for end; ASCII view uses `col` directly. Helper: `_get_hex_selection_byte_range(source_widget)` returns `(start_byte, end_byte)` tuple.
+
 ### Bookmarks
 - Per-file persistence via `cache_manager` (keyed by SHA-256 hash)
 - Bookmark dict: `{name, offset, value, is_raw_hex, comment}`
 - Bookmark window: treeview with Name/Offset/Value/Comment, double-click to edit comment, delete, export
 - Export formats: JSON (structured metadata), CSV (tabular), Markdown (formatted report with hex display)
 - Markdown export: configurable raw hex byte limit (Spinbox dialog), parsed values shown in full, raw hex formatted with spaces/line wraps
+- **Selection bookmarks**: arbitrary byte ranges selected via click+drag in hex/ASCII viewers can be bookmarked via right-click context menu. Prompts for name (default: "Selection @ offset"), value interpretation type (dropdown with live preview), and optional comment. The interpretation dropdown lets the user choose how raw bytes are parsed/displayed before storing. `is_raw_hex` is set based on whether the user chose a hex-based interpretation.
+
+#### Selection Bookmark Interpretation Options
+
+The bookmark dialog offers a dropdown with the following interpretation types. **Update this list (and `BOOKMARK_INTERPRETATIONS` in `gui.py`) when new field types or output formats are added.**
+
+| Label | Description | Size notes |
+|-------|-------------|------------|
+| Raw Hex | Space-separated hex bytes (e.g., `4D 5A 90 00`) | Any |
+| Hex (0x prefix) | `0x` prefixed hex (≤8 bytes) or space-separated | Any |
+| Uint (LE) | Unsigned integer, little-endian | Any |
+| Uint (BE) | Unsigned integer, big-endian | Any |
+| Int (LE) | Signed integer, little-endian | Any |
+| Int (BE) | Signed integer, big-endian | Any |
+| ASCII | Printable chars, dots for non-printable | Any |
+| UTF-16 LE | UTF-16 little-endian string | Even byte count |
+| UTF-16 BE | UTF-16 big-endian string | Even byte count |
+| Base64 | Base64 encoded | Any |
+| Binary | Bit string `0b...` (≤4 bytes) or space-separated octets | Any |
+| Bool | `True` if non-zero, `False` if zero | Any |
+| FILETIME | Windows FILETIME → `YYYY-MM-DD HH:MM:SS UTC` | 8 bytes |
+| Unix Time (LE) | Unix timestamp (LE) → datetime | 4 or 8 bytes |
+| Unix Time (BE) | Unix timestamp (BE) → datetime | 4 or 8 bytes |
+| GUID | Windows GUID `{XXXXXXXX-XXXX-...}` | 16 bytes |
+| IPv4 | Dotted decimal IP address | 4 bytes |
+| IPv6 | Colon-separated hex | 16 bytes |
+| Size (bytes) | Human-readable file size (KB/MB/GB) | Any |
 
 ### Performance
 - Iterative DFS in `_collect_nodes()` (avoids recursion limit)
@@ -88,6 +122,7 @@ Copy as Hex, Copy as Decimal, Copy as ASCII, Copy Parsed Value, Bookmark
 - File info modal (name, path, size, SHA-256, field count)
 - Hex dump export, hex text import (multiple formats)
 - Click synchronization between hex viewer and treeview (black border highlight on selected hex bytes and treeview item)
+- Real-time drag-to-select mirroring — `<B1-Motion>` binding provides live highlight sync between hex and ASCII viewers during drag (not just on ButtonRelease). Mirror highlight uses the `"mirror_highlight"` tag with `#c3c3c3` background.
 - Parent container highlighting — when a field is selected, its parent struct/section (from the JSON nesting) is visually indicated: sibling fields in the hex viewer get a groove border, and the parent container's treeview row gets a colored border (darkened version of parent's color). This leverages the existing JSON hierarchy so no manual configuration is needed. Tracked via `_tag_to_parent_tag` and `_parent_tag_to_children` mappings built during `_collect_nodes()` DFS.
 - Hex/ASCII column headers pixel-aligned with content (same font, matched padding)
 - Large file warning dialog (>10 MB) before parsing

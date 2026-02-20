@@ -3084,34 +3084,6 @@ class Main:
         """
         self.update_status("")
 
-    def mirror_selection(self, event):
-        """
-        Mirror the text selection between the hex and ASCII text widgets.
-
-        :param event: Event object containing information about the selection event.
-        """
-        # Identify the widget where the event was triggered
-        source_widget = event.widget
-        target_widget = self.text_widget.asciiText if source_widget == self.text_widget.textWidget else self.text_widget.textWidget
-
-        # Check if there's a selection in the source widget
-        try:
-            start, end = source_widget.index(
-                SEL_FIRST), source_widget.index(SEL_LAST)
-            start_index, end_index = list(
-                map(lambda x: int(x.split(".")[1]), [start, end]))
-
-            # Mirror the selection in the target widget
-            target_widget.tag_remove(SEL, "1.0", END)
-            target_widget.tag_add(SEL, f"1.{start_index}", f"1.{end_index}")
-
-            target_widget.see(start)
-            target_widget.see(end)
-
-        except TclError:
-            # This exception is raised when there's no selection.
-            pass
-
     def show_parsed_data(self, root):
         """
         Display the parsed data from the given root node.
@@ -3629,9 +3601,9 @@ class Main:
             self.text_widget.asciiText.bind(
                 "<B1-Motion>", lambda e: self.mirror_highlight(self.text_widget.asciiText))
             self.text_widget.textWidget.bind(
-                "<Button-1>", lambda e: self.clear_mirror_highlight())
+                "<Button-1>", lambda e: self.clear_mirror_highlight(self.text_widget.textWidget))
             self.text_widget.asciiText.bind(
-                "<Button-1>", lambda e: self.clear_mirror_highlight())
+                "<Button-1>", lambda e: self.clear_mirror_highlight(self.text_widget.asciiText))
             
             # Right-click context menus for hex/ASCII viewers (selection bookmark)
             self.text_widget.textWidget.bind(
@@ -3760,31 +3732,45 @@ class Main:
 
             # Adjust selection start and end based on source and target widgets
             if source_widget == self.text_widget.textWidget:
-                # Hex to ASCII
-                start_byte = int(start.split('.')[1]) // 3
-                end_byte = int(end.split('.')[1]) // 3
+                # Hex to ASCII: col // 3 for start, (col + 2) // 3 for end (round up)
+                start_col = int(start.split('.')[1])
+                end_col = int(end.split('.')[1])
+                start_byte = start_col // 3
+                end_byte = (end_col + 2) // 3
                 adjusted_start = f"{start.split('.')[0]}.{start_byte}"
                 adjusted_end = f"{end.split('.')[0]}.{end_byte}"
             else:
-                # ASCII to Hex
+                # ASCII to Hex: byte * 3 for both start and end
                 start_byte = int(start.split('.')[1])
                 end_byte = int(end.split('.')[1])
                 adjusted_start = f"{start.split('.')[0]}.{start_byte * 3}"
-                adjusted_end = f"{end.split('.')[0]}.{end_byte * 3}"
+                # Cap end position at 47 (max hex chars per line) to avoid highlighting past content
+                end_hex_col = min(end_byte * 3, 47)
+                adjusted_end = f"{end.split('.')[0]}.{end_hex_col}"
 
             # Apply the temporary highlighting to the corresponding segment in the target widget
             target_widget.tag_add("mirror_highlight",
                                   adjusted_start, adjusted_end)
             target_widget.tag_configure(
                 "mirror_highlight", background="#c3c3c3")
+            # Raise mirror_highlight and sel above field tags so highlighting is visible
+            target_widget.tag_raise("mirror_highlight")
+            source_widget.tag_raise("sel")
 
         except TclError:
             # Expected when clicking without dragging a selection - suppress
             pass
 
-    def clear_mirror_highlight(self):
+    def clear_mirror_highlight(self, source_widget=None):
+        """Clear mirror highlight from both widgets, and clear stale sel from
+        the opposite widget so only the actively-clicked widget retains its
+        selection.  This prevents _find_selection_byte_range from picking up
+        an old selection in the wrong viewer."""
         for widget in [self.text_widget.textWidget, self.text_widget.asciiText]:
             widget.tag_remove("mirror_highlight", "1.0", END)
+            # Clear stale sel from the widget the user did NOT click in
+            if source_widget is not None and widget != source_widget:
+                widget.tag_remove("sel", "1.0", END)
 
     def _get_hex_selection_byte_range(self, source_widget):
         """Convert a text widget selection (sel tag) to a (start_byte, end_byte) tuple.
@@ -3802,9 +3788,11 @@ class Main:
         end_row, end_col = map(int, end.split('.'))
         
         if source_widget == self.text_widget.textWidget:
-            # Hex view: each byte occupies 3 characters ("XX ")
+            # Hex view: each byte occupies 3 characters ("XX "), last byte on line is 2 chars
+            # Start: col // 3 gives the byte index
+            # End: (col + 2) // 3 rounds up to include partially-selected bytes
             start_byte = (start_row - 1) * 16 + start_col // 3
-            end_byte = (end_row - 1) * 16 + end_col // 3
+            end_byte = (end_row - 1) * 16 + (end_col + 2) // 3
         else:
             # ASCII view: each byte occupies 1 character
             start_byte = (start_row - 1) * 16 + start_col
@@ -3814,11 +3802,33 @@ class Main:
             return None
         return (start_byte, end_byte)
 
+    def _find_selection_byte_range(self, preferred_widget=None):
+        """Find the active selection byte range from whichever viewer widget has it.
+        
+        Checks both hex and ASCII text widgets for a sel tag. Returns
+        (start_byte, end_byte) from whichever has an active selection,
+        or None if neither does. If preferred_widget is given it is checked
+        first so that the most recently interacted-with viewer wins.
+        """
+        widgets = [self.text_widget.textWidget, self.text_widget.asciiText]
+        if preferred_widget is not None:
+            # Check the preferred (right-clicked) widget first
+            widgets = [preferred_widget] + [w for w in widgets if w != preferred_widget]
+        for widget in widgets:
+            result = self._get_hex_selection_byte_range(widget)
+            if result is not None:
+                return result
+        return None
+
     def _show_hex_context_menu(self, event, source_widget):
-        """Show right-click context menu on hex/ASCII viewer when selection exists."""
-        byte_range = self._get_hex_selection_byte_range(source_widget)
+        """Show right-click context menu on hex/ASCII viewer when selection exists.
+        
+        Checks BOTH hex and ASCII widgets for a selection so the menu works
+        regardless of which viewer the user right-clicks on after selecting.
+        """
+        byte_range = self._find_selection_byte_range(preferred_widget=source_widget)
         if byte_range is None:
-            return  # No selection — don't show menu
+            return  # No selection in either viewer — don't show menu
         
         menu = tk_Menu(self.master, tearoff=0)
         start_byte, end_byte = byte_range
@@ -3875,15 +3885,21 @@ class Main:
     def _add_selection_bookmark(self, start_byte, end_byte):
         """Bookmark an arbitrary byte range selected in the hex/ASCII viewer.
         
-        Prompts the user for a name and optional comment, then creates a bookmark
-        for the selected byte range with the raw hex value.
+        Prompts the user for a name, value interpretation type, and optional
+        comment, then creates a bookmark for the selected byte range.
+        The user can choose how to interpret the raw bytes (hex, uint, ascii,
+        FILETIME, etc.) and sees a live preview of the parsed value.
         """
         data = self._read_file_bytes(start_byte, end_byte)
         if data is None:
             self.update_status("Could not read selected bytes")
             return
         
-        # --- Prompt dialog for bookmark name and comment ---
+        interpretations = self._get_bookmark_interpretations()
+        interp_labels = [label for label, _ in interpretations]
+        interp_fns = {label: fn for label, fn in interpretations}
+        
+        # --- Prompt dialog for bookmark name, interpretation, and comment ---
         dialog = Toplevel(self.master)
         dialog.title("Bookmark Selection")
         dialog.configure(bg=ModernTheme.BG_PRIMARY)
@@ -3893,7 +3909,7 @@ class Main:
         
         # Center dialog on parent
         dialog.update_idletasks()
-        w, h = 400, 220
+        w, h = 440, 370
         x = self.master.winfo_x() + (self.master.winfo_width() - w) // 2
         y = self.master.winfo_y() + (self.master.winfo_height() - h) // 2
         dialog.geometry(f"{w}x{h}+{x}+{y}")
@@ -3913,6 +3929,39 @@ class Main:
         name_entry.pack(fill=X, padx=20)
         name_entry.select_range(0, END)
         name_entry.focus_set()
+        
+        # Value interpretation dropdown
+        Label(dialog, text="Value Interpretation:", bg=ModernTheme.BG_PRIMARY,
+              fg=ModernTheme.TEXT_PRIMARY, font=('Segoe UI', 10), anchor=W).pack(
+            fill=X, padx=20, pady=(8, 2))
+        interp_var = StringVar(value=interp_labels[0])  # Default: "Raw Hex"
+        interp_combo = ttk.Combobox(dialog, textvariable=interp_var,
+                                     values=interp_labels, state='readonly',
+                                     font=('Segoe UI', 10))
+        interp_combo.pack(fill=X, padx=20)
+        
+        # Live preview of parsed value
+        preview_frame = Frame(dialog, bg=ModernTheme.BG_SECONDARY, relief='groove', bd=1)
+        preview_frame.pack(fill=X, padx=20, pady=(4, 0))
+        preview_label = Label(preview_frame, text="", bg=ModernTheme.BG_SECONDARY,
+                              fg=ModernTheme.TEXT_PRIMARY, font=('Consolas', 10),
+                              anchor=W, wraplength=380, justify=LEFT)
+        preview_label.pack(fill=X, padx=8, pady=4)
+        
+        def update_preview(*_args):
+            """Update the live preview label when interpretation changes."""
+            selected = interp_var.get()
+            fn = interp_fns.get(selected)
+            if fn and data:
+                try:
+                    preview_label.config(text=fn(data), fg=ModernTheme.TEXT_PRIMARY)
+                except Exception as e:
+                    preview_label.config(text=f"(error: {e})", fg='#EF4444')
+            else:
+                preview_label.config(text="", fg=ModernTheme.TEXT_PRIMARY)
+        
+        interp_combo.bind('<<ComboboxSelected>>', update_preview)
+        update_preview()  # Show initial preview (Raw Hex)
         
         # Comment field
         Label(dialog, text="Comment (optional):", bg=ModernTheme.BG_PRIMARY,
@@ -3952,7 +4001,17 @@ class Main:
         
         name = name_var.get().strip() or f"Selection @ {self._format_offset(start_byte)}"
         comment = comment_var.get().strip()
-        hex_value = data.hex()
+        
+        # Compute the stored value using the selected interpretation
+        selected_interp = interp_var.get()
+        fn = interp_fns.get(selected_interp)
+        try:
+            display_value = fn(data) if fn else data.hex()
+        except Exception:
+            display_value = data.hex()
+        
+        # Determine if the bookmark stores raw hex or an interpreted value
+        is_raw_hex = selected_interp in ('Raw Hex', 'Hex (0x prefix)')
         
         # Check for duplicate (same offset + name)
         already = any(
@@ -3966,8 +4025,8 @@ class Main:
         bookmark = {
             'name': name,
             'offset': start_byte,
-            'value': hex_value,
-            'is_raw_hex': True,
+            'value': display_value,
+            'is_raw_hex': is_raw_hex,
             'comment': comment
         }
         self.bookmarks.append(bookmark)
@@ -3979,11 +4038,168 @@ class Main:
         if self.bookmark_treeview is not None and self.bookmark_window is not None:
             try:
                 if self.bookmark_window.winfo_exists():
-                    truncated = self._truncate_value(hex_value) if hex_value else ''
+                    truncated = self._truncate_value(display_value) if display_value else ''
                     self.bookmark_treeview.insert(
                         '', 'end', values=(name, display_offset, truncated, comment))
             except:
                 pass
+
+    # ---- Selection bookmark interpretation options ----
+    # Each entry: (display_label, interpreter_function(data) -> str)
+    # Update this list when new field types or output formats are added.
+    # Also update copilot-instructions.md "Selection Bookmark Interpretations" section.
+    BOOKMARK_INTERPRETATIONS = None  # Initialized lazily to avoid import-time issues
+
+    @classmethod
+    def _get_bookmark_interpretations(cls):
+        """Return the list of (label, interpreter_fn) pairs for selection bookmarks.
+        
+        Lazily initialized. Each interpreter receives raw bytes and returns a
+        display string. Add new entries here when new field types / output
+        formats are implemented.
+        """
+        if cls.BOOKMARK_INTERPRETATIONS is not None:
+            return cls.BOOKMARK_INTERPRETATIONS
+
+        def _uint_le(d):
+            return str(int.from_bytes(d, 'little'))
+
+        def _uint_be(d):
+            return str(int.from_bytes(d, 'big'))
+
+        def _int_le(d):
+            return str(int.from_bytes(d, 'little', signed=True))
+
+        def _int_be(d):
+            return str(int.from_bytes(d, 'big', signed=True))
+
+        def _ascii(d):
+            return ''.join(chr(b) if 32 <= b < 127 else '.' for b in d).rstrip('\x00')
+
+        def _utf16le(d):
+            try:
+                return d.decode('utf-16-le').rstrip('\x00')
+            except Exception:
+                return '(decode error)'
+
+        def _utf16be(d):
+            try:
+                return d.decode('utf-16-be').rstrip('\x00')
+            except Exception:
+                return '(decode error)'
+
+        def _hex(d):
+            return d.hex(' ').upper()
+
+        def _hex_prefixed(d):
+            if len(d) <= 8:
+                return '0x' + d.hex().upper()
+            return d.hex(' ').upper()
+
+        def _base64(d):
+            import base64
+            return base64.b64encode(d).decode('ascii')
+
+        def _binary(d):
+            if len(d) <= 4:
+                val = int.from_bytes(d, 'big')
+                return f"0b{val:0{len(d)*8}b}"
+            return ' '.join(f'{b:08b}' for b in d)
+
+        def _bool(d):
+            return str(int.from_bytes(d, 'little') != 0)
+
+        def _filetime(d):
+            try:
+                if len(d) != 8:
+                    return f'(need 8 bytes, got {len(d)})'
+                ts = int.from_bytes(d, 'little')
+                if ts == 0:
+                    return 'Not set (0)'
+                from datetime import datetime, timedelta
+                epoch = datetime(1601, 1, 1)
+                return (epoch + timedelta(microseconds=ts // 10)).strftime('%Y-%m-%d %H:%M:%S UTC')
+            except Exception as e:
+                return f'(error: {e})'
+
+        def _unix_time(d):
+            try:
+                if len(d) not in (4, 8):
+                    return f'(need 4 or 8 bytes, got {len(d)})'
+                ts = int.from_bytes(d, 'little')
+                if ts == 0:
+                    return 'Not set (0)'
+                from datetime import datetime
+                return datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S UTC')
+            except Exception as e:
+                return f'(error: {e})'
+
+        def _unix_time_be(d):
+            try:
+                if len(d) not in (4, 8):
+                    return f'(need 4 or 8 bytes, got {len(d)})'
+                ts = int.from_bytes(d, 'big')
+                if ts == 0:
+                    return 'Not set (0)'
+                from datetime import datetime
+                return datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S UTC')
+            except Exception as e:
+                return f'(error: {e})'
+
+        def _guid(d):
+            try:
+                if len(d) != 16:
+                    return f'(need 16 bytes, got {len(d)})'
+                p1 = int.from_bytes(d[0:4], 'little')
+                p2 = int.from_bytes(d[4:6], 'little')
+                p3 = int.from_bytes(d[6:8], 'little')
+                p4 = d[8:10].hex().upper()
+                p5 = d[10:16].hex().upper()
+                return f'{{{p1:08X}-{p2:04X}-{p3:04X}-{p4}-{p5}}}'
+            except Exception as e:
+                return f'(error: {e})'
+
+        def _ipv4(d):
+            if len(d) != 4:
+                return f'(need 4 bytes, got {len(d)})'
+            return '.'.join(str(b) for b in d)
+
+        def _ipv6(d):
+            if len(d) != 16:
+                return f'(need 16 bytes, got {len(d)})'
+            parts = [f'{int.from_bytes(d[i:i+2], "big"):04x}' for i in range(0, 16, 2)]
+            return ':'.join(parts)
+
+        def _size_bytes(d):
+            val = int.from_bytes(d, 'little')
+            for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+                if val < 1024:
+                    return f'{val:.1f} {unit}'
+                val /= 1024
+            return f'{val:.1f} PB'
+
+        cls.BOOKMARK_INTERPRETATIONS = [
+            ('Raw Hex',          _hex),
+            ('Hex (0x prefix)',  _hex_prefixed),
+            ('Uint (LE)',        _uint_le),
+            ('Uint (BE)',        _uint_be),
+            ('Int (LE)',         _int_le),
+            ('Int (BE)',         _int_be),
+            ('ASCII',            _ascii),
+            ('UTF-16 LE',        _utf16le),
+            ('UTF-16 BE',        _utf16be),
+            ('Base64',           _base64),
+            ('Binary',           _binary),
+            ('Bool',             _bool),
+            ('FILETIME',         _filetime),
+            ('Unix Time (LE)',   _unix_time),
+            ('Unix Time (BE)',   _unix_time_be),
+            ('GUID',             _guid),
+            ('IPv4',             _ipv4),
+            ('IPv6',             _ipv6),
+            ('Size (bytes)',     _size_bytes),
+        ]
+        return cls.BOOKMARK_INTERPRETATIONS
 
     def popItUp(self, text, currTag):
         """
