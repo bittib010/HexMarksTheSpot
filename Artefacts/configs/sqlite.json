@@ -266,8 +266,9 @@
                     "name": "FirstFreeblockOffset",
                     "size": 2,
                     "type": "uint",
-                    "description": "Offset to the first freeblock within this page, or 0 if there are no freeblocks. Freeblocks form a singly-linked list within the page: each freeblock starts with a 2-byte pointer to the next freeblock (0 if last), followed by a 2-byte size field.\n\n**What creates freeblocks:** When a cell is deleted or updated with a smaller value, the freed space becomes a freeblock. SQLite tries to reuse freeblocks for new cells of similar size. Unlike freelist *pages* (whole pages returned to the free pool), freeblocks are *within-page* free space.\n\n**Forensic significance:** A non-zero value here means records have been deleted or modified on this page. The freeblock chain may still contain partially intact deleted records — especially if the delete was recent and the space hasn't been reused. Freeblock content can be carved with specialized SQLite forensic tools.",
-                    "forensic_value": true
+                    "description": "Offset to the first freeblock within this page, or 0 if there are no freeblocks. Freeblocks form a singly-linked list within the page: each freeblock starts with a 2-byte pointer to the next freeblock (0 if last), followed by a 2-byte size field.\n\n**What creates freeblocks:** When a cell is deleted or updated with a smaller value, the freed space becomes a freeblock. SQLite tries to reuse freeblocks for new cells of similar size. Unlike freelist *pages* (whole pages returned to the free pool), freeblocks are *within-page* free space.\n\n**Forensic significance:** A non-zero value here means records have been deleted or modified on this page. The freeblock chain may still contain partially intact deleted records — especially if the delete was recent and the space hasn't been reused. Freeblock content can be carved with specialized SQLite forensic tools.\n\n**Anti-forensics:** A freeblock offset pointing into the 100-byte database header (< 108) or beyond the page boundary (≥ PageSize) indicates deliberate corruption of the freeblock chain. This can hide deleted records from forensic tools that walk the freeblock list (see IMF 2018 anti-forensics corpus, folder 17).",
+                    "forensic_value": true,
+                    "antiforensic": "$FirstFreeblockOffset != 0 and ($FirstFreeblockOffset < 108 or $FirstFreeblockOffset >= $PageSize)"
                 },
                 {
                     "name": "CellCount",
@@ -320,7 +321,8 @@
                             "size": 2,
                             "type": "uint",
                             "output_format": "hex",
-                            "description": "Byte offset within page 1 where cell ${_count} starts. 2-byte big-endian unsigned integer.\n\n**Interpreting this value:**\n- For page 1 interior, valid offsets range from 112 (100-byte DB header + 12-byte B-tree header) to PageSize-1\n- The cell at this offset contains: 4-byte left-child page number + varint rowid\n- Since this is page 1, this offset equals the absolute file position\n\n**Validation:** Offset must be ≥ 112 and < PageSize; must fall within the cell content area (≥ CellContentAreaStart); no duplicate offsets allowed."
+                            "description": "Byte offset within page 1 where cell ${_count} starts. 2-byte big-endian unsigned integer.\n\n**Interpreting this value:**\n- For page 1 interior, valid offsets range from 112 (100-byte DB header + 12-byte B-tree header) to PageSize-1\n- The cell at this offset contains: 4-byte left-child page number + varint rowid\n- Since this is page 1, this offset equals the absolute file position\n\n**Validation:** Offset must be ≥ 112 and < PageSize; must fall within the cell content area (≥ CellContentAreaStart); no duplicate offsets allowed.\n\n**Anti-forensics:** A cell pointer set to 0 (page start) or ≥ PageSize (outside page) indicates cell pointer array manipulation — a technique that makes B-tree subtrees unreachable, hiding data without destroying cell content (Schmitt & Freiling, IMF 2018, folder 14).",
+                            "antiforensic": "$P1CellOffset < 112 or $P1CellOffset >= $PageSize"
                         }
                     ]
                 },
@@ -360,7 +362,8 @@
                             "size": 2,
                             "type": "uint",
                             "output_format": "hex",
-                            "description": "Byte offset within page 1 where `sqlite_schema` cell ${_count} starts. 2-byte big-endian unsigned integer.\n\n**Interpreting this value:**\n- For page 1 leaf, valid offsets range from 108 (100-byte DB header + 8-byte B-tree header) to PageSize-1\n- The cell at this offset contains: varint payload-size + varint rowid + record payload\n- Since this is page 1, this offset equals the absolute file position\n- The `sqlite_schema` record has 5 columns: type (TEXT), name (TEXT), tbl_name (TEXT), rootpage (INTEGER), sql (TEXT)\n\n**Recovery tip:** Even after pointer removal, the schema SQL text is highly distinctive (starts with 'CREATE TABLE', 'CREATE INDEX', etc.) and can be located by string searching through unallocated space."
+                            "description": "Byte offset within page 1 where `sqlite_schema` cell ${_count} starts. 2-byte big-endian unsigned integer.\n\n**Interpreting this value:**\n- For page 1 leaf, valid offsets range from 108 (100-byte DB header + 8-byte B-tree header) to PageSize-1\n- The cell at this offset contains: varint payload-size + varint rowid + record payload\n- Since this is page 1, this offset equals the absolute file position\n- The `sqlite_schema` record has 5 columns: type (TEXT), name (TEXT), tbl_name (TEXT), rootpage (INTEGER), sql (TEXT)\n\n**Recovery tip:** Even after pointer removal, the schema SQL text is highly distinctive (starts with 'CREATE TABLE', 'CREATE INDEX', etc.) and can be located by string searching through unallocated space.\n\n**Anti-forensics:** A cell pointer set to 0 (page start) or ≥ PageSize (outside page) indicates cell pointer array manipulation — hiding schema entries without destroying them (Schmitt & Freiling, IMF 2018, folder 14).",
+                            "antiforensic": "$P1CellOffset < 108 or $P1CellOffset >= $PageSize"
                         }
                     ]
                 },
@@ -377,6 +380,214 @@
                     "type": "bytes",
                     "description": "Cell content area of page 1 — contains the actual `sqlite_schema` cells. On a leaf page, each cell holds a complete schema record: the `type` ('table', 'index', 'view', 'trigger'), `name`, `tbl_name`, `rootpage` (where the table's data B-tree starts), and `sql` (the full CREATE statement).\n\nThe `rootpage` values in these cells are the entry points for navigating to each table's data. For forensic analysis, this is the roadmap: each table's root page number tells you where to start reading its B-tree.",
                     "forensic_value": true
+                }
+            ]
+        },
+        {
+            "name": "Page ${_count + 2}",
+            "type": "struct",
+            "condition": "$DatabaseSizeInPages > 1",
+            "repeat": "$DatabaseSizeInPages - 1",
+            "repeat_step": "$PageSize",
+            "color_gradient": true,
+            "description": "Database page ${_count + 2} — B-tree page header and content. Each SQLite database page is a self-contained unit within the B-tree structure. Pages are typed: interior pages contain child pointers for tree navigation, leaf pages contain actual records. Non-B-tree pages (freelist, overflow, pointer-map) are shown as raw content.\n\n**Anti-forensics detection:** Page headers are checked for manipulated pointers (self-referencing, out-of-bounds child pages), invalid cell pointer offsets, and corrupted freeblock chains. These techniques can hide data without destroying cell content (IMF 2018 anti-forensics corpus, folders 12, 14, 17).",
+            "forensic_value": true,
+            "fields": [
+                {
+                    "name": "PgType",
+                    "size": 1,
+                    "type": "uint",
+                    "description": "Page type byte. For B-tree pages, this identifies whether the page is an interior node (navigation) or leaf node (data), and whether it belongs to a table or index B-tree. Non-B-tree pages (freelist trunk/leaf, overflow, pointer-map) do not have a B-tree header — their first byte is part of a different structure and may coincidentally match a B-tree type code.",
+                    "forensic_value": true,
+                    "value_map": {
+                        "2": "Interior index b-tree page (0x02)",
+                        "5": "Interior table b-tree page (0x05)",
+                        "10": "Leaf index b-tree page (0x0A)",
+                        "13": "Leaf table b-tree page (0x0D)"
+                    }
+                },
+                {
+                    "name": "PgInterior",
+                    "type": "section",
+                    "condition": "$PgType == 5 or $PgType == 2",
+                    "description": "Interior B-tree page header — contains child page pointers for tree navigation. Interior pages do NOT hold actual records; they hold keys and pointers to child pages that form the balanced tree structure. The right-most child pointer in the header complements the left-child pointers stored in each cell.",
+                    "fields": [
+                        {
+                            "name": "PgFirstFreeblock",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Offset to first freeblock on this page (0 = none). Freeblocks form a singly-linked list of deleted record fragments within the page.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "PgCellCount",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Number of cells (child pointer + key pairs) on this interior page.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "PgCellContentStart",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Byte offset within page where cell content area begins (0 = 65536). The gap between the cell pointer array and this offset is unallocated space — a primary forensic recovery zone for deleted cells.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "PgFragBytes",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "Fragmented free bytes — free byte ranges too small to form a freeblock (< 4 bytes). A high value indicates heavy deletion activity."
+                        },
+                        {
+                            "name": "PgRightChild",
+                            "size": 4,
+                            "type": "uint",
+                            "description": "Right-most child page pointer. Points to the subtree containing all keys greater than the last cell's key. Must reference a valid page within the database.\n\n**Anti-forensics:** Self-referencing (pointing to own page) creates infinite B-tree traversal loops. Out-of-bounds values (> DatabaseSizeInPages) hide subtrees by pointing to non-existent pages. Both techniques make data unreachable without destroying it (IMF 2018, folder 12: `--left-child-point-to-self`, `--left-child-outside`).",
+                            "forensic_value": true,
+                            "antiforensic": "$PgRightChild == $_index + 2 or ($DatabaseSizeInPages != 0 and $PgRightChild > $DatabaseSizeInPages)"
+                        },
+                        {
+                            "name": "PgCellPtrSection",
+                            "type": "section",
+                            "condition": "$PgCellCount > 0 and $PgCellCount * 2 + 12 <= $PageSize",
+                            "description": "Cell pointer array — ${PgCellCount} entries of 2-byte offsets pointing to cells within this page. Pointers are maintained in key-sorted order for binary search.",
+                            "fields": [
+                                {
+                                    "name": "Cell Ptr ${_count}",
+                                    "type": "struct",
+                                    "repeat": "$PgCellCount",
+                                    "fields": [
+                                        {
+                                            "name": "PgCellOffset",
+                                            "size": 2,
+                                            "type": "uint",
+                                            "output_format": "hex",
+                                            "description": "Byte offset within this page where the cell starts. For interior pages, valid offsets are 12 to PageSize-4 (after the 12-byte header, with room for a minimal cell).\n\n**Anti-forensics:** Offset 0 points into the page header (cell-point-to-start); offset near or past PageSize leaves insufficient space for any valid cell (cell-point-invalid-in-page, cell-point-outside-page). Both techniques make cells unreachable without destroying their content (IMF 2018, folder 14).",
+                                            "antiforensic": "$PgCellOffset == 0 or $PgCellOffset >= $PageSize - 3"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "name": "PgData",
+                                    "size": "$PageSize - 12 - $PgCellCount * 2",
+                                    "type": "bytes",
+                                    "description": "Remaining page content: unallocated space + cell content area. Contains actual B-tree cells (child page pointers + rowid keys for interior pages) and forensically recoverable deleted data in the unallocated gap.",
+                                    "forensic_value": true
+                                }
+                            ]
+                        },
+                        {
+                            "name": "PgDataFull",
+                            "type": "section",
+                            "condition": "$PgCellCount <= 0 or $PgCellCount * 2 + 12 > $PageSize",
+                            "description": "Full page content (cell pointer array not parsed due to invalid or zero CellCount).",
+                            "fields": [
+                                {
+                                    "name": "PgData",
+                                    "size": "$PageSize - 12",
+                                    "type": "bytes",
+                                    "description": "Raw page content including cell pointer array and cell data.",
+                                    "forensic_value": true
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "PgLeaf",
+                    "type": "section",
+                    "condition": "$PgType == 10 or $PgType == 13",
+                    "description": "Leaf B-tree page header — contains actual database records. Table leaf pages (0x0D) hold row data keyed by rowid. Index leaf pages (0x0A) hold index entries. The unallocated space between the cell pointer array and cell content area is the primary forensic recovery zone for deleted records.",
+                    "fields": [
+                        {
+                            "name": "PgFirstFreeblock",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Offset to first freeblock on this page (0 = none). Freeblocks contain deleted record fragments and are linked via 2-byte next-pointers.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "PgCellCount",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Number of cells (records) on this leaf page. Only counts active cells — deleted cells persist as freeblocks or in unallocated space but are not counted.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "PgCellContentStart",
+                            "size": 2,
+                            "type": "uint",
+                            "description": "Byte offset within page where cell content area begins (0 = 65536). Gap between cell pointer array end and this offset = unallocated space containing potential deleted records.",
+                            "forensic_value": true
+                        },
+                        {
+                            "name": "PgFragBytes",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "Fragmented free bytes — free byte ranges too small to form a freeblock (< 4 bytes). High values indicate heavy deletion activity."
+                        },
+                        {
+                            "name": "PgCellPtrSection",
+                            "type": "section",
+                            "condition": "$PgCellCount > 0 and $PgCellCount * 2 + 8 <= $PageSize",
+                            "description": "Cell pointer array — ${PgCellCount} entries of 2-byte offsets pointing to cells within this page.",
+                            "fields": [
+                                {
+                                    "name": "Cell Ptr ${_count}",
+                                    "type": "struct",
+                                    "repeat": "$PgCellCount",
+                                    "fields": [
+                                        {
+                                            "name": "PgCellOffset",
+                                            "size": 2,
+                                            "type": "uint",
+                                            "output_format": "hex",
+                                            "description": "Byte offset within this page where the cell starts. For leaf pages, valid offsets are 8 to PageSize-4 (after the 8-byte header, with room for a minimal cell).\n\n**Anti-forensics:** Offset 0 points into the page header (cell-point-to-start); offset near or past PageSize leaves insufficient space for any valid cell (cell-point-invalid-in-page, cell-point-outside-page). Both techniques make records unreachable without destroying their content (IMF 2018, folder 14).",
+                                            "antiforensic": "$PgCellOffset == 0 or $PgCellOffset >= $PageSize - 3"
+                                        }
+                                    ]
+                                },
+                                {
+                                    "name": "PgData",
+                                    "size": "$PageSize - 8 - $PgCellCount * 2",
+                                    "type": "bytes",
+                                    "description": "Remaining page content: unallocated space + cell content area. Contains actual database records and forensically recoverable deleted data.",
+                                    "forensic_value": true
+                                }
+                            ]
+                        },
+                        {
+                            "name": "PgDataFull",
+                            "type": "section",
+                            "condition": "$PgCellCount <= 0 or $PgCellCount * 2 + 8 > $PageSize",
+                            "description": "Full page content (cell pointer array not parsed due to invalid or zero CellCount).",
+                            "fields": [
+                                {
+                                    "name": "PgData",
+                                    "size": "$PageSize - 8",
+                                    "type": "bytes",
+                                    "description": "Raw page content including cell pointer array and cell data.",
+                                    "forensic_value": true
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "PgOther",
+                    "type": "section",
+                    "condition": "$PgType != 2 and $PgType != 5 and $PgType != 10 and $PgType != 13",
+                    "description": "Non-B-tree page or corrupted page. This page's first byte does not match any valid B-tree page type (0x02, 0x05, 0x0A, 0x0D). It may be a freelist trunk/leaf page (containing deleted records), an overflow page (large record continuation), a pointer-map page (auto-vacuum back-links), or a page with a corrupted/manipulated type byte.",
+                    "fields": [
+                        {
+                            "name": "PgContent",
+                            "size": "$PageSize - 1",
+                            "type": "bytes",
+                            "description": "Raw page content. Possible structures:\n- **Freelist trunk:** 4-byte next-trunk page + 4-byte leaf count + array of 4-byte leaf page numbers. Leaf pages contain deleted records.\n- **Freelist leaf:** Original page data intact — deleted records preserved until overwritten.\n- **Overflow page:** 4-byte next-overflow page + payload continuation from a large cell.\n- **Pointer-map:** Array of 5-byte entries (1-byte type + 4-byte parent page) for auto-vacuum databases.",
+                            "forensic_value": true
+                        }
+                    ]
                 }
             ]
         },
