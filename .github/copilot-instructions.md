@@ -292,7 +292,7 @@ Adjacent colors guaranteed distinct. `color_gradient: true` creates progressive 
 
 ## Reference Parsers
 
-- **`sqlite.json`** — Big-endian, extensive `expected_values`, `enabled: false` for WAL/journal, structured page content (CellPointerArray, UnallocatedSpace, CellContentArea per page), parenthesized expressions for default values (`$field or 65536`)
+- **`sqlite.json`** — Big-endian, extensive `expected_values`, `enabled: false` for WAL/journal, structured page content with individually parsed cell pointers (repeated struct with hex offsets), UnallocatedSpace and CellContentArea per page, parenthesized expressions for default values (`$field or 65536`), forensic recovery procedures (DFRWS 2018 corpus study, IMF 2018 anti-forensics), detailed record format documentation
 - **`lnk_shell_link.json`** — Complex conditionals, `forensic_notes`, `repeat: "until"`, deeply nested
 - **`mft.json`** — Type-dispatched attributes, prefixed field names, timestomping documentation
 - **`prefetch.json`** — Multi-version with conditions, full metrics/chains/volume parsing

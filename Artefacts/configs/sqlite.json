@@ -15,7 +15,10 @@
         "https://www.sqlite.org/tempfiles.html",
         "https://www.sciencedirect.com/science/article/pii/S1742287618300471",
         "https://dfir.science/2017/04/Forensic-Analysis-of-SQLite-Databases.html",
-        "https://www.sans.org/white-papers/33784/"
+        "https://www.sans.org/white-papers/33784/",
+        "https://dfrws.org/sites/default/files/session-files/2018_EU_paper_a_standardized_corpus_for_sqlite_database_forensics.pdf",
+        "https://imf-conference.org/imf2018/downloads/09_Sven-Schmitt_Introducing-Anti-Forensics.pdf",
+        "https://www.forensicfocus.com/webinars/a-standardized-corpus-for-sqlite-database-forensics/"
     ],
     "fields": [
         {
@@ -297,17 +300,27 @@
             "color_gradient": true,
             "fields": [
                 {
-                    "name": "P1CellPointerArray",
-                    "size": "$CellCount * 2",
-                    "type": "bytes",
-                    "description": "Cell pointer array — an array of `CellCount` 2-byte big-endian offsets, each pointing to a cell's start position within this page. The pointers are kept in key-sorted order for efficient binary search.\n\nOn an interior page, each cell is structured as: 4-byte left child page number + varint rowid key. The pointers let SQLite jump directly to any cell without scanning through variable-length records.",
-                    "informational": true
+                    "name": "Cell Pointer ${_count}",
+                    "type": "struct",
+                    "repeat": "$CellCount",
+                    "color_gradient": true,
+                    "informational": true,
+                    "description": "2-byte big-endian page offset pointing to cell ${_count} on this interior page. Pointers are maintained in **key-sorted order** (ascending rowid for table B-trees, ascending key for index B-trees) to support binary search. Each pointed-to cell on an interior page contains: **4-byte left child page number** + **varint rowid key**.\n\n**Forensic significance:**\n- Pointer values reveal the physical layout of cells — cells are NOT stored in insertion order, they are placed wherever free space exists\n- When a schema object is dropped, its cell pointer is removed but the cell data (including child page numbers) persists in unallocated space\n- The pointer ordering vs physical cell positions can reveal insertion/deletion history\n- Anti-forensic techniques can manipulate cell pointers to make B-tree subtrees unreachable, effectively hiding data without destroying it (Schmitt & Freiling, IMF 2018)\n- DFRWS 2018 corpus study tested 6 forensic tools against 77 databases — none correctly parsed all variations. Manual pointer analysis remains essential.",
+                    "fields": [
+                        {
+                            "name": "P1CellOffset",
+                            "size": 2,
+                            "type": "uint",
+                            "output_format": "hex",
+                            "description": "Byte offset within page 1 where cell ${_count} starts. 2-byte big-endian unsigned integer.\n\n**Interpreting this value:**\n- For page 1 interior, valid offsets range from 112 (100-byte DB header + 12-byte B-tree header) to PageSize-1\n- The cell at this offset contains: 4-byte left-child page number + varint rowid\n- Since this is page 1, this offset equals the absolute file position\n\n**Validation:** Offset must be ≥ 112 and < PageSize; must fall within the cell content area (≥ CellContentAreaStart); no duplicate offsets allowed."
+                        }
+                    ]
                 },
                 {
                     "name": "P1UnallocatedSpace",
                     "size": "($CellContentAreaStart or 65536) - 112 - $CellCount * 2",
                     "type": "bytes",
-                    "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area on page 1. When schema objects are dropped (`DROP TABLE`, `DROP INDEX`), their cell pointer is removed and their cell data remains in this or the freeblock chain until overwritten.\n\nThis space may contain remnants of:\n- Dropped table schemas (full `CREATE TABLE` SQL statements)\n- Deleted index definitions\n- Modified trigger or view definitions\n\nSchema SQL text is often highly informative because it reveals column names, types, and constraints of deleted tables — even when the table data itself has been overwritten.",
+                    "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area on page 1 (interior layout). When schema objects are dropped (`DROP TABLE`, `DROP INDEX`), their cell pointer is removed and their cell data remains here until overwritten.\n\n**What persists here on an interior page 1:**\n- Child page numbers that pointed to subtrees of the `sqlite_schema` B-tree\n- Rowid keys used for B-tree navigation\n- Remnants from B-tree rebalancing operations\n\n**Recovery procedure:**\n1. Scan for 4-byte values that are valid page numbers (1 to DatabaseSizeInPages) — these are former child page pointers\n2. Follow recovered page numbers to find orphaned schema subtree pages\n3. Those pages may contain complete `CREATE TABLE`/`CREATE INDEX` SQL statements\n4. Cross-reference with the freeblock chain (from FirstFreeblockOffset) for additional recoverable cells\n\n**Total free space:** This gap + freeblock chain + FragmentedFreeBytes = total recoverable area on page 1.",
                     "forensic_value": "critical"
                 },
                 {
@@ -327,17 +340,27 @@
             "color_gradient": true,
             "fields": [
                 {
-                    "name": "P1CellPointerArray",
-                    "size": "$CellCount * 2",
-                    "type": "bytes",
-                    "description": "Cell pointer array — an array of `CellCount` 2-byte big-endian offsets, each pointing to a cell's start position within this page. On a leaf page, each cell contains the actual `sqlite_schema` record: payload size varint, rowid varint, and then the record data (type, name, tbl_name, rootpage, sql).\n\nPointers are maintained in key order (ascending rowid) for binary search. When a schema object is dropped, its pointer is removed and the array shrinks — but the cell content remains on the page.",
-                    "informational": true
+                    "name": "Cell Pointer ${_count}",
+                    "type": "struct",
+                    "repeat": "$CellCount",
+                    "color_gradient": true,
+                    "informational": true,
+                    "description": "2-byte big-endian page offset pointing to `sqlite_schema` cell ${_count} on this leaf page. Each pointed-to cell contains the actual schema record: **varint payload-size** + **varint rowid** + **record data** (type, name, tbl_name, rootpage, sql).\n\n**Forensic significance:**\n- When `DROP TABLE` or `DROP INDEX` is executed, the schema entry's pointer is removed but the cell content (including the full `CREATE TABLE` SQL) persists on the page\n- Recovering dropped schema SQL reveals column names, types, and constraints — critical for interpreting carved records from other pages\n- A reduction in `CellCount` without corresponding space reclamation suggests recent schema changes\n- The `rootpage` value in each schema record is a page number — the entry point for that table's B-tree data\n- DFRWS 2018 corpus study: 6 forensic tools tested against 77 databases, none handled all variations correctly. Manual pointer analysis remains essential for thorough examination.",
+                    "fields": [
+                        {
+                            "name": "P1CellOffset",
+                            "size": 2,
+                            "type": "uint",
+                            "output_format": "hex",
+                            "description": "Byte offset within page 1 where `sqlite_schema` cell ${_count} starts. 2-byte big-endian unsigned integer.\n\n**Interpreting this value:**\n- For page 1 leaf, valid offsets range from 108 (100-byte DB header + 8-byte B-tree header) to PageSize-1\n- The cell at this offset contains: varint payload-size + varint rowid + record payload\n- Since this is page 1, this offset equals the absolute file position\n- The `sqlite_schema` record has 5 columns: type (TEXT), name (TEXT), tbl_name (TEXT), rootpage (INTEGER), sql (TEXT)\n\n**Recovery tip:** Even after pointer removal, the schema SQL text is highly distinctive (starts with 'CREATE TABLE', 'CREATE INDEX', etc.) and can be located by string searching through unallocated space."
+                        }
+                    ]
                 },
                 {
                     "name": "P1UnallocatedSpace",
                     "size": "($CellContentAreaStart or 65536) - 108 - $CellCount * 2",
                     "type": "bytes",
-                    "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area on page 1. This is the primary location for recovering dropped schema definitions.\n\nWhen `DROP TABLE` or `DROP INDEX` is executed, the schema entry's cell pointer is removed but the cell data (including the full `CREATE TABLE` SQL) often persists here until overwritten. Recovering dropped table schemas from this space reveals column names, types, and constraints — essential for interpreting carved records from other pages.",
+                    "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area on page 1 (leaf layout). This is the **primary location for recovering dropped schema definitions**.\n\n**What persists here:**\n- **Dropped table schemas** — full `CREATE TABLE` SQL statements including column names, data types, constraints, and default values\n- **Deleted index definitions** — `CREATE INDEX` statements revealing which columns were indexed\n- **Modified triggers and views** — previous versions of `CREATE TRIGGER`/`CREATE VIEW` SQL\n\n**Why this matters for forensics:**\nSchema SQL is highly distinctive text (starts with 'CREATE TABLE', 'CREATE INDEX', etc.) and can be located by simple string search through this region. Recovering dropped table schemas reveals the column structure needed to interpret carved records from other pages.\n\n**Recovery procedure:**\n1. Search for ASCII strings starting with 'CREATE ' (text encoding per TextEncoding header field)\n2. Each recovered schema cell has the format: varint payload-size + varint rowid + record (type, name, tbl_name, rootpage, sql)\n3. The `rootpage` value in recovered schemas points to where that table's data B-tree was rooted — even if the page is now on the freelist, it may retain data\n4. Also walk the freeblock chain (from FirstFreeblockOffset) for additional schema remnants\n\n**Anti-forensic indicator:** If this space is zero-filled despite CellCount being lower than expected, `PRAGMA secure_delete=ON` may have been active. Normal deletion leaves schema text intact.",
                     "forensic_value": "critical"
                 },
                 {
@@ -732,7 +755,7 @@
         {
             "name": "CellPointerArray",
             "type": "struct",
-            "description": "Array of 2-byte cell pointers following b-tree page header. Points to cells in descending order.",
+            "description": "Reference: Cell pointer array structure within each B-tree page. Immediately follows the 8-byte (leaf) or 12-byte (interior) page header.\n\n**Structure:** `CellCount` entries of 2-byte big-endian unsigned integers, each a byte offset within the page pointing to a cell's start position. Total size = `CellCount × 2` bytes.\n\n**Key properties:**\n- Pointers are maintained in **key-sorted order** (ascending rowid for table B-trees, ascending index key for index B-trees) to support binary search\n- Cells are physically placed wherever free space exists on the page — NOT in pointer order\n- When a record is deleted, its pointer is removed and the array shrinks, but the cell data persists\n- The gap between the end of this array and `CellContentAreaStart` is unallocated space — the primary forensic recovery zone\n\n**Forensic analysis of cell pointers:**\n1. **Deleted record detection:** Compare `CellCount` with the theoretical maximum cells per page — a low count suggests heavy deletion\n2. **Pointer gap analysis:** `CellContentAreaStart - header_size - (CellCount × 2)` = recoverable unallocated bytes\n3. **Integrity verification:** All pointers must be ≥ header size, < PageSize, within the cell content area, and unique\n4. **Freeblock chain:** Walk from `FirstFreeblockOffset` through the freeblock linked list (each freeblock: 2-byte next-ptr + 2-byte size + residual data)\n5. **Total free space:** Unallocated gap + sum of freeblock sizes + fragmented free bytes = total recoverable area\n6. **Anti-forensic awareness:** Pointer manipulation can hide records without destroying cell data (Schmitt & Freiling, IMF 2018). Cross-reference pointer array against actual cell content patterns.\n\n**DFRWS 2018 corpus study insights:** Testing 6 forensic tools against 77 databases across 5 categories (keywords/identifiers, column definitions, constraints, UTF character sets, DB elements) revealed no tool correctly handled all variations. Requirements: (1) correctly show all traces, (2) errors in one area must not eliminate rest, (3) recovery mode must not degrade logical extraction.",
             "forensic_value": true,
             "enabled": false,
             "fields": [
@@ -740,7 +763,7 @@
                     "name": "CellPointers",
                     "size": 0,
                     "type": "remaining",
-                    "description": "Array of 2-byte uint offsets (count = CellCount from page header) pointing to cell content. Gap between last pointer and first cell may contain deleted data.",
+                    "description": "Array of 2-byte big-endian unsigned integer offsets. Count = `CellCount` from the B-tree page header. Each value points to a cell's start position within the page.\n\n**Cell structures by page type:**\n- **Table leaf (0x0D):** varint payload-size + varint rowid + record payload (column data)\n- **Table interior (0x05):** 4-byte left-child page number + varint rowid key\n- **Index leaf (0x0A):** varint payload-size + index key record\n- **Index interior (0x02):** 4-byte left-child page number + varint payload-size + index key record\n\n**Recovery procedure for deleted records:**\n1. Identify unallocated space boundaries (end of pointer array to CellContentAreaStart)\n2. Walk freeblock chain from FirstFreeblockOffset (each: 2-byte next + 2-byte size + data)\n3. Scan both areas for varint signatures indicating record headers\n4. Parse recovered records using the self-describing format: header varints define column types, data follows\n5. Cross-reference with `sqlite_schema` to match records to their source table\n6. Check for zero-filled regions indicating `PRAGMA secure_delete` was active",
                     "forensic_value": true
                 }
             ]
@@ -1168,24 +1191,34 @@
                     "color_gradient": true,
                     "fields": [
                         {
-                            "name": "CellPointerArray",
-                            "size": "$CellCount * 2",
-                            "type": "bytes",
-                            "description": "Cell pointer array — `CellCount` entries of 2-byte big-endian offsets, each pointing to a cell within the cell content area below. Maintained in sorted key order (ascending rowid for table pages, ascending index key for index pages) to support binary search.\n\nFor interior pages, each pointed-to cell contains: a 4-byte left-child page number + a varint rowid (for table interior, 0x05) or a varint payload-size + index key payload (for index interior, 0x02). These cells only navigate — they don't hold actual row data.",
-                            "informational": true
+                            "name": "Cell Pointer ${_count}",
+                            "type": "struct",
+                            "repeat": "$CellCount",
+                            "color_gradient": true,
+                            "informational": true,
+                            "description": "2-byte big-endian page offset pointing to cell ${_count} on this interior B-tree page. Maintained in **key-sorted order** (ascending rowid for table B-trees, ascending key for index B-trees) for binary search.\n\nEach pointed-to cell contains navigation data only:\n- **Table interior (0x05):** 4-byte left-child page number + varint rowid key\n- **Index interior (0x02):** 4-byte left-child page number + varint payload-size + index key record\n\n**Forensic significance:**\n- Deleted interior cells contain child page numbers — recovering these reveals which subtrees existed before restructuring or `DROP TABLE`\n- Interior page modifications occur during B-tree balancing (splits/merges), reflecting structural changes\n- Compare pointers against `RightMostPointer` to verify B-tree completeness — missing subtrees may indicate corruption or anti-forensic manipulation\n- Anti-forensic techniques can manipulate interior page pointers to make subtrees unreachable, hiding data without destroying it (Schmitt & Freiling, IMF 2018)",
+                            "fields": [
+                                {
+                                    "name": "CellOffset",
+                                    "size": 2,
+                                    "type": "uint",
+                                    "output_format": "hex",
+                                    "description": "Byte offset within this page where cell ${_count} starts. 2-byte big-endian unsigned integer.\n\n**Interpreting this value:**\n- For interior pages, valid offsets range from 12 (12-byte B-tree header) to PageSize-1\n- The cell at this offset begins with a 4-byte left-child page number followed by a varint key\n- Absolute file position: `(page_number - 1) × PageSize + this_offset`\n\n**Validation:** Must be ≥ 12 and < PageSize; should fall within the cell content area (≥ CellContentAreaStart); no duplicate offsets."
+                                }
+                            ]
                         },
                         {
                             "name": "UnallocatedSpace",
                             "size": "($CellContentAreaStart or 65536) - 12 - $CellCount * 2",
                             "type": "bytes",
-                            "description": "**Forensically critical** — unallocated gap between the cell pointer array (growing down from the header) and the cell content area (growing up from the page bottom). When cells are deleted from an interior page, their pointer is removed but the cell bytes persist here until new cells are inserted over them.\n\nFor interior pages, deleted cells contain child page numbers — recovering these can reveal which subtrees existed before a table was restructured or dropped.",
+                            "description": "**Forensically critical** — unallocated gap between the cell pointer array (growing down from the header) and the cell content area (growing up from the page bottom). This is one of three within-page recovery zones (along with freeblocks and fragmented bytes).\n\n**What persists here:** When cells are deleted from an interior page, their pointer is removed from the array but the cell bytes (including child page numbers and key values) persist until overwritten by new cell allocations growing upward from the bottom.\n\n**Recovery procedure for interior pages:**\n1. Scan for 4-byte sequences that are valid page numbers (1 to DatabaseSizeInPages)\n2. Each recovered page number may point to a subtree that was part of a dropped table or reorganized B-tree\n3. Follow recovered child pointers to access orphaned subtrees that may still contain intact data\n4. Cross-reference with freelist — if a recovered child page is also on the freelist, it was freed but likely retains its original content\n\n**Total free space on this page:** This unallocated gap + freeblock chain sizes (from FirstFreeblockOffset) + FragmentedFreeBytes = total recoverable area. Compare with usable page size to estimate deletion activity.\n\n**Anti-forensic awareness:** Attackers may fill this space with random data to prevent recovery while leaving the database functionally intact. Look for entropy anomalies — legitimate unallocated space typically contains structured remnants (varint patterns, page numbers), not random bytes.",
                             "forensic_value": "critical"
                         },
                         {
                             "name": "CellContentArea",
                             "size": "$PageSize - ($CellContentAreaStart or 65536)",
                             "type": "bytes",
-                            "description": "Cell content area for this interior page. Cells are packed toward the bottom of the page and are NOT stored in order — the cell pointer array above provides sorted access. For interior table pages (0x05): each cell is `4-byte left-child page number + varint rowid`. For interior index pages (0x02): each cell is `4-byte left-child page number + varint payload-size + index key record`.\n\nThe left-child page number in each cell points to a subtree containing all keys less than or equal to this cell's key. The *RightMostPointer* (in the page header) handles keys greater than the last cell's key.",
+                            "description": "Cell content area for this interior page — cells are packed toward the bottom of the page. **Cells are NOT stored in key order** — they are placed wherever free space exists. The cell pointer array provides sorted access.\n\n**Cell format by page type:**\n- **Table interior (0x05):** `4-byte left-child page number` + `varint rowid`\n- **Index interior (0x02):** `4-byte left-child page number` + `varint payload-size` + `index key record`\n\nThe left-child page number in each cell points to a subtree containing all keys ≤ that cell's key. The *RightMostPointer* (in the page header) covers keys > the last cell's key.\n\n**Forensic note:** Active cells here define the B-tree's current navigational structure. Combined with recovered cells from the unallocated space above, you can reconstruct the B-tree's history — which subtrees were added, which were removed (by `DROP TABLE`, B-tree rebalancing, or anti-forensic manipulation).",
                             "informational": true
                         }
                     ]
@@ -1198,24 +1231,34 @@
                     "color_gradient": true,
                     "fields": [
                         {
-                            "name": "CellPointerArray",
-                            "size": "$CellCount * 2",
-                            "type": "bytes",
-                            "description": "Cell pointer array — `CellCount` entries of 2-byte big-endian offsets, each pointing to a cell within the cell content area. Maintained in sorted key order (ascending rowid for table pages, ascending index key for index pages) to support binary search.\n\nFor leaf pages, each pointed-to cell contains actual data: table leaf (0x0D) cells hold `varint payload-size + varint rowid + record payload`; index leaf (0x0A) cells hold `varint payload-size + index key record`. This is where the real database content is stored.",
-                            "informational": true
+                            "name": "Cell Pointer ${_count}",
+                            "type": "struct",
+                            "repeat": "$CellCount",
+                            "color_gradient": true,
+                            "informational": true,
+                            "description": "2-byte big-endian page offset pointing to cell ${_count} on this leaf B-tree page — **where the actual database records live.**\n\nEach pointed-to cell contains real data:\n- **Table leaf (0x0D):** varint payload-size + varint rowid + record payload (the actual row data)\n- **Index leaf (0x0A):** varint payload-size + index key record\n\n**Forensic significance — the most important pointers in the database:**\n- Each pointer represents **one active record** (row) — this is the definitive list of live data on this page\n- **Deleted record detection:** `DELETE` removes the pointer but cell data (payload, rowid, column values) persists in unallocated space or freeblocks until overwritten\n- **Pointer gap analysis:** The gap between this pointer array and `CellContentAreaStart` quantifies recoverable unallocated space\n- **Record carving:** Scan unallocated space for varint signatures (payload-size + rowid patterns) to recover deleted records. SQLite records are self-describing (header lists column serial types), so carved records can be fully parsed without schema knowledge\n- **Secure delete detection:** If `PRAGMA secure_delete=ON` was active, deleted cell content is zeroed — look for zero-filled regions in unallocated space as evidence\n- **Anti-forensic awareness:** DFRWS 2018 corpus study tested 6 tools against 77 databases — none correctly handled all variations (unusual column definitions, UTF character sets, anti-forensic modifications). Manual pointer-level analysis is essential\n- **Tool requirements** (DFRWS 2018): (1) correctly show all traces from evidence, (2) errors in one area must not eliminate the rest, (3) recovery mode must not degrade logical data extraction",
+                            "fields": [
+                                {
+                                    "name": "CellOffset",
+                                    "size": 2,
+                                    "type": "uint",
+                                    "output_format": "hex",
+                                    "description": "Byte offset within this page where cell ${_count} starts. 2-byte big-endian unsigned integer pointing to the beginning of a database record.\n\n**Interpreting this value:**\n- For leaf pages, valid offsets range from 8 (8-byte B-tree header) to PageSize-1\n- **Table leaf (0x0D):** Cell starts with varint payload-size, then varint rowid (the row's unique key, often `INTEGER PRIMARY KEY`), then the record payload\n- **Index leaf (0x0A):** Cell starts with varint payload-size + index key record\n- Absolute file position: `(page_number - 1) × PageSize + this_offset`\n\n**Record payload structure:** First varint = header size, then one varint per column defining its serial type (0=NULL, 1=int8, 2=int16BE, 3=int24BE, 4=int32BE, 5=int48BE, 6=int64BE, 7=float64, 8=const 0, 9=const 1, ≥12 even=BLOB of (N-12)/2 bytes, ≥13 odd=TEXT of (N-13)/2 bytes). Column data follows in the same order.\n\n**Validation:** Must be ≥ 8 and < PageSize; should fall within the cell content area (≥ CellContentAreaStart); no duplicate offsets; cell at this offset should begin with a valid varint."
+                                }
+                            ]
                         },
                         {
                             "name": "UnallocatedSpace",
                             "size": "($CellContentAreaStart or 65536) - 8 - $CellCount * 2",
                             "type": "bytes",
-                            "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area. This is the richest source of deleted data within an active page. When records are deleted, their 2-byte pointer is removed from the array above, but the actual cell data (payload, rowid, column values) remains in this gap until overwritten by new records growing upward from the bottom.\n\nRecovery technique: scan this region for varint signatures (payload-size + rowid patterns) to locate deleted records. The SQLite record format is self-describing (each record has a header listing column types), so carved records can be fully parsed.",
+                            "description": "**Forensically critical** — unallocated gap between the cell pointer array and the cell content area. This is the **richest source of deleted data** within any active page. When records are deleted via `DELETE`, their 2-byte pointer is removed but the actual cell data persists here until overwritten.\n\n**Step-by-step recovery procedure:**\n1. **Locate boundaries:** This region spans from `header_size + CellCount × 2` to `CellContentAreaStart`\n2. **Scan for record headers:** Look for varint patterns — a deleted table leaf cell starts with varint payload-size + varint rowid. Rowids are typically sequential integers and payload sizes are consistent within a table.\n3. **Parse recovered records:** Each record payload starts with a varint header-size, then one varint per column (serial type codes). The serial types define both the column's data type and its byte length — the record is self-describing.\n4. **Cross-reference with schema:** Match recovered column patterns against `sqlite_schema` table definitions to identify which table each carved record belongs to\n5. **Check freeblock chain:** Walk from `FirstFreeblockOffset` (each freeblock: 2-byte next-ptr + 2-byte size + residual cell data) for additional recoverable records\n6. **Account for all space:** Unallocated gap + freeblock sizes + FragmentedFreeBytes = total free space. The remainder is active cell content.\n\n**Secure delete indicator:** Zero-filled regions here suggest `PRAGMA secure_delete=ON` was active during deletion — the application intentionally destroyed evidence. Partial zeroing may indicate secure delete was enabled mid-session.\n\n**Anti-forensic awareness (DFRWS/IMF 2018):** Sophisticated attackers can insert fake records with misleading timestamps or modify freeblock chains to hide data. Always verify recovered records against other evidence sources.",
                             "forensic_value": "critical"
                         },
                         {
                             "name": "CellContentArea",
                             "size": "$PageSize - ($CellContentAreaStart or 65536)",
                             "type": "bytes",
-                            "description": "Cell content area for this leaf page — **this is where the actual database records live.** Cells are packed toward the bottom of the page and are NOT stored in insertion order — the cell pointer array provides sorted access. For table leaf pages (0x0D): each cell is `varint payload-size + varint rowid + record-payload`. The record payload consists of a header (listing column serial types in varints) followed by the column data. For index leaf pages (0x0A): each cell is `varint payload-size + index-key-record` with no separate rowid.\n\n**Record format:** The payload's first varint is the header size, followed by one varint per column defining its serial type (0=NULL, 1=8-bit int, 2=16-bit int, ..., 7=float64, 8=0, 9=1, ≥12 even=BLOB of (N-12)/2 bytes, ≥13 odd=TEXT of (N-13)/2 bytes). Column data follows immediately after the header in the same order.",
+                            "description": "Cell content area for this leaf page — **this is where the actual database records live.** Cells are packed toward the bottom of the page in allocation order (NOT key order — the cell pointer array provides sorted access).\n\n**Cell format by page type:**\n- **Table leaf (0x0D):** `varint payload-size` + `varint rowid` + `record-payload`\n- **Index leaf (0x0A):** `varint payload-size` + `index-key-record` (no separate rowid)\n\n**Record payload structure:** The payload's first varint is the header size, followed by one varint per column defining its serial type:\n- 0=NULL (0 bytes), 1=int8 (1), 2=int16BE (2), 3=int24BE (3), 4=int32BE (4), 5=int48BE (6), 6=int64BE (8), 7=float64 (8), 8=const 0 (0), 9=const 1 (0)\n- N≥12 even = BLOB of (N-12)/2 bytes\n- N≥13 odd = TEXT of (N-13)/2 bytes\nColumn data follows immediately in the same order.\n\n**Overflow handling:** If a record's payload exceeds the overflow threshold (`(usable_size - 35)` for table leaves), only the first portion is stored inline. The last 4 bytes of the inline payload are a page number pointing to the first overflow page, which contains the remainder.\n\n**Forensic note:** Records with large BLOBs or long text strings frequently overflow — check for overflow page numbers at the end of inline payloads. Overflow pages on the freelist may contain residual large-object data from deleted records.",
                             "informational": true
                         }
                     ]
