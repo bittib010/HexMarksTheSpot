@@ -181,11 +181,297 @@
                             "forensic_value": "identifier"
                         },
                         {
-                            "name": "Exif_Payload",
-                            "size": "$SegmentLength - 8",
-                            "type": "bytes",
+                            "_comment": "--- TIFF header: byte order mark ---",
+                            "name": "TIFF_ByteOrder",
+                            "size": 2,
+                            "type": "uint",
                             "condition": "$SegmentLength > 8",
-                            "description": "**Exif / XMP Payload**\n\nThe raw Exif TIFF structure or XMP XML data.\n\n**Exif TIFF Structure:**\n- Byte order mark: `49 49` (Intel/little-endian) or `4D 4D` (Motorola/big-endian)\n- TIFF magic: `00 2A`\n- IFD0 offset (4 bytes)\n- IFD entries containing tags for camera info, timestamps, GPS, etc.\n\n**Key Exif Tags (forensically significant):**\n- 0x010F: Camera Make\n- 0x0110: Camera Model\n- 0x0132: DateTime (last modified)\n- 0x9003: DateTimeOriginal (when photo was taken)\n- 0x9004: DateTimeDigitized\n- 0x8769: Exif IFD pointer\n- 0x8825: GPS IFD pointer\n- GPS tags: Latitude, Longitude, Altitude, Timestamp, Map datum\n- 0xA431: Serial Number (body)\n- 0xA432: Lens Info\n- 0xA434: Lens Model\n\n*Forensic Value:* **Critical.** Contains device identification, timestamps, and possibly GPS coordinates.",
+                            "description": "**TIFF Byte Order Mark**\n\nDetermines endianness for ALL subsequent TIFF/Exif fields:\n- `49 49` (0x4949 = 18761) — Intel byte order (little-endian). Most common on cameras and smartphones.\n- `4D 4D` (0x4D4D = 19789) — Motorola byte order (big-endian). Used by some older cameras and scanners.\n\n*Forensic Value:* The byte order reveals the hardware lineage of the device that wrote the Exif data. Intel byte order (little-endian) is standard for modern consumer devices. Motorola (big-endian) may indicate older hardware, specific camera brands, or non-standard software.",
+                            "forensic_value": "identifier",
+                            "expected_values": [18761, 19789],
+                            "value_map": {
+                                "18761": "II — Intel (little-endian)",
+                                "19789": "MM — Motorola (big-endian)"
+                            }
+                        },
+                        {
+                            "_comment": "--- Little-endian TIFF structure (II / 0x4949) ---",
+                            "name": "TIFF_LE",
+                            "type": "section",
+                            "condition": "$TIFF_ByteOrder == 18761 and $SegmentLength > 14",
+                            "description": "**TIFF Structure (Little-Endian)**\n\nThe Exif data is wrapped in a TIFF container. This section parses the TIFF header and IFD0 (Image File Directory 0) entries using Intel/little-endian byte order.",
+                            "fields": [
+                                {
+                                    "name": "TIFF_Magic",
+                                    "size": 2,
+                                    "type": "uint",
+                                    "endianness": "little",
+                                    "description": "**TIFF Magic Number**\n\nAlways `0x002A` (42). Confirms this is a valid TIFF structure.",
+                                    "expected_values": [42],
+                                    "informational": true
+                                },
+                                {
+                                    "name": "IFD0_Offset",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "endianness": "little",
+                                    "description": "**IFD0 Offset**\n\nByte offset from the start of the TIFF header (the byte order mark) to the first IFD. Typically `0x00000008` (immediately after the 8-byte TIFF header).\n\n*Forensic Value:* A non-standard offset (not 8) may indicate tools that rewrite Exif data or deliberate manipulation.",
+                                    "informational": true
+                                },
+                                {
+                                    "name": "IFD0_EntryCount",
+                                    "size": 2,
+                                    "type": "uint",
+                                    "endianness": "little",
+                                    "description": "**IFD0 Entry Count**\n\nNumber of 12-byte tag entries in IFD0. Each entry describes one piece of metadata (camera make, model, timestamp, image dimensions, etc.). Typical range: 10–30 entries for camera images.",
+                                    "informational": true
+                                },
+                                {
+                                    "name": "IFD0 Tag ${_count}",
+                                    "type": "struct",
+                                    "repeat": "$IFD0_EntryCount",
+                                    "condition": "$IFD0_EntryCount > 0 and $IFD0_EntryCount <= 200",
+                                    "color_gradient": true,
+                                    "description": "**IFD0 Tag Entry ${_count}** — 12-byte TIFF tag entry containing a metadata field identifier, data type, count, and value or offset to the value.\n\n**Key forensic tags to look for:**\n- 0x010F (271): Camera Make\n- 0x0110 (272): Camera Model\n- 0x0112 (274): Orientation\n- 0x011A (282): XResolution\n- 0x011B (283): YResolution\n- 0x0128 (296): ResolutionUnit\n- 0x0131 (305): Software\n- 0x0132 (306): DateTime (last modification)\n- 0x013B (315): Artist\n- 0x8298 (33432): Copyright\n- 0x8769 (34665): Exif IFD Pointer\n- 0x8825 (34853): GPS IFD Pointer",
+                                    "fields": [
+                                        {
+                                            "name": "TagID",
+                                            "size": 2,
+                                            "type": "uint",
+                                            "endianness": "little",
+                                            "output_format": "hex",
+                                            "description": "**Tag ID** — Identifies which piece of metadata this entry contains.",
+                                            "forensic_value": true,
+                                            "value_map": {
+                                                "256": "0x0100 ImageWidth",
+                                                "257": "0x0101 ImageLength (height)",
+                                                "258": "0x0102 BitsPerSample",
+                                                "259": "0x0103 Compression",
+                                                "262": "0x0106 PhotometricInterpretation",
+                                                "270": "0x010E ImageDescription",
+                                                "271": "0x010F Make (camera manufacturer)",
+                                                "272": "0x0110 Model (camera model)",
+                                                "273": "0x0111 StripOffsets",
+                                                "274": "0x0112 Orientation",
+                                                "277": "0x0115 SamplesPerPixel",
+                                                "278": "0x0116 RowsPerStrip",
+                                                "279": "0x0117 StripByteCounts",
+                                                "282": "0x011A XResolution",
+                                                "283": "0x011B YResolution",
+                                                "284": "0x011C PlanarConfiguration",
+                                                "296": "0x0128 ResolutionUnit",
+                                                "301": "0x012D TransferFunction",
+                                                "305": "0x0131 Software",
+                                                "306": "0x0132 DateTime",
+                                                "315": "0x013B Artist",
+                                                "318": "0x013E WhitePoint",
+                                                "319": "0x013F PrimaryChromaticities",
+                                                "513": "0x0201 JPEGInterchangeFormat (thumbnail offset)",
+                                                "514": "0x0202 JPEGInterchangeFormatLength (thumbnail size)",
+                                                "529": "0x0211 YCbCrCoefficients",
+                                                "530": "0x0212 YCbCrSubSampling",
+                                                "531": "0x0213 YCbCrPositioning",
+                                                "532": "0x0214 ReferenceBlackWhite",
+                                                "33432": "0x8298 Copyright",
+                                                "34665": "0x8769 Exif IFD Pointer",
+                                                "34853": "0x8825 GPS IFD Pointer",
+                                                "40965": "0xA005 Interoperability IFD Pointer"
+                                            }
+                                        },
+                                        {
+                                            "name": "TagType",
+                                            "size": 2,
+                                            "type": "uint",
+                                            "endianness": "little",
+                                            "description": "**Data Type** — TIFF data type code determining how to interpret the value field.",
+                                            "value_map": {
+                                                "1": "BYTE (uint8)",
+                                                "2": "ASCII (null-terminated string)",
+                                                "3": "SHORT (uint16)",
+                                                "4": "LONG (uint32)",
+                                                "5": "RATIONAL (2x uint32: numerator/denominator)",
+                                                "6": "SBYTE (int8)",
+                                                "7": "UNDEFINED (raw bytes)",
+                                                "8": "SSHORT (int16)",
+                                                "9": "SLONG (int32)",
+                                                "10": "SRATIONAL (2x int32: numerator/denominator)",
+                                                "11": "FLOAT (float32)",
+                                                "12": "DOUBLE (float64)"
+                                            }
+                                        },
+                                        {
+                                            "name": "TagCount",
+                                            "size": 4,
+                                            "type": "uint",
+                                            "endianness": "little",
+                                            "description": "**Value Count** — Number of values of the specified type. For ASCII strings, this is the character count including the null terminator."
+                                        },
+                                        {
+                                            "name": "TagValue",
+                                            "size": 4,
+                                            "type": "bytes",
+                                            "description": "**Value / Offset** — If the data fits in 4 bytes, the value is stored here directly (left-justified for types smaller than 4 bytes). Otherwise, this field contains a byte offset from the TIFF header start to where the actual data is stored.\n\n**Inline values** (data ≤ 4 bytes):\n- SHORT with count ≤ 2: values packed here\n- LONG with count 1: value stored directly\n- ASCII with count ≤ 4: string stored here\n\n**Offset values** (data > 4 bytes):\n- ASCII strings (Make, Model, DateTime, Software)\n- RATIONAL values (GPS coordinates, resolution)\n- Large data blocks (thumbnail, MakerNote)\n\n*Forensic note:* When this is an offset, add it to the TIFF header start position (APP1 data start + 6 bytes for 'Exif\\0\\0') to get the absolute file position."
+                                        }
+                                    ]
+                                },
+                                {
+                                    "name": "IFD0_NextOffset",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "endianness": "little",
+                                    "condition": "$IFD0_EntryCount > 0 and $IFD0_EntryCount <= 200",
+                                    "description": "**Next IFD Offset**\n\nByte offset from TIFF header to the next IFD (typically IFD1 containing thumbnail metadata). Zero means no more IFDs.\n\n*Forensic Value:* IFD1 usually contains the thumbnail image — compare with the main image to detect editing. Non-zero values point to the thumbnail IFD.",
+                                    "forensic_value": true
+                                },
+                                {
+                                    "name": "IFD0_TrailingData",
+                                    "size": "$SegmentLength - 22 - $IFD0_EntryCount * 12",
+                                    "type": "bytes",
+                                    "condition": "$IFD0_EntryCount > 0 and $IFD0_EntryCount <= 200 and $SegmentLength > 22 + $IFD0_EntryCount * 12",
+                                    "description": "**IFD Data Area & Additional IFDs**\n\nContains:\n- **Tag values too large for 4 bytes** — ASCII strings (Make, Model, DateTime, Software), RATIONAL values (GPS coordinates, XResolution, YResolution), binary blobs (MakerNote, UserComment)\n- **Exif Sub-IFD** — Extended Exif tags (ExposureTime, FNumber, DateTimeOriginal, DateTimeDigitized, ShutterSpeed, Aperture, ISO, FocalLength, ExifVersion, FlashPixVersion, ColorSpace, PixelDimensions, SensingMethod, FileSource, SceneType, WhiteBalance, DigitalZoom, FocalLength35mm, SerialNumber, LensInfo, LensModel)\n- **GPS Sub-IFD** — GPS tags (GPSLatitudeRef N/S, GPSLatitude, GPSLongitudeRef E/W, GPSLongitude, GPSAltitudeRef, GPSAltitude, GPSTimeStamp, GPSSatellites, GPSMapDatum, GPSDateStamp)\n- **IFD1 (Thumbnail IFD)** — Thumbnail metadata and JPEG thumbnail data\n- **MakerNote** — Camera manufacturer-specific binary data (Canon, Nikon, Sony, etc.)\n\n*Forensic Value:* **Critical.** This data area contains the most forensically valuable metadata: timestamps, GPS coordinates, camera identification, software signatures, and the Exif thumbnail (which may retain the original unedited image content).",
+                                    "forensic_value": "critical"
+                                }
+                            ]
+                        },
+                        {
+                            "_comment": "--- Big-endian TIFF structure (MM / 0x4D4D) ---",
+                            "name": "TIFF_BE",
+                            "type": "section",
+                            "condition": "$TIFF_ByteOrder == 19789 and $SegmentLength > 14",
+                            "description": "**TIFF Structure (Big-Endian)**\n\nThe Exif data is wrapped in a TIFF container using Motorola/big-endian byte order. This is less common but used by some older cameras and scanners.",
+                            "fields": [
+                                {
+                                    "name": "TIFF_Magic",
+                                    "size": 2,
+                                    "type": "uint",
+                                    "description": "**TIFF Magic Number**\n\nAlways `0x002A` (42). Confirms this is a valid TIFF structure.",
+                                    "expected_values": [42],
+                                    "informational": true
+                                },
+                                {
+                                    "name": "IFD0_Offset",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "description": "**IFD0 Offset**\n\nByte offset from the start of the TIFF header to the first IFD. Typically `0x00000008`.",
+                                    "informational": true
+                                },
+                                {
+                                    "name": "IFD0_EntryCount",
+                                    "size": 2,
+                                    "type": "uint",
+                                    "description": "**IFD0 Entry Count**\n\nNumber of 12-byte tag entries in IFD0.",
+                                    "informational": true
+                                },
+                                {
+                                    "name": "IFD0 Tag ${_count}",
+                                    "type": "struct",
+                                    "repeat": "$IFD0_EntryCount",
+                                    "condition": "$IFD0_EntryCount > 0 and $IFD0_EntryCount <= 200",
+                                    "color_gradient": true,
+                                    "description": "**IFD0 Tag Entry ${_count}** — 12-byte TIFF tag entry (big-endian).",
+                                    "fields": [
+                                        {
+                                            "name": "TagID",
+                                            "size": 2,
+                                            "type": "uint",
+                                            "output_format": "hex",
+                                            "description": "**Tag ID** — Identifies which piece of metadata this entry contains.",
+                                            "forensic_value": true,
+                                            "value_map": {
+                                                "256": "0x0100 ImageWidth",
+                                                "257": "0x0101 ImageLength (height)",
+                                                "258": "0x0102 BitsPerSample",
+                                                "259": "0x0103 Compression",
+                                                "262": "0x0106 PhotometricInterpretation",
+                                                "270": "0x010E ImageDescription",
+                                                "271": "0x010F Make (camera manufacturer)",
+                                                "272": "0x0110 Model (camera model)",
+                                                "273": "0x0111 StripOffsets",
+                                                "274": "0x0112 Orientation",
+                                                "277": "0x0115 SamplesPerPixel",
+                                                "278": "0x0116 RowsPerStrip",
+                                                "279": "0x0117 StripByteCounts",
+                                                "282": "0x011A XResolution",
+                                                "283": "0x011B YResolution",
+                                                "284": "0x011C PlanarConfiguration",
+                                                "296": "0x0128 ResolutionUnit",
+                                                "301": "0x012D TransferFunction",
+                                                "305": "0x0131 Software",
+                                                "306": "0x0132 DateTime",
+                                                "315": "0x013B Artist",
+                                                "318": "0x013E WhitePoint",
+                                                "319": "0x013F PrimaryChromaticities",
+                                                "513": "0x0201 JPEGInterchangeFormat (thumbnail offset)",
+                                                "514": "0x0202 JPEGInterchangeFormatLength (thumbnail size)",
+                                                "529": "0x0211 YCbCrCoefficients",
+                                                "530": "0x0212 YCbCrSubSampling",
+                                                "531": "0x0213 YCbCrPositioning",
+                                                "532": "0x0214 ReferenceBlackWhite",
+                                                "33432": "0x8298 Copyright",
+                                                "34665": "0x8769 Exif IFD Pointer",
+                                                "34853": "0x8825 GPS IFD Pointer",
+                                                "40965": "0xA005 Interoperability IFD Pointer"
+                                            }
+                                        },
+                                        {
+                                            "name": "TagType",
+                                            "size": 2,
+                                            "type": "uint",
+                                            "description": "**Data Type** — TIFF data type code.",
+                                            "value_map": {
+                                                "1": "BYTE (uint8)",
+                                                "2": "ASCII (null-terminated string)",
+                                                "3": "SHORT (uint16)",
+                                                "4": "LONG (uint32)",
+                                                "5": "RATIONAL (2x uint32: numerator/denominator)",
+                                                "6": "SBYTE (int8)",
+                                                "7": "UNDEFINED (raw bytes)",
+                                                "8": "SSHORT (int16)",
+                                                "9": "SLONG (int32)",
+                                                "10": "SRATIONAL (2x int32: numerator/denominator)",
+                                                "11": "FLOAT (float32)",
+                                                "12": "DOUBLE (float64)"
+                                            }
+                                        },
+                                        {
+                                            "name": "TagCount",
+                                            "size": 4,
+                                            "type": "uint",
+                                            "description": "**Value Count** — Number of values of the specified type."
+                                        },
+                                        {
+                                            "name": "TagValue",
+                                            "size": 4,
+                                            "type": "bytes",
+                                            "description": "**Value / Offset** — If the data fits in 4 bytes, the value is stored here directly. Otherwise, this is a byte offset from the TIFF header start to the actual data.\n\n*Forensic note:* When an offset, add it to the TIFF header start position (APP1 data start + 6 bytes for 'Exif\\0\\0') to get the absolute file position."
+                                        }
+                                    ]
+                                },
+                                {
+                                    "name": "IFD0_NextOffset",
+                                    "size": 4,
+                                    "type": "uint",
+                                    "condition": "$IFD0_EntryCount > 0 and $IFD0_EntryCount <= 200",
+                                    "description": "**Next IFD Offset**\n\nByte offset from TIFF header to the next IFD (IFD1 / thumbnail). Zero = no more IFDs.\n\n*Forensic Value:* IFD1 usually contains the thumbnail — compare with main image to detect editing.",
+                                    "forensic_value": true
+                                },
+                                {
+                                    "name": "IFD0_TrailingData",
+                                    "size": "$SegmentLength - 22 - $IFD0_EntryCount * 12",
+                                    "type": "bytes",
+                                    "condition": "$IFD0_EntryCount > 0 and $IFD0_EntryCount <= 200 and $SegmentLength > 22 + $IFD0_EntryCount * 12",
+                                    "description": "**IFD Data Area & Additional IFDs**\n\nContains tag values too large for 4 bytes (strings, rationals, binary data), Exif Sub-IFD, GPS Sub-IFD, IFD1 thumbnail metadata, and MakerNote data.\n\n*Forensic Value:* **Critical.** Contains timestamps, GPS coordinates, camera identification, software signatures, and the Exif thumbnail.",
+                                    "forensic_value": "critical"
+                                }
+                            ]
+                        },
+                        {
+                            "_comment": "--- Fallback: XMP data or unrecognized Exif ---",
+                            "name": "Exif_FallbackPayload",
+                            "size": "$SegmentLength - 10",
+                            "type": "bytes",
+                            "condition": "$SegmentLength > 10 and $TIFF_ByteOrder != 18761 and $TIFF_ByteOrder != 19789",
+                            "description": "**XMP or Non-Standard APP1 Payload**\n\nThis APP1 segment does not contain a standard TIFF/Exif structure (byte order mark is neither `II` nor `MM`). It may contain:\n- **XMP metadata** — XML-based metadata (starts with `http://ns.adobe.com/xap/1.0/`)\n- **Non-standard APP1 data** — proprietary metadata from specific applications\n\n*Forensic Value:* XMP data may contain Dublin Core metadata (title, creator, description), Photoshop editing history, and camera raw processing settings.",
                             "forensic_value": true
                         }
                     ]
@@ -314,11 +600,19 @@
                     "description": "**DQT — Define Quantization Table**\n\nDefines one or more quantization tables used in JPEG compression. These tables control the trade-off between image quality and file size.\n\n*Forensic Value:* Quantization tables are characteristic of specific cameras and software. They can be used to fingerprint the encoding application or identify recompression.",
                     "fields": [
                         {
-                            "name": "QT_Data",
-                            "size": "$SegmentLength - 2",
-                            "type": "bytes",
-                            "description": "**Quantization Table Data**\n\nOne or more quantization tables. Each table:\n- 1 byte: precision (high nibble: 0=8-bit, 1=16-bit) and table ID (low nibble: 0-3)\n- 64 or 128 values (8-bit or 16-bit) in zig-zag order\n\n*Forensic Value:* **Important.** Quantization tables act as a fingerprint:\n- Identical tables across images suggest the same camera/software\n- Modified tables indicate recompression or editing\n- Standard tables can identify specific applications (Photoshop, ImageMagick, etc.)",
+                            "name": "QT_PrecisionAndID",
+                            "size": 1,
+                            "type": "uint",
+                            "description": "**Precision & Table ID**\n\nPacked byte containing:\n- **High nibble (bits 4-7):** Precision — `0` = 8-bit values, `1` = 16-bit values\n- **Low nibble (bits 0-3):** Table ID — `0` to `3` (typically 0 = luminance, 1 = chrominance)\n\nCommon values:\n- `0x00` (0) — 8-bit precision, table 0 (luminance / Y)\n- `0x01` (1) — 8-bit precision, table 1 (chrominance / CbCr)\n- `0x10` (16) — 16-bit precision, table 0\n\n*Forensic Value:* **Important.** Most consumer JPEG images use 8-bit precision (value 0x00 or 0x01). 16-bit precision is rare and may indicate professional, medical, or specialized imaging software.",
+                            "output_format": "hex",
                             "forensic_value": "identifier"
+                        },
+                        {
+                            "name": "QT_Values",
+                            "size": "$SegmentLength - 3",
+                            "type": "bytes",
+                            "description": "**Quantization Table Values**\n\n64 coefficient values in zig-zag scan order (8-bit: 64 bytes; 16-bit: 128 bytes). These values determine how much each DCT frequency component is divided during compression.\n\n**Forensic fingerprinting:**\n- The exact quantization values form a **unique fingerprint** of the encoding tool or camera:\n  - **Photoshop:** Has distinctive quality-level-dependent tables\n  - **libjpeg/IJG:** Uses a scaled version of the standard Annex K tables\n  - **Camera-specific:** Many cameras use proprietary tables unique to their firmware\n  - **ImageMagick, GIMP:** Each tool produces identifiable patterns\n- **Double compression detection:** If an image was opened and re-saved, the quantization tables will differ from the original encoder's tables\n- **Quality level estimation:** Lower values = higher quality, higher values = more compression\n\n*Forensic Value:* **Critical.** Cross-reference quantization values against known databases (JPEGsnoop, Hackerfactor FotoForensics) to identify the source application or camera model. Mismatched tables between images claiming to be from the same source indicate different origins or editing.",
+                            "forensic_value": "critical"
                         }
                     ]
                 },
@@ -364,11 +658,51 @@
                             "informational": true
                         },
                         {
-                            "name": "SOF_ComponentData",
-                            "size": "$SegmentLength - 8",
-                            "type": "bytes",
-                            "condition": "$SegmentLength > 8",
-                            "description": "**Component Specifications**\n\nFor each component (3 bytes each):\n- Component ID (1 byte): 1=Y, 2=Cb, 3=Cr\n- Sampling factors (1 byte): high nibble=horizontal, low nibble=vertical\n- Quantization table ID (1 byte): which DQT table to use\n\n*Forensic Value:* Chroma subsampling ratios (e.g., 4:2:0 vs 4:4:4) can indicate camera vs. software encoding."
+                            "name": "SOF Component ${_count}",
+                            "type": "struct",
+                            "repeat": "$SOF_NumComponents",
+                            "condition": "$SOF_NumComponents > 0 and $SOF_NumComponents <= 4",
+                            "color_gradient": true,
+                            "description": "**Component ${_count} Specification**\n\nDefines the properties of color component ${_count} — component ID, chroma subsampling factors, and which quantization table to use.",
+                            "fields": [
+                                {
+                                    "name": "SOF_CompID",
+                                    "size": 1,
+                                    "type": "uint",
+                                    "description": "**Component Identifier**\n\nIdentifies which color channel this specification describes.",
+                                    "value_map": {
+                                        "1": "Y (Luminance)",
+                                        "2": "Cb (Blue-difference chrominance)",
+                                        "3": "Cr (Red-difference chrominance)",
+                                        "4": "I or K (CMYK)",
+                                        "82": "R (Red — non-standard)",
+                                        "71": "G (Green — non-standard)",
+                                        "66": "B (Blue — non-standard)"
+                                    },
+                                    "informational": true
+                                },
+                                {
+                                    "name": "SOF_SamplingFactor",
+                                    "size": 1,
+                                    "type": "uint",
+                                    "output_format": "hex",
+                                    "description": "**Sampling Factors**\n\nPacked byte containing horizontal (high nibble) and vertical (low nibble) sampling factors.\n\nCommon values and their subsampling ratios:\n- `0x22` — 4:2:0 (2×2). Most common on cameras and web. Maximum compression.\n- `0x21` — 4:2:2 (2×1). Horizontal subsampling only. Better quality.\n- `0x11` — 4:4:4 (1×1). No subsampling. Full chroma resolution. Used by Photoshop at max quality.\n- `0x12` — Vertical-only subsampling (uncommon)\n\n*Forensic Value:* **Important.** The chroma subsampling ratio reveals encoding choices:\n- **4:2:0 (0x22)** is standard for cameras and most software\n- **4:4:4 (0x11)** suggests high-quality professional software (Photoshop, GIMP at max quality)\n- **Mismatch between Exif subsampling and SOF subsampling** indicates the image was re-encoded\n- **Non-standard ratios** may indicate specialized or modified encoding tools",
+                                    "forensic_value": true,
+                                    "value_map": {
+                                        "17": "0x11 — 1×1 (4:4:4 no subsampling)",
+                                        "18": "0x12 — 1×2 (vertical subsampling)",
+                                        "33": "0x21 — 2×1 (4:2:2 horizontal)",
+                                        "34": "0x22 — 2×2 (4:2:0 full subsampling)"
+                                    }
+                                },
+                                {
+                                    "name": "SOF_QTableID",
+                                    "size": 1,
+                                    "type": "uint",
+                                    "description": "**Quantization Table Selector**\n\nIndex of the DQT quantization table used for this component (0–3). Typically:\n- Component Y uses table 0 (luminance)\n- Components Cb/Cr use table 1 (chrominance)\n\n*Forensic Value:* Unusual table assignments may indicate custom encoding or manipulation.",
+                                    "expected_values": {"min": 0, "max": 3}
+                                }
+                            ]
                         }
                     ]
                 },
@@ -412,11 +746,48 @@
                             }
                         },
                         {
-                            "name": "SOF2_ComponentData",
-                            "size": "$SegmentLength - 8",
-                            "type": "bytes",
-                            "condition": "$SegmentLength > 8",
-                            "description": "**Component Specifications**\n\nSame format as SOF0 component data."
+                            "name": "SOF2 Component ${_count}",
+                            "type": "struct",
+                            "repeat": "$SOF2_NumComponents",
+                            "condition": "$SOF2_NumComponents > 0 and $SOF2_NumComponents <= 4",
+                            "color_gradient": true,
+                            "description": "**Component ${_count} Specification** (Progressive/Lossless)",
+                            "fields": [
+                                {
+                                    "name": "SOF2_CompID",
+                                    "size": 1,
+                                    "type": "uint",
+                                    "description": "**Component Identifier**",
+                                    "value_map": {
+                                        "1": "Y (Luminance)",
+                                        "2": "Cb (Blue-difference chrominance)",
+                                        "3": "Cr (Red-difference chrominance)",
+                                        "4": "I or K (CMYK)"
+                                    },
+                                    "informational": true
+                                },
+                                {
+                                    "name": "SOF2_SamplingFactor",
+                                    "size": 1,
+                                    "type": "uint",
+                                    "output_format": "hex",
+                                    "description": "**Sampling Factors** — High nibble: horizontal, Low nibble: vertical.\n\n*Forensic Value:* Progressive JPEG subsampling reveals the encoding tool's settings.",
+                                    "forensic_value": true,
+                                    "value_map": {
+                                        "17": "0x11 — 1×1 (4:4:4)",
+                                        "18": "0x12 — 1×2",
+                                        "33": "0x21 — 2×1 (4:2:2)",
+                                        "34": "0x22 — 2×2 (4:2:0)"
+                                    }
+                                },
+                                {
+                                    "name": "SOF2_QTableID",
+                                    "size": 1,
+                                    "type": "uint",
+                                    "description": "**Quantization Table Selector** (0–3)",
+                                    "expected_values": {"min": 0, "max": 3}
+                                }
+                            ]
                         }
                     ]
                 },
