@@ -875,8 +875,37 @@ class ConfigBasedParser(FileParser):
         if expected_values is not None:
             self._validate_expected_value(name, table_value, expected_values, offset, data)
         
-        # Create node - determine color based on category
+        # Evaluate anti-forensics expression if present.
+        # antiforensic can be:
+        #   - true (bool): statically marks the field as suspicious
+        #   - a string expression: evaluated using parsed_values; if truthy the
+        #     field is flagged as anti-forensics (e.g., "$DatabaseSizeInPages != 0
+        #     and $_file_size != $DatabaseSizeInPages * $PageSize")
+        antiforensic = field_dict.get("antiforensic", False)
+        antiforensic_triggered = False
+        antiforensic_reason = ""
+        if antiforensic:
+            if isinstance(antiforensic, bool):
+                antiforensic_triggered = True
+                antiforensic_reason = "This field is statically marked as suspicious."
+            elif isinstance(antiforensic, str):
+                try:
+                    antiforensic_triggered = self.evaluate_condition(antiforensic)
+                    if antiforensic_triggered:
+                        antiforensic_reason = f"Anti-forensics check triggered: `{antiforensic}`"
+                except Exception as e:
+                    logger.warning(f"antiforensic expression failed for '{name}': {e}")
+        
+        # Create node - determine color based on category (precedence order):
+        # 0. Anti-forensics (highest) — black bg, red text
+        # 1. Deprecated — muted gray
+        # 2. Forensic — red/warm tones
+        # 3. Informational — green/teal
+        # 4. Explicit color override
+        # 5. Default — blue/purple pastels
         from common import ColorGenerator
+        
+        node_fg_color = None  # None = auto-calculated by GUI
         
         # Deprecated fields: still parsed but visually muted with a notice
         deprecated = field_dict.get("deprecated", False)
@@ -884,7 +913,12 @@ class ConfigBasedParser(FileParser):
             deprecation_msg = deprecated if isinstance(deprecated, str) else "This field is deprecated."
             description = f"**⚠ DEPRECATED:** {deprecation_msg}\n\n{description}"
         
-        if deprecated:
+        if antiforensic_triggered:
+            # Anti-forensics: highest precedence — black background, red text
+            node_color = ColorGenerator.get_antiforensic_color()
+            node_fg_color = ColorGenerator.ANTIFORENSIC_COLOR["fg"]
+            description = f"**⚠ POSSIBLE ANTI-FORENSICS:** {antiforensic_reason}\n\n{description}"
+        elif deprecated:
             # Deprecated fields get muted gray color
             node_color = ColorGenerator.get_deprecated_color()
         elif forensic_value:
@@ -938,7 +972,8 @@ class ConfigBasedParser(FileParser):
             info=html_desc,
             name=display_name,
             table_value=str(display_value),
-            color=node_color
+            color=node_color,
+            fg_color=node_fg_color
         )
         
         parent_node.add_child(offset, node)
@@ -998,8 +1033,22 @@ class ConfigBasedParser(FileParser):
         if expected_values is not None:
             self._validate_expected_value(name, table_value, expected_values, offset, data)
         
+        # Evaluate anti-forensics expression (same as parse_field)
+        antiforensic = field_dict.get("antiforensic", False)
+        antiforensic_triggered = False
+        if antiforensic:
+            if isinstance(antiforensic, bool):
+                antiforensic_triggered = True
+            elif isinstance(antiforensic, str):
+                try:
+                    antiforensic_triggered = self.evaluate_condition(antiforensic)
+                except Exception as e:
+                    logger.warning(f"antiforensic expression failed for VLQ '{name}': {e}")
+        
         # Determine color
         from common import ColorGenerator
+        
+        node_fg_color = None
         
         # Deprecated fields: still parsed but visually muted with a notice
         deprecated = field_dict.get("deprecated", False)
@@ -1007,7 +1056,12 @@ class ConfigBasedParser(FileParser):
             deprecation_msg = deprecated if isinstance(deprecated, str) else "This field is deprecated."
             description = f"**⚠ DEPRECATED:** {deprecation_msg}\n\n{description}"
         
-        if deprecated:
+        if antiforensic_triggered:
+            node_color = ColorGenerator.get_antiforensic_color()
+            node_fg_color = ColorGenerator.ANTIFORENSIC_COLOR["fg"]
+            reason = antiforensic if isinstance(antiforensic, str) else "Statically marked as suspicious."
+            description = f"**⚠ POSSIBLE ANTI-FORENSICS:** {reason}\n\n{description}"
+        elif deprecated:
             node_color = ColorGenerator.get_deprecated_color()
         elif forensic_value:
             if isinstance(forensic_value, str):
@@ -1050,7 +1104,8 @@ class ConfigBasedParser(FileParser):
             info=html_desc,
             name=display_name,
             table_value=str(display_value),
-            color=node_color
+            color=node_color,
+            fg_color=node_fg_color
         )
         
         parent_node.add_child(offset, node)
@@ -1402,6 +1457,13 @@ class ConfigBasedParser(FileParser):
         self.file.seek(0)
         self.root = Node(b'', f"{self.config.name} File")
         self.parsed_values = {}
+        
+        # Inject built-in variables available to all expressions.
+        # _file_size: total file size in bytes — useful for anti-forensics
+        # checks that compare header-declared sizes against actual file size.
+        self.file.seek(0, 2)
+        self.parsed_values['_file_size'] = self.file.tell()
+        self.file.seek(0)
         
         for field_dict in self.config.fields:
             self.parse_field(field_dict, self.root)

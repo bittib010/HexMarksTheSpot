@@ -3181,11 +3181,16 @@ class Main:
                     parent_to_children[parent_container_tag] = []
                 parent_to_children[parent_container_tag].append(tag)
             
-            # Pre-compute contrast text color (cached)
-            fg_color = contrast_cache.get(color)
-            if fg_color is None:
-                fg_color = ColorGenerator.get_contrast_text_color(color)
-                contrast_cache[color] = fg_color
+            # Pre-compute contrast text color.
+            # If the Node has an explicit fg_color (e.g., anti-forensics red-on-black),
+            # use it directly instead of auto-calculating contrast.
+            if child.fg_color:
+                fg_color = child.fg_color
+            else:
+                fg_color = contrast_cache.get(color)
+                if fg_color is None:
+                    fg_color = ColorGenerator.get_contrast_text_color(color)
+                    contrast_cache[color] = fg_color
             
             # Pre-format offset string
             if is_hex_fmt:

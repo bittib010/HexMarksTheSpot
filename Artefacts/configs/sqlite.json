@@ -80,21 +80,24 @@
                     "size": 1,
                     "type": "uint",
                     "description": "Maximum embedded payload fraction — must always be 64. This constant controls how much of a B-tree page can be occupied by a single cell's payload before it spills to overflow pages. The threshold is calculated as `(usable_size - 12) * MaxPayloadFraction / 255`. At the mandated value of 64, roughly 25% of a page can hold one cell's data inline. Any value other than 64 means the database is corrupted or was created by a non-standard SQLite fork.",
-                    "expected_values": [64]
+                    "expected_values": [64],
+                    "antiforensic": "$MaxPayloadFraction != 64"
                 },
                 {
                     "name": "MinPayloadFraction",
                     "size": 1,
                     "type": "uint",
                     "description": "Minimum embedded payload fraction — must always be 32. When a cell's payload exceeds the overflow threshold, SQLite keeps at least this fraction of a page worth of data inline (the 'minimum payload') and moves the rest to overflow pages. This ensures each cell contributes a meaningful amount of data to the page rather than being mostly a pointer to overflow. At 32, the minimum is roughly `(usable_size - 12) * 32 / 255 - 23` bytes.",
-                    "expected_values": [32]
+                    "expected_values": [32],
+                    "antiforensic": "$MinPayloadFraction != 32"
                 },
                 {
                     "name": "LeafPayloadFraction",
                     "size": 1,
                     "type": "uint",
                     "description": "Leaf payload fraction — must always be 32. This is the equivalent of MinPayloadFraction but applies specifically to table leaf pages (type 0x0D) where actual row data resides. The distinction exists because table leaf cells have a different structure (payload size varint + rowid varint + payload) than index cells, resulting in different overhead calculations. Any value other than 32 indicates corruption.",
-                    "expected_values": [32]
+                    "expected_values": [32],
+                    "antiforensic": "$LeafPayloadFraction != 32"
                 },
                 {
                     "name": "FileChangeCounter",
@@ -108,21 +111,24 @@
                     "size": 4,
                     "type": "uint",
                     "description": "Size of the database file measured in pages. Multiply by *PageSize* to get expected file size in bytes. If the actual file is **larger** than `DatabaseSizeInPages × PageSize`, extra bytes beyond the declared end may contain deleted page remnants or appended data — this is a forensic goldmine. If the file is **smaller**, the database was truncated (corruption or deliberate anti-forensics). A value of 0 is valid for databases written by SQLite < 3.7.0; in that case, size is computed from the file length.",
-                    "forensic_value": true
+                    "forensic_value": true,
+                    "antiforensic": "$DatabaseSizeInPages != 0 and $_file_size != $DatabaseSizeInPages * $PageSize"
                 },
                 {
                     "name": "FirstFreelistTrunkPage",
                     "size": 4,
                     "type": "uint",
-                    "description": "Page number of the first freelist trunk page, or 0 if the freelist is empty. The freelist is a linked list of pages that were once in use but have been released (via `DELETE`, `DROP TABLE`, etc.).\n\n**How the freelist works:** Trunk pages form a singly-linked list. Each trunk page contains: a 4-byte pointer to the next trunk page (0 if last), a 4-byte count of leaf page numbers stored on this trunk, and then an array of 4-byte leaf page numbers. Leaf pages are the actual freed data pages — they retain their original content until overwritten by a future `INSERT`.\n\n**Forensic significance:** A non-zero value here means deleted data exists and may be recoverable. Freelist leaf pages often contain complete, unmodified copies of deleted records. Tools like `undark` and `sqlite-deleted-records` specifically target freelist pages for recovery.",
-                    "forensic_value": true
+                    "description": "Page number of the first freelist trunk page, or 0 if the freelist is empty. The freelist is a linked list of pages that were once in use but have been released (via `DELETE`, `DROP TABLE`, etc.).\n\n**How the freelist works:** Trunk pages form a singly-linked list. Each trunk page contains: a 4-byte pointer to the next trunk page (0 if last), a 4-byte count of leaf page numbers stored on this trunk, and then an array of 4-byte leaf page numbers. Leaf pages are the actual freed data pages — they retain their original content until overwritten by a future `INSERT`.\n\n**Forensic significance:** A non-zero value here means deleted data exists and may be recoverable. Freelist leaf pages often contain complete, unmodified copies of deleted records. Tools like `undark` and `sqlite-deleted-records` specifically target freelist pages for recovery.\n\n**Anti-forensics:** A trunk page pointing beyond the database boundary or back to itself indicates deliberate freelist chain manipulation (see IMF 2018 anti-forensics corpus, folder 18).",
+                    "forensic_value": true,
+                    "antiforensic": "$FirstFreelistTrunkPage != 0 and $DatabaseSizeInPages != 0 and $FirstFreelistTrunkPage > $DatabaseSizeInPages"
                 },
                 {
                     "name": "TotalFreelistPages",
                     "size": 4,
                     "type": "uint",
-                    "description": "Total number of pages on the freelist (trunk + leaf pages combined). This is a quick indicator of how much deleted data the database contains. A high count relative to *DatabaseSizeInPages* suggests significant data deletion — the database may have been 'cleaned' but not vacuumed.\n\n**Why data persists:** `DELETE` in SQLite marks pages as free but does not zero them. Only `VACUUM` (which rebuilds the entire database) or `PRAGMA secure_delete=ON` (which zeros content on delete) removes data from freelist pages. Most applications do not enable secure_delete, so deleted records persist indefinitely until the pages are reused by new inserts.\n\n**Triage tip:** Compare `TotalFreelistPages × PageSize` with file size to estimate what percentage of the database is deleted content.",
-                    "forensic_value": true
+                    "description": "Total number of pages on the freelist (trunk + leaf pages combined). This is a quick indicator of how much deleted data the database contains. A high count relative to *DatabaseSizeInPages* suggests significant data deletion — the database may have been 'cleaned' but not vacuumed.\n\n**Why data persists:** `DELETE` in SQLite marks pages as free but does not zero them. Only `VACUUM` (which rebuilds the entire database) or `PRAGMA secure_delete=ON` (which zeros content on delete) removes data from freelist pages. Most applications do not enable secure_delete, so deleted records persist indefinitely until the pages are reused by new inserts.\n\n**Triage tip:** Compare `TotalFreelistPages × PageSize` with file size to estimate what percentage of the database is deleted content.\n\n**Anti-forensics:** Freelist page count exceeding the total database size indicates corruption or manipulation of the freelist metadata (see IMF 2018 corpus, folder 18).",
+                    "forensic_value": true,
+                    "antiforensic": "$DatabaseSizeInPages != 0 and $TotalFreelistPages > $DatabaseSizeInPages"
                 },
                 {
                     "name": "SchemaCookie",
@@ -215,7 +221,8 @@
                     "size": 20,
                     "type": "bytes",
                     "description": "Reserved space for future SQLite format expansion — 20 bytes that must all be zero in a valid database. Non-zero bytes here indicate one of: (1) database corruption, (2) a proprietary SQLite extension storing custom metadata, (3) deliberate tampering (e.g., steganographic data hiding), or (4) a future SQLite version using this space for new features. Always worth examining in a forensic investigation.",
-                    "forensic_value": true
+                    "forensic_value": true,
+                    "antiforensic": "$ReservedForExpansion != '0000000000000000000000000000000000000000'"
                 },
                 {
                     "name": "VersionValidFor",
@@ -244,9 +251,10 @@
                     "name": "PageType",
                     "size": 1,
                     "type": "uint",
-                    "description": "B-tree page type flag. SQLite uses B-trees (balanced tree data structures) to organize all data. There are four page types, distinguished along two axes:\n\n**Table vs Index:**\n- *Table B-trees* store actual row data, keyed by integer rowid\n- *Index B-trees* store index entries that map column values to rowids\n\n**Interior vs Leaf:**\n- *Leaf pages* contain the actual data cells (this is where records live)\n- *Interior pages* are navigation nodes — they contain only keys and child page pointers, forming a tree structure that allows SQLite to find any record in O(log n) page reads\n\nFor page 1 (the `sqlite_schema` table root), expect 0x0D (leaf) for small databases or 0x05 (interior) for databases with many tables/indexes. An unexpected value here (like 0x02 or 0x0A) means the schema table is stored as an index B-tree, which would be highly unusual and possibly indicate corruption.",
+                    "description": "B-tree page type flag. SQLite uses B-trees (balanced tree data structures) to organize all data. There are four page types, distinguished along two axes:\n\n**Table vs Index:**\n- *Table B-trees* store actual row data, keyed by integer rowid\n- *Index B-trees* store index entries that map column values to rowids\n\n**Interior vs Leaf:**\n- *Leaf pages* contain the actual data cells (this is where records live)\n- *Interior pages* are navigation nodes — they contain only keys and child page pointers, forming a tree structure that allows SQLite to find any record in O(log n) page reads\n\nFor page 1 (the `sqlite_schema` table root), expect 0x0D (leaf) for small databases or 0x05 (interior) for databases with many tables/indexes. An unexpected value here (like 0x02 or 0x0A) means the schema table is stored as an index B-tree, which would be highly unusual and possibly indicate corruption or anti-forensics manipulation of the page type byte.",
                     "forensic_value": true,
                     "expected_values": [2, 5, 10, 13],
+                    "antiforensic": "$PageType != 5 and $PageType != 13",
                     "value_map": {
                         "2": "Interior index b-tree page (0x02)",
                         "5": "Interior table b-tree page (0x05)",

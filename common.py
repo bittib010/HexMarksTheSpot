@@ -105,11 +105,13 @@ class ColorGenerator:
     adjacent uniqueness and automatic contrast text colors.
     
     Color categories (precedence order - highest first):
-    1. Forensic: Red/warm tones - for forensically important fields
-    2. Informational: Green/teal light tones - for descriptive/informational fields
-    3. Default: Neutral pastel tones (blue, purple, gray) - for everything else
+    0. Anti-forensic: Black background with red text - for tampered/suspicious fields
+    1. Deprecated: Muted gray - for deprecated fields
+    2. Forensic: Red/warm tones - for forensically important fields
+    3. Informational: Green/teal light tones - for descriptive/informational fields
+    4. Default: Neutral pastel tones (blue, purple, gray) - for everything else
     
-    A field can be both informational and forensic, but forensic takes precedence.
+    Anti-forensic has highest precedence and overrides all other categories.
     """
     
     _last_hue = 0.0
@@ -133,6 +135,10 @@ class ColorGenerator:
     _DEFAULT_HUE_MAX = 0.86    # ~310 degrees
     _DEFAULT_SAT = (0.30, 0.50)
     _DEFAULT_LIT = (0.75, 0.88)
+    
+    # Anti-forensics fixed color — black background with red text.
+    # Highest precedence: overrides deprecated, forensic, and all other categories.
+    ANTIFORENSIC_COLOR = {"bg": "#1A1A1A", "fg": "#FF2222"}
     
     # Forensic sub-category fixed colors (for explicit category strings)
     FORENSIC_CATEGORY_COLORS = {
@@ -195,6 +201,22 @@ class ColorGenerator:
             r, g, b = colorsys.hls_to_rgb(h2, l2, s2)
             color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
         
+        return color
+    
+    @classmethod
+    def get_antiforensic_color(cls) -> str:
+        """
+        Get the anti-forensics alert color (near-black background).
+        
+        Used for fields where parsed values indicate possible anti-forensics
+        manipulation. Has the HIGHEST color precedence — overrides deprecated,
+        forensic, informational, and default categories.
+        
+        The corresponding text color (red) is stored on the Node's fg_color
+        attribute and must be handled by the GUI renderer.
+        """
+        color = cls.ANTIFORENSIC_COLOR["bg"]
+        cls._last_color = color
         return color
     
     @classmethod
@@ -395,6 +417,7 @@ class Node:
     name: Optional[str] = None
     color: Optional[str] = None
     table_value: Optional[Any] = None
+    fg_color: Optional[str] = None  # Explicit foreground/text color override (e.g., anti-forensics red)
     children: List[Tuple[int, "Node"]] = field(default_factory=list)
     
     def __post_init__(self):

@@ -6,12 +6,7 @@
     - ~~GIF.bt~~ (done — `gif.json`, header/LSD parsed; block dispatch needs engine features)
     - Remaining: 7ZIP, ASF, AVI, BPlist, CAB, DOC, DS_Store, FLV, H264, IconCache, JPG (already have jpeg.json), MBR, MP4, MXF, ONE, PB, RegistryDhcpInterfaceOptions, RegistryPolicyFile, ThumbCache, Torrent
 
-- ~~Update SQlite with possible learning or forensics values from these sites:~~ (done — enhanced with DFRWS 2018, IMF 2018, and ForensicFocus research)
-  - ~~https://dfrws.org/sites/default/files/session-files/2018_EU_paper_a_standardized_corpus_for_sqlite_database_forensics.pdf~~
-  - ~~https://imf-conference.org/imf2018/downloads/09_Sven-Schmitt_Introducing-Anti-Forensics.pdf~~
-  - ~~https://www.forensicfocus.com/webinars/a-standardized-corpus-for-sqlite-database-forensics/~~
-  - ~~CellPointerArray should get some children. We should add logic to actually parse out the pointers, if it is possible. At least providing the offsets or whatever is possible to derive from a dead-box forensic analysis of such a file.~~ (done — CellPointerArray is now a repeated struct that parses each 2-byte pointer individually, showing hex page offsets per cell. Descriptions enhanced with forensic recovery procedures, anti-forensic awareness, and validation checks.)
-    - ~~This also means that the values derived from the above, if possible, should be used to get sequences of actual rows, and not just the raw bytes of the CellPointerArray.~~ (done — each cell pointer now shows its hex offset value, enabling direct navigation to specific cells and forensic analysis of cell distribution patterns)
+- Add current filename/path to be visible in gui: "Currently investigating: {filename}" (can be added to the top of the left pane, or as a header above the hex viewer). This provides context to the user about which file they are currently analyzing, especially when working with multiple files in a session. 
 
 PS! Remember to update Copilot instructions if necessary on new implementations. 
 

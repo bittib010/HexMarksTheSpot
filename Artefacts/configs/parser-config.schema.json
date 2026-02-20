@@ -165,6 +165,20 @@
                     "description": "Mark as forensically important. Use true for default red, or a category: 'critical' (red), 'important' (amber), 'timestamp' (purple), 'identifier' (pink for GUIDs/MACs/serials), 'path' (cyan for file paths), 'network' (deep orange for network data)",
                     "default": false
                 },
+                "antiforensic": {
+                    "oneOf": [
+                        {
+                            "type": "boolean",
+                            "description": "Statically mark this field as indicating possible anti-forensics tampering"
+                        },
+                        {
+                            "type": "string",
+                            "description": "Python expression evaluated at parse time using $field references and $_file_size. If truthy, the field is flagged as anti-forensics. Example: '$DatabaseSizeInPages != 0 and $_file_size != $DatabaseSizeInPages * $PageSize'"
+                        }
+                    ],
+                    "description": "Anti-forensics detection. HIGHEST color precedence (black bg, red text). Use true to statically flag a field, or provide a Python expression using parsed $field values. The expression is evaluated after this field is parsed; if truthy the field is highlighted as potentially tampered. Built-in variable $_file_size provides the actual file size in bytes.",
+                    "default": false
+                },
                 "informational": {
                     "type": "boolean",
                     "description": "Mark field as informational (green/teal highlighting). For descriptive metadata fields that provide context but are not forensically critical. Forensic_value takes precedence if both are set.",
