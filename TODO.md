@@ -3,7 +3,6 @@
     - Remaining: 7ZIP, ASF, AVI, BPlist, CAB, DOC, DS_Store, FLV, H264, IconCache, JPG (already have jpeg.json), MBR, MP4, MXF, ONE, PB, RegistryDhcpInterfaceOptions, RegistryPolicyFile, ThumbCache, Torrent
 
 - Add an additional Bookmark possibility that build no the existing function to mark a section in the hexviewer. The existing functionality for makring a section simply by clicking a place and draging to select multiple bytes in the viewer is reflected with a background change in color as well as the selected border change in the opposite viewer (hex vs ascii). This functionality should be both be improved with realtime update to the color change as well as happen on the click+drag on the selected viewer (if clcik on drag on hexviewer it should reflect there too, not just on the opposite) - furthermore, if selection has been made we should enable a right-click option to save that sequence to bookmark, which would then be added to the bookmark list with the offset range and a user-provided name/description. This allows for more flexible bookmarking of arbitrary byte ranges, not just predefined fields.
-- Although no space inbetween the hexviewer and asciviewer now, the Hex viewer has some extra space on it's right side. As if we call each row for a "sentence", there is empty space on the end of each sentence. This is visible as belonging to the hexviewer when marking the hexbytes as it then shows the marked section as spanning across what is seemingly the table. 
 
 PS! Remember to update Copilot instructions if necessary on new implementations. 
 

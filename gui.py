@@ -868,7 +868,7 @@ class TextWidget:
         self.textWidget = Text(
             self.container,
             exportselection=False,
-            width=52,
+            width=47,
             height=38,
             font=mono_font,
             padx=6,
@@ -3619,15 +3619,25 @@ class Main:
             # Insert first offset line
             self.text_widget.offsetText.insert('end', self._format_viewer_offset(0) + '\n')
             
-            # Mark text mirror
+            # Mark text mirror — real-time drag highlighting + ButtonRelease for final sync
             self.text_widget.textWidget.bind(
                 "<ButtonRelease-1>", lambda e: self.mirror_highlight(self.text_widget.textWidget))
             self.text_widget.asciiText.bind(
                 "<ButtonRelease-1>", lambda e: self.mirror_highlight(self.text_widget.asciiText))
             self.text_widget.textWidget.bind(
+                "<B1-Motion>", lambda e: self.mirror_highlight(self.text_widget.textWidget))
+            self.text_widget.asciiText.bind(
+                "<B1-Motion>", lambda e: self.mirror_highlight(self.text_widget.asciiText))
+            self.text_widget.textWidget.bind(
                 "<Button-1>", lambda e: self.clear_mirror_highlight())
             self.text_widget.asciiText.bind(
                 "<Button-1>", lambda e: self.clear_mirror_highlight())
+            
+            # Right-click context menus for hex/ASCII viewers (selection bookmark)
+            self.text_widget.textWidget.bind(
+                "<Button-3>", lambda e: self._show_hex_context_menu(e, self.text_widget.textWidget))
+            self.text_widget.asciiText.bind(
+                "<Button-3>", lambda e: self._show_hex_context_menu(e, self.text_widget.asciiText))
             
             self.display_byte_counter = 0
         
@@ -3712,7 +3722,12 @@ class Main:
                 hex_start = bytes_consumed * 3
                 hex_end = (bytes_consumed + chunk_size) * 3
                 
-                hex_widget.insert('end', hex_str[hex_start:hex_end], (tag,))
+                hex_chunk = hex_str[hex_start:hex_end]
+                # Strip trailing space at end of line to prevent tagged
+                # whitespace extending beyond the hex content area
+                if pos_in_line + chunk_size >= 16:
+                    hex_chunk = hex_chunk.rstrip(' ')
+                hex_widget.insert('end', hex_chunk, (tag,))
                 ascii_widget.insert('end', ascii_str[bytes_consumed:bytes_consumed + chunk_size], (tag,))
                 
                 bytes_consumed += chunk_size
@@ -3770,6 +3785,205 @@ class Main:
     def clear_mirror_highlight(self):
         for widget in [self.text_widget.textWidget, self.text_widget.asciiText]:
             widget.tag_remove("mirror_highlight", "1.0", END)
+
+    def _get_hex_selection_byte_range(self, source_widget):
+        """Convert a text widget selection (sel tag) to a (start_byte, end_byte) tuple.
+        
+        Returns the absolute byte offsets for the selected range, or None if no
+        selection exists. Works for both hex and ASCII text widgets.
+        """
+        try:
+            start = source_widget.index(SEL_FIRST)
+            end = source_widget.index(SEL_LAST)
+        except TclError:
+            return None  # No selection
+        
+        start_row, start_col = map(int, start.split('.'))
+        end_row, end_col = map(int, end.split('.'))
+        
+        if source_widget == self.text_widget.textWidget:
+            # Hex view: each byte occupies 3 characters ("XX ")
+            start_byte = (start_row - 1) * 16 + start_col // 3
+            end_byte = (end_row - 1) * 16 + end_col // 3
+        else:
+            # ASCII view: each byte occupies 1 character
+            start_byte = (start_row - 1) * 16 + start_col
+            end_byte = (end_row - 1) * 16 + end_col
+        
+        if end_byte <= start_byte:
+            return None
+        return (start_byte, end_byte)
+
+    def _show_hex_context_menu(self, event, source_widget):
+        """Show right-click context menu on hex/ASCII viewer when selection exists."""
+        byte_range = self._get_hex_selection_byte_range(source_widget)
+        if byte_range is None:
+            return  # No selection — don't show menu
+        
+        menu = tk_Menu(self.master, tearoff=0)
+        start_byte, end_byte = byte_range
+        length = end_byte - start_byte
+        
+        menu.add_command(
+            label=f"Bookmark Selection ({length} bytes)",
+            command=lambda: self._add_selection_bookmark(start_byte, end_byte))
+        menu.add_separator()
+        menu.add_command(
+            label="Copy Selection as Hex",
+            command=lambda: self._copy_selection_as(start_byte, end_byte, 'hex'))
+        menu.add_command(
+            label="Copy Selection as ASCII",
+            command=lambda: self._copy_selection_as(start_byte, end_byte, 'ascii'))
+        menu.add_command(
+            label="Copy Selection as Decimal",
+            command=lambda: self._copy_selection_as(start_byte, end_byte, 'decimal'))
+        
+        menu.tk_popup(event.x_root, event.y_root)
+        menu.grab_release()
+
+    def _read_file_bytes(self, start, end):
+        """Read bytes from the current file at the given byte range [start, end)."""
+        if not hasattr(self, 'current_file') or not self.current_file:
+            return None
+        try:
+            with open(self.current_file, 'rb') as f:
+                f.seek(start)
+                return f.read(end - start)
+        except (IOError, OSError):
+            return None
+
+    def _copy_selection_as(self, start_byte, end_byte, fmt):
+        """Copy the selected byte range in the specified format to clipboard."""
+        data = self._read_file_bytes(start_byte, end_byte)
+        if data is None:
+            self.update_status("Could not read selected bytes")
+            return
+        
+        if fmt == 'hex':
+            text = data.hex(' ').upper()
+        elif fmt == 'ascii':
+            text = ''.join(chr(b) if 32 <= b < 127 else '.' for b in data)
+        elif fmt == 'decimal':
+            text = ' '.join(str(b) for b in data)
+        else:
+            text = data.hex(' ')
+        
+        self.master.clipboard_clear()
+        self.master.clipboard_append(text)
+        self.update_status(f"Copied {len(data)} bytes as {fmt}")
+
+    def _add_selection_bookmark(self, start_byte, end_byte):
+        """Bookmark an arbitrary byte range selected in the hex/ASCII viewer.
+        
+        Prompts the user for a name and optional comment, then creates a bookmark
+        for the selected byte range with the raw hex value.
+        """
+        data = self._read_file_bytes(start_byte, end_byte)
+        if data is None:
+            self.update_status("Could not read selected bytes")
+            return
+        
+        # --- Prompt dialog for bookmark name and comment ---
+        dialog = Toplevel(self.master)
+        dialog.title("Bookmark Selection")
+        dialog.configure(bg=ModernTheme.BG_PRIMARY)
+        dialog.transient(self.master)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        
+        # Center dialog on parent
+        dialog.update_idletasks()
+        w, h = 400, 220
+        x = self.master.winfo_x() + (self.master.winfo_width() - w) // 2
+        y = self.master.winfo_y() + (self.master.winfo_height() - h) // 2
+        dialog.geometry(f"{w}x{h}+{x}+{y}")
+        
+        # Byte range info label
+        offset_str = f"{self._format_offset(start_byte)} – {self._format_offset(end_byte - 1)}"
+        info_text = f"Byte range: {offset_str}  ({end_byte - start_byte} bytes)"
+        Label(dialog, text=info_text, bg=ModernTheme.BG_PRIMARY,
+              fg=ModernTheme.TEXT_SECONDARY, font=('Segoe UI', 9)).pack(pady=(12, 4))
+        
+        # Name field
+        Label(dialog, text="Bookmark Name:", bg=ModernTheme.BG_PRIMARY,
+              fg=ModernTheme.TEXT_PRIMARY, font=('Segoe UI', 10), anchor=W).pack(
+            fill=X, padx=20, pady=(8, 2))
+        name_var = StringVar(value=f"Selection @ {self._format_offset(start_byte)}")
+        name_entry = Entry(dialog, textvariable=name_var, font=('Segoe UI', 10))
+        name_entry.pack(fill=X, padx=20)
+        name_entry.select_range(0, END)
+        name_entry.focus_set()
+        
+        # Comment field
+        Label(dialog, text="Comment (optional):", bg=ModernTheme.BG_PRIMARY,
+              fg=ModernTheme.TEXT_PRIMARY, font=('Segoe UI', 10), anchor=W).pack(
+            fill=X, padx=20, pady=(8, 2))
+        comment_var = StringVar()
+        comment_entry = Entry(dialog, textvariable=comment_var, font=('Segoe UI', 10))
+        comment_entry.pack(fill=X, padx=20)
+        
+        result = {'confirmed': False}
+        
+        def confirm(event=None):
+            result['confirmed'] = True
+            dialog.destroy()
+        
+        def cancel(event=None):
+            dialog.destroy()
+        
+        # Buttons
+        btn_frame = Frame(dialog, bg=ModernTheme.BG_PRIMARY)
+        btn_frame.pack(pady=(12, 8))
+        Button(btn_frame, text="Bookmark", command=confirm,
+               bg=ModernTheme.ACCENT_PRIMARY, fg='white',
+               font=('Segoe UI', 10), relief='flat', padx=16, pady=4).pack(side=LEFT, padx=6)
+        Button(btn_frame, text="Cancel", command=cancel,
+               bg=ModernTheme.BG_SECONDARY, fg=ModernTheme.TEXT_PRIMARY,
+               font=('Segoe UI', 10), relief='flat', padx=16, pady=4).pack(side=LEFT, padx=6)
+        
+        # Keyboard shortcuts
+        dialog.bind('<Return>', confirm)
+        dialog.bind('<Escape>', cancel)
+        
+        dialog.wait_window()
+        
+        if not result['confirmed']:
+            return
+        
+        name = name_var.get().strip() or f"Selection @ {self._format_offset(start_byte)}"
+        comment = comment_var.get().strip()
+        hex_value = data.hex()
+        
+        # Check for duplicate (same offset + name)
+        already = any(
+            bm['name'] == name and bm['offset'] == start_byte
+            for bm in self.bookmarks
+        )
+        if already:
+            self.update_status(f"Already bookmarked: {name}")
+            return
+        
+        bookmark = {
+            'name': name,
+            'offset': start_byte,
+            'value': hex_value,
+            'is_raw_hex': True,
+            'comment': comment
+        }
+        self.bookmarks.append(bookmark)
+        display_offset = self._format_offset(start_byte)
+        self.update_status(f"Bookmarked: {name} at offset {display_offset} ({end_byte - start_byte} bytes)")
+        self._save_bookmarks_to_cache()
+        
+        # Update bookmark window if open
+        if self.bookmark_treeview is not None and self.bookmark_window is not None:
+            try:
+                if self.bookmark_window.winfo_exists():
+                    truncated = self._truncate_value(hex_value) if hex_value else ''
+                    self.bookmark_treeview.insert(
+                        '', 'end', values=(name, display_offset, truncated, comment))
+            except:
+                pass
 
     def popItUp(self, text, currTag):
         """
