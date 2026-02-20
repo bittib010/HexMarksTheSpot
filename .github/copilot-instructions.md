@@ -47,9 +47,11 @@ Container nodes (`struct`, `section`) have `data=b''` to avoid double-counting b
 
 ### Layout
 - Menu bar (File, Edit, View, Help) — centralizes all actions
-- Header with title, 5-column hex/ASCII viewer (offset | hex | ASCII | scrollbar | detail pane)
+- Header with title, filename label ("Currently investigating: {filename}"), 6-column hex/ASCII viewer (offset | hex | separator | ASCII | scrollbar | detail pane)
 - Sidebar with parsed fields treeview (Offset, Name, Value columns), search, offset format toggle
 - Status bar with progress bar, percentage, timing info
+- Filename label: italic ACCENT_PRIMARY styling, hover tooltip shows full file path (`self.file_label` in header_frame)
+- Hex/ASCII separator: 2px vertical `Frame` (TEXT_LIGHT color) between hex and ASCII columns, providing clear visual delineation
 
 ### Menu Bar
 - **File:** Open File, Import Hex Text, Export CSV, Export Hex Dump, File Info, Exit
@@ -151,7 +153,7 @@ When identifying a file's format, parsers are matched in three tiers:
 | `size` | int or string | Byte count or expression (`"$field"`, `"$field * 2 - 8"`) |
 | `type` | string | One of the field types above |
 | `description` | string | Markdown-capable description (bold, italic, code, lists) |
-| `endianness` | string | Override for this field (`"little"` / `"big"`) |
+| `endianness` | string | Override for this field or section (`"little"` / `"big"`). On `struct`/`section`, propagates to all children as a scoped default (see Section Endianness Inheritance). |
 | `color` | string | Fixed hex color override (`"#FF0000"`) |
 | `condition` | string | Python expression — field is skipped if false |
 | `enabled` | bool | `false` to skip entirely (for alternate file structures) |
@@ -265,6 +267,14 @@ Anti-forensic fields use `Node.fg_color` for an explicit red text color that ove
 // Anti-forensics detection via inline expression
 { "name": "DatabaseSizeInPages", "size": 4, "type": "uint",
   "antiforensic": "$DatabaseSizeInPages != 0 and $_file_size != $DatabaseSizeInPages * $PageSize" }
+
+// Section-level endianness inheritance (children inherit little-endian)
+{ "name": "TIFF_LE", "type": "section", "endianness": "little",
+  "condition": "$ByteOrder == 18761",
+  "fields": [
+    { "name": "Magic", "size": 2, "type": "uint" },
+    { "name": "Offset", "size": 4, "type": "uint" }
+  ] }
 ```
 
 ### Important Notes
@@ -274,6 +284,19 @@ Anti-forensic fields use `Node.fg_color` for an explicit red text color that ove
 - The `remaining` type reads to EOF — use only at the end of a parser.
 - `enabled: false` completely skips a field — useful for documenting alternate file structures.
 - Descriptions support markdown: `**bold**`, `*italic*`, `` `code` ``, `\n\n` paragraphs, `- item` / `1. item` lists.
+
+### Section Endianness Inheritance
+
+`struct` and `section` fields can set `"endianness": "little"` or `"big"` to override the global default for all children. This eliminates verbose per-field `"endianness"` overrides in mixed-endian formats.
+
+**Precedence** (highest → lowest):
+1. Per-field `"endianness"` on a leaf field
+2. Parent section/struct `"endianness"`
+3. Global `"endianness"` from config top-level
+
+**Implementation:** `parse_section()` saves `self.config.endianness`, overrides it with the section's value, wraps body in `try/finally` to restore. Nesting works — inner sections save/restore independently.
+
+**Example:** JPEG's `TIFF_LE` section sets `"endianness": "little"` so all TIFF fields (TIFF_Magic, IFD0_Offset, IFD0_EntryCount, TagID, etc.) default to LE without individual overrides.
 
 ## Caching System
 
@@ -300,7 +323,7 @@ Anti-forensic fields use `Node.fg_color` for an explicit red text color that ove
 ## Reference Parsers
 
 - **`sqlite.json`** — Big-endian, extensive `expected_values`, `enabled: false` for WAL/journal, structured page content with individually parsed cell pointers (repeated struct with hex offsets), UnallocatedSpace and CellContentArea per page, parenthesized expressions for default values (`$field or 65536`), forensic recovery procedures (DFRWS 2018 corpus study, IMF 2018 anti-forensics), detailed record format documentation, `antiforensic` expressions for file size mismatch / header constant tampering / freelist corruption / cell pointer manipulation / B-tree pointer out-of-bounds detection, **per-page B-tree header parsing** (pages 2+ via `repeat_step: "$PageSize"`) with interior/leaf/non-B-tree conditional sections, per-page cell pointer array parsing with antiforensic checks, guard conditions to prevent parsing cell pointers when CellCount is corrupted (`$PgCellCount * 2 + header <= $PageSize`)
-- **`jpeg.json`** — Big-endian file with embedded little-endian TIFF/Exif structures. Uses per-field `"endianness": "little"` overrides for TIFF fields within the LE section. **Deep Exif IFD0 parsing**: TIFF byte order detection (II/MM), conditional sections for LE and BE TIFF, IFD0 entry count + repeated 12-byte tag entries (TagID with comprehensive value_map for ~35 standard tags, TagType with TIFF type codes, TagCount, TagValue/offset). XMP fallback for non-Exif APP1 segments. **DQT parsing**: precision/ID byte + quantization values separated for forensic fingerprinting. **SOF component parsing**: repeated struct per component (ID, sampling factors with subsampling ratio value_map, QT selector). Extensive forensic documentation for Exif metadata, quantization table fingerprinting, chroma subsampling analysis, steganography detection, and image manipulation detection.
+- **`jpeg.json`** — Big-endian file with embedded little-endian TIFF/Exif structures. Uses section-level `"endianness": "little"` on TIFF_LE section (children inherit LE via section endianness inheritance). **Deep Exif IFD0 parsing**: TIFF byte order detection (II/MM), conditional sections for LE and BE TIFF, IFD0 entry count + repeated 12-byte tag entries (TagID with comprehensive value_map for ~35 standard tags, TagType with TIFF type codes, TagCount, TagValue/offset). XMP fallback for non-Exif APP1 segments. **DQT parsing**: precision/ID byte + quantization values separated for forensic fingerprinting. **SOF component parsing**: repeated struct per component (ID, sampling factors with subsampling ratio value_map, QT selector). Extensive forensic documentation for Exif metadata, quantization table fingerprinting, chroma subsampling analysis, steganography detection, and image manipulation detection.
 - **`lnk_shell_link.json`** — Complex conditionals, `forensic_notes`, `repeat: "until"`, deeply nested
 - **`mft.json`** — Type-dispatched attributes, prefixed field names, timestomping documentation
 - **`prefetch.json`** — Multi-version with conditions, full metrics/chains/volume parsing

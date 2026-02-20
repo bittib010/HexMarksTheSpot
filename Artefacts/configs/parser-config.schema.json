@@ -142,7 +142,7 @@
                 },
                 "endianness": {
                     "type": "string",
-                    "description": "Override endianness for this field",
+                    "description": "Override endianness for this field. On struct/section, propagates to all children as a scoped default.",
                     "enum": ["little", "big"]
                 },
                 "color": {

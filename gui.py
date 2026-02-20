@@ -752,12 +752,13 @@ class TextWidget:
         self.container.grid(row=1, column=0, sticky=N+S+E+W, padx=(20, 10), pady=(15, 0))
         
         # Configure grid weights for the container
-        # col 0 = offset column, col 1 = hex view, col 2 = ASCII view, col 3 = scrollbar, col 4 = info panel
+        # col 0 = offset, col 1 = hex, col 2 = separator, col 3 = ASCII, col 4 = scrollbar, col 5 = info panel
         self.container.grid_columnconfigure(0, weight=0)  # Offset column (fixed)
         self.container.grid_columnconfigure(1, weight=0)  # Hex view (fixed width)
-        self.container.grid_columnconfigure(2, weight=0)  # ASCII view (fixed width)
-        self.container.grid_columnconfigure(3, weight=0)  # Scrollbar (fixed)
-        self.container.grid_columnconfigure(4, weight=1)  # Info panel (expands)
+        self.container.grid_columnconfigure(2, weight=0)  # Separator line (fixed, 2px)
+        self.container.grid_columnconfigure(3, weight=0)  # ASCII view (fixed width)
+        self.container.grid_columnconfigure(4, weight=0)  # Scrollbar (fixed)
+        self.container.grid_columnconfigure(5, weight=1)  # Info panel (expands)
         self.container.grid_rowconfigure(0, weight=0)     # Labels
         self.container.grid_rowconfigure(1, weight=0)     # Column headers
         self.container.grid_rowconfigure(2, weight=1)     # Content
@@ -782,7 +783,7 @@ class TextWidget:
             fg=ModernTheme.TEXT_SECONDARY,
             font=('Segoe UI', 9, 'bold')
         )
-        ascii_label.grid(row=0, column=2, sticky=W, pady=(0, 3))
+        ascii_label.grid(row=0, column=3, sticky=W, pady=(0, 3))
         
         info_label = Label(
             self.container,
@@ -791,7 +792,7 @@ class TextWidget:
             fg=ModernTheme.TEXT_SECONDARY,
             font=('Segoe UI', 9, 'bold')
         )
-        info_label.grid(row=0, column=4, sticky=W, padx=(15, 0), pady=(0, 3))
+        info_label.grid(row=0, column=5, sticky=W, padx=(15, 0), pady=(0, 3))
         
         # Column headers row — use same mono_font as content to ensure pixel-perfect alignment
         # Offset column header
@@ -841,7 +842,7 @@ class TextWidget:
             relief='flat',
             bd=0
         )
-        ascii_column_header.grid(row=1, column=2, sticky=E+W+N+S)
+        ascii_column_header.grid(row=1, column=3, sticky=E+W+N+S)
 
         # Offset/index column (row numbers)
         self.offsetText = Text(
@@ -932,11 +933,21 @@ class TextWidget:
         # two widgets fighting over scrollbar.set and causing jitter
         self.textWidget.configure(yscrollcommand=self._on_textwidget_scroll)
 
+        # Separator between hex and ASCII viewers — a thin vertical line
+        # that visually closes the gap so they read as distinct columns
+        self.hex_ascii_sep = Frame(
+            self.container,
+            bg=ModernTheme.TEXT_LIGHT,
+            width=2
+        )
+        
         # Grid layout - hex and ASCII are fixed width (sticky=N+S only), info panel expands
+        # Column order: 0=offset, 1=hex, 2=separator, 3=ascii, 4=scrollbar, 5=info
         self.textWidget.grid(row=2, column=1, sticky=N+S)
-        self.asciiText.grid(row=2, column=2, sticky=N+S)
-        self.scrollbar.grid(row=2, column=3, sticky=N+S, padx=2)
-        self.popupText.grid(row=2, column=4, sticky=N+S+E+W, padx=(10, 0))
+        self.hex_ascii_sep.grid(row=1, column=2, rowspan=2, sticky=N+S, padx=0)
+        self.asciiText.grid(row=2, column=3, sticky=N+S)
+        self.scrollbar.grid(row=2, column=4, sticky=N+S, padx=2)
+        self.popupText.grid(row=2, column=5, sticky=N+S+E+W, padx=(10, 0))
 
         # Selection styling
         self.textWidget.tag_configure(
@@ -1063,6 +1074,18 @@ class Main:
             font=('Segoe UI', 10)
         )
         subtitle_label.grid(row=1, column=0, sticky=W)
+        
+        # Filename display — shows the currently loaded file for investigator context.
+        # Updated in parse_file() when a new file is opened.
+        self.file_label = Label(
+            header_frame,
+            text="",
+            bg=ModernTheme.BG_PRIMARY,
+            fg=ModernTheme.ACCENT_PRIMARY,
+            font=('Segoe UI', 10, 'italic'),
+            anchor=W
+        )
+        self.file_label.grid(row=2, column=0, sticky=W, pady=(2, 0))
 
         # ========== MAIN CONTENT ==========
         self.text_widget = TextWidget(master)
@@ -2657,6 +2680,17 @@ class Main:
         self.open_button.config(state="disabled")
         self.stop_button.config(state="normal")
         self.current_file = filename
+        
+        # Update the header filename label so the investigator always sees which file is loaded
+        display_name = os.path.basename(filename)
+        display_path = filename
+        self.master.after(0, lambda: self.file_label.config(
+            text=f"Currently investigating: {display_name}",
+            cursor="hand2"
+        ))
+        # Tooltip-style: show full path on hover
+        self.file_label.bind("<Enter>", lambda e: self.file_label.config(text=f"Currently investigating: {display_path}"))
+        self.file_label.bind("<Leave>", lambda e: self.file_label.config(text=f"Currently investigating: {display_name}"))
         
         # Reset color generator for new file
         ColorGenerator.reset()

@@ -199,13 +199,13 @@
                             "name": "TIFF_LE",
                             "type": "section",
                             "condition": "$TIFF_ByteOrder == 18761 and $SegmentLength > 14",
-                            "description": "**TIFF Structure (Little-Endian)**\n\nThe Exif data is wrapped in a TIFF container. This section parses the TIFF header and IFD0 (Image File Directory 0) entries using Intel/little-endian byte order.",
+                            "endianness": "little",
+                            "description": "**TIFF Structure (Little-Endian)**\n\nThe Exif data is wrapped in a TIFF container. This section parses the TIFF header and IFD0 (Image File Directory 0) entries using Intel/little-endian byte order.\n\n*Note:* Uses section-level endianness inheritance — all child fields default to little-endian without needing individual overrides.",
                             "fields": [
                                 {
                                     "name": "TIFF_Magic",
                                     "size": 2,
                                     "type": "uint",
-                                    "endianness": "little",
                                     "description": "**TIFF Magic Number**\n\nAlways `0x002A` (42). Confirms this is a valid TIFF structure.",
                                     "expected_values": [42],
                                     "informational": true
@@ -214,7 +214,6 @@
                                     "name": "IFD0_Offset",
                                     "size": 4,
                                     "type": "uint",
-                                    "endianness": "little",
                                     "description": "**IFD0 Offset**\n\nByte offset from the start of the TIFF header (the byte order mark) to the first IFD. Typically `0x00000008` (immediately after the 8-byte TIFF header).\n\n*Forensic Value:* A non-standard offset (not 8) may indicate tools that rewrite Exif data or deliberate manipulation.",
                                     "informational": true
                                 },
@@ -222,7 +221,6 @@
                                     "name": "IFD0_EntryCount",
                                     "size": 2,
                                     "type": "uint",
-                                    "endianness": "little",
                                     "description": "**IFD0 Entry Count**\n\nNumber of 12-byte tag entries in IFD0. Each entry describes one piece of metadata (camera make, model, timestamp, image dimensions, etc.). Typical range: 10–30 entries for camera images.",
                                     "informational": true
                                 },
@@ -238,7 +236,6 @@
                                             "name": "TagID",
                                             "size": 2,
                                             "type": "uint",
-                                            "endianness": "little",
                                             "output_format": "hex",
                                             "description": "**Tag ID** — Identifies which piece of metadata this entry contains.",
                                             "forensic_value": true,
@@ -282,7 +279,7 @@
                                             "name": "TagType",
                                             "size": 2,
                                             "type": "uint",
-                                            "endianness": "little",
+
                                             "description": "**Data Type** — TIFF data type code determining how to interpret the value field.",
                                             "value_map": {
                                                 "1": "BYTE (uint8)",
@@ -303,7 +300,7 @@
                                             "name": "TagCount",
                                             "size": 4,
                                             "type": "uint",
-                                            "endianness": "little",
+
                                             "description": "**Value Count** — Number of values of the specified type. For ASCII strings, this is the character count including the null terminator."
                                         },
                                         {
@@ -318,7 +315,6 @@
                                     "name": "IFD0_NextOffset",
                                     "size": 4,
                                     "type": "uint",
-                                    "endianness": "little",
                                     "condition": "$IFD0_EntryCount > 0 and $IFD0_EntryCount <= 200",
                                     "description": "**Next IFD Offset**\n\nByte offset from TIFF header to the next IFD (typically IFD1 containing thumbnail metadata). Zero means no more IFDs.\n\n*Forensic Value:* IFD1 usually contains the thumbnail image — compare with the main image to detect editing. Non-zero values point to the thumbnail IFD.",
                                     "forensic_value": true

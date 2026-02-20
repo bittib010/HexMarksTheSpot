@@ -1084,7 +1084,7 @@ class ConfigBasedParser(FileParser):
         # Apply output_format override if specified
         if output_format:
             try:
-                display_value = self.format_output(data, output_format, field_dict.get("endianness", self.endianness))
+                display_value = self.format_output(data, output_format, field_dict.get("endianness", self.config.endianness))
             except Exception as e:
                 logger.warning(f"output_format '{output_format}' failed for VLQ field '{name}': {e}")
         
@@ -1120,6 +1120,12 @@ class ConfigBasedParser(FileParser):
           iteration advances exactly this many bytes regardless of inner field parsing
         - repeat_until: condition expression evaluated after each iteration;
           when it evaluates to True the loop stops (use with repeat: "until")
+        
+        Endianness inheritance:
+        If the section/struct has an "endianness" property, all child fields that
+        don't specify their own endianness will inherit it (instead of falling back
+        to the global config default). This enables clean mixed-endian format configs
+        like JPEG Exif (big-endian file with little-endian TIFF sections).
         """
         name = field_dict.get("name", "section")
         description = field_dict.get("description", "")
@@ -1129,6 +1135,7 @@ class ConfigBasedParser(FileParser):
         repeat_step = field_dict.get("repeat_step")
         repeat_until = field_dict.get("repeat_until")
         use_gradient = field_dict.get("color_gradient", False)
+        section_endianness = field_dict.get("endianness")  # Section-level override
         
         # Resolve $-template references in description (e.g., $_count in parent loop)
         # Name resolution for repeat iterations is handled in the loop below;
@@ -1146,136 +1153,151 @@ class ConfigBasedParser(FileParser):
         if not nested_fields:
             return None
         
-        # Resolve repeat count
-        if repeat is None:
-            # No repeat - parse once as before; resolve name for display
-            display_name = self.resolve_template_string(name) if '$' in name else name
-            return self._parse_section_once(display_name, description, color, nested_fields, parent_node,
-                                            use_gradient=use_gradient)
+        # Section-level endianness inheritance: temporarily override the global
+        # config endianness so child fields without their own "endianness" property
+        # inherit from their parent section rather than the top-level file default.
+        # The previous value is saved and restored after parsing all children.
+        saved_endianness = None
+        if section_endianness:
+            saved_endianness = self.config.endianness
+            self.config.endianness = section_endianness
         
-        # Has repeat - resolve the count
-        if isinstance(repeat, str) and repeat.lower() == "eof":
-            repeat_count = -1  # Sentinel for "until EOF"
-        elif isinstance(repeat, str) and repeat.lower() == "until":
-            repeat_count = -1  # Sentinel for "until condition met" (controlled by repeat_until)
-        elif isinstance(repeat, str):
-            repeat_count = self.resolve_size(repeat)
-        else:
-            repeat_count = int(repeat)
-        
-        if repeat_count == 0:
-            return None
-        
-        # Resolve repeat_step if present
-        resolved_step = None
-        if repeat_step is not None:
-            resolved_step = self.resolve_size(repeat_step) if isinstance(repeat_step, str) else int(repeat_step)
-        
-        # Create container node for all iterations.
-        # If the name contains template expressions ($-references), strip them
-        # for the container label — individual iterations get the resolved name.
-        offset = self.file.tell()
-        if repeat_count == -1:
-            count_label = "until condition" if repeat_until else "until EOF"
-        else:
-            count_label = str(repeat_count)
-        
-        # Detect whether the config author used $-template syntax in the name,
-        # so we can decide whether to auto-append [N] or use the resolved name
-        name_has_template = '$' in name
-        
-        if name_has_template:
-            # Clean container name: strip ${expr} and $variable patterns for the wrapper node
-            container_name = re.sub(r'\$\{[^}]+\}', '', name).strip()
-            container_name = re.sub(r'\$\w+', '', container_name).strip()
-            if not container_name:
-                container_name = "Repeated Section"
-        else:
-            container_name = name
-        
-        container_node = Node(
-            data=b'',
-            info=f"<h1>{container_name}</h1><p>{markdown_to_html(description)}</p><p><b>Repeat:</b> {count_label} iterations</p>",
-            name=container_name,
-            color=color or self.get_next_color()
-        )
-        
-        iteration = 0
-        max_iterations = repeat_count if repeat_count > 0 else 100000  # Safety limit for EOF mode
-        
-        # Save previous loop variables for nesting support — inner loops
-        # temporarily override $_index/$_count, outer values restored after
-        prev_index = self.parsed_values.get('_index')
-        prev_count = self.parsed_values.get('_count')
-        
-        while iteration < max_iterations:
-            iter_start = self.file.tell()
+        try:
+            # Resolve repeat count
+            if repeat is None:
+                # No repeat - parse once as before; resolve name for display
+                display_name = self.resolve_template_string(name) if '$' in name else name
+                return self._parse_section_once(display_name, description, color, nested_fields, parent_node,
+                                                use_gradient=use_gradient)
             
-            # Set loop iteration variables before any field resolution in this iteration
-            self.parsed_values['_index'] = iteration        # 0-based
-            self.parsed_values['_count'] = iteration + 1    # 1-based (human-friendly)
-            
-            # Check for EOF - applies to all modes to prevent reading past file end
-            peek = self.file.read(1)
-            if not peek:
-                break  # Reached EOF
-            self.file.seek(iter_start)
-            
-            # If repeat_step is set, check we have enough bytes for a full step
-            if resolved_step:
-                self.file.seek(0, 2)
-                file_size = self.file.tell()
-                self.file.seek(iter_start)
-                if iter_start + resolved_step > file_size:
-                    break
-            
-            # Create node for this iteration — if the name contains $_index/$_count,
-            # resolve the template directly; otherwise fall back to Name[N] convention
-            if name_has_template:
-                iter_name = self.resolve_template_string(name)
+            # Has repeat - resolve the count
+            if isinstance(repeat, str) and repeat.lower() == "eof":
+                repeat_count = -1  # Sentinel for "until EOF"
+            elif isinstance(repeat, str) and repeat.lower() == "until":
+                repeat_count = -1  # Sentinel for "until condition met" (controlled by repeat_until)
+            elif isinstance(repeat, str):
+                repeat_count = self.resolve_size(repeat)
             else:
-                iter_name = f"{name}[{iteration}]"
+                repeat_count = int(repeat)
             
-            # Resolve $-references in description for this iteration
-            iter_desc = self.resolve_template_string(description) if '$' in description else description
+            if repeat_count == 0:
+                return None
             
-            iter_node = self._parse_section_once(
-                iter_name, f"{iter_desc} (iteration {iteration})", 
-                color, nested_fields, container_node,
-                use_gradient=use_gradient
+            # Resolve repeat_step if present
+            resolved_step = None
+            if repeat_step is not None:
+                resolved_step = self.resolve_size(repeat_step) if isinstance(repeat_step, str) else int(repeat_step)
+            
+            # Create container node for all iterations.
+            # If the name contains template expressions ($-references), strip them
+            # for the container label — individual iterations get the resolved name.
+            offset = self.file.tell()
+            if repeat_count == -1:
+                count_label = "until condition" if repeat_until else "until EOF"
+            else:
+                count_label = str(repeat_count)
+            
+            # Detect whether the config author used $-template syntax in the name,
+            # so we can decide whether to auto-append [N] or use the resolved name
+            name_has_template = '$' in name
+            
+            if name_has_template:
+                # Clean container name: strip ${expr} and $variable patterns for the wrapper node
+                container_name = re.sub(r'\$\{[^}]+\}', '', name).strip()
+                container_name = re.sub(r'\$\w+', '', container_name).strip()
+                if not container_name:
+                    container_name = "Repeated Section"
+            else:
+                container_name = name
+            
+            container_node = Node(
+                data=b'',
+                info=f"<h1>{container_name}</h1><p>{markdown_to_html(description)}</p><p><b>Repeat:</b> {count_label} iterations</p>",
+                name=container_name,
+                color=color or self.get_next_color()
             )
             
-            if iter_node is None:
-                break
+            iteration = 0
+            max_iterations = repeat_count if repeat_count > 0 else 100000  # Safety limit for EOF mode
             
-            # Check repeat_until condition after each iteration
-            if repeat_until and self.evaluate_condition(repeat_until):
-                break
+            # Save previous loop variables for nesting support — inner loops
+            # temporarily override $_index/$_count, outer values restored after
+            prev_index = self.parsed_values.get('_index')
+            prev_count = self.parsed_values.get('_count')
             
-            # If repeat_step is set, advance to exact position for next iteration
-            if resolved_step:
-                next_pos = iter_start + resolved_step
-                current_pos = self.file.tell()
-                if next_pos > current_pos:
-                    # Skip remaining bytes in this step
-                    self.file.seek(next_pos)
-                elif next_pos < current_pos:
-                    # Inner fields read past the step boundary - something is wrong
-                    # but continue from current position to avoid data loss
-                    pass
+            while iteration < max_iterations:
+                iter_start = self.file.tell()
+                
+                # Set loop iteration variables before any field resolution in this iteration
+                self.parsed_values['_index'] = iteration        # 0-based
+                self.parsed_values['_count'] = iteration + 1    # 1-based (human-friendly)
+                
+                # Check for EOF - applies to all modes to prevent reading past file end
+                peek = self.file.read(1)
+                if not peek:
+                    break  # Reached EOF
+                self.file.seek(iter_start)
+                
+                # If repeat_step is set, check we have enough bytes for a full step
+                if resolved_step:
+                    self.file.seek(0, 2)
+                    file_size = self.file.tell()
+                    self.file.seek(iter_start)
+                    if iter_start + resolved_step > file_size:
+                        break
+                
+                # Create node for this iteration — if the name contains $_index/$_count,
+                # resolve the template directly; otherwise fall back to Name[N] convention
+                if name_has_template:
+                    iter_name = self.resolve_template_string(name)
+                else:
+                    iter_name = f"{name}[{iteration}]"
+                
+                # Resolve $-references in description for this iteration
+                iter_desc = self.resolve_template_string(description) if '$' in description else description
+                
+                iter_node = self._parse_section_once(
+                    iter_name, f"{iter_desc} (iteration {iteration})", 
+                    color, nested_fields, container_node,
+                    use_gradient=use_gradient
+                )
+                
+                if iter_node is None:
+                    break
+                
+                # Check repeat_until condition after each iteration
+                if repeat_until and self.evaluate_condition(repeat_until):
+                    break
+                
+                # If repeat_step is set, advance to exact position for next iteration
+                if resolved_step:
+                    next_pos = iter_start + resolved_step
+                    current_pos = self.file.tell()
+                    if next_pos > current_pos:
+                        # Skip remaining bytes in this step
+                        self.file.seek(next_pos)
+                    elif next_pos < current_pos:
+                        # Inner fields read past the step boundary - something is wrong
+                        # but continue from current position to avoid data loss
+                        pass
+                
+                iteration += 1
             
-            iteration += 1
-        
-        # Restore previous loop variables (supports nested repeat loops)
-        if prev_index is not None:
-            self.parsed_values['_index'] = prev_index
-            self.parsed_values['_count'] = prev_count
-        else:
-            self.parsed_values.pop('_index', None)
-            self.parsed_values.pop('_count', None)
-        
-        parent_node.add_child(offset, container_node)
-        return container_node
+            # Restore previous loop variables (supports nested repeat loops)
+            if prev_index is not None:
+                self.parsed_values['_index'] = prev_index
+                self.parsed_values['_count'] = prev_count
+            else:
+                self.parsed_values.pop('_index', None)
+                self.parsed_values.pop('_count', None)
+            
+            parent_node.add_child(offset, container_node)
+            return container_node
+        finally:
+            # Restore the global endianness if we overrode it for this section.
+            # This runs whether the section returns normally, early-returns, or raises.
+            if saved_endianness is not None:
+                self.config.endianness = saved_endianness
     
     def _parse_section_once(self, name: str, description: str, color: Optional[str],
                             nested_fields: List[Dict[str, Any]], parent_node: Node,
