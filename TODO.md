@@ -2,6 +2,12 @@
   - We have a lot of `*.bt` files in the Artefacts folder, which are the template files belonging to 010 Editor. These files needs to be converted into our wanted format by looking at the structure and converting to our format specifications json. 
     - Remaining: 7ZIP, ASF, AVI, BPlist, CAB, DOC, DS_Store, FLV, H264, IconCache, MBR, MP4, MXF, ONE, PB, RegistryDhcpInterfaceOptions, RegistryPolicyFile, ThumbCache, Torrent
     - Potentially more artefacts found here: https://www.sweetscape.com/010editor/repository/templates/
+  - Improve PNG with these sites: 
+    - https://forensics.wiki/portable_network_graphics_(png)/
+    - https://www.libpng.org/pub/png/spec/1.2/PNG-Chunks.html#:~:text=The%20IDAT%20chunk%20contains%20the%20output%20datastream%20of%20the%20compression,of%20all%20the%20IDAT%20chunks
+    - https://medium.com/@0xwan/png-structure-for-beginner-8363ce2a9f73
+    - https://www.hackerfactor.com/blog/index.php?/archives/894-PNG-and-Hidden-Pixels.html
+    - 
 
 
 PS! Remember to update Copilot instructions if necessary on new implementations. 
@@ -21,7 +27,7 @@ PS! Remember to update Copilot instructions if necessary on new implementations.
 
 4. **String encoding auto-detection** — A `"string_auto"` type that tries UTF-8 → UTF-16LE → UTF-16BE → Latin-1 decoding with a confidence score. Useful for carving text from unallocated space or unknown record formats. 
 
-5. **Nullify parsed values for long hex sequences of 0x00** — For fields that parse large byte ranges, if the content is all 0x00, display the parsed value as `null`/`nulled out`/`no data besides 0s` instead of dumping a long string of zeroes. This improves readability for sparse files, uninitialized data, and padding regions. But if the sequence has a bunch of 0s but some non-zero bytes, we should strip the edged of those to actually print the hex values. This is ONLY to be used on sequences that are either part of `unallocated` or `uparsed`/`unknown` data. We ALWAYS want to prioritize the real representation of known fields - so consider this as more of a resorting to a more user-friendly display of the content of unknown/unallocated fields.
+5. ~~**Nullify parsed values for long hex sequences of 0x00**~~ (done — unparsed gap-fill now classifies all-zero regions as "Nulled Data", mostly-zero (≥85%, ≥16 bytes) as "Mostly Null Data" with non-zero range highlight, and normal unparsed data with byte count. Only affects unparsed/unallocated fields, never overrides known field values.)
 
 6. **Multi-segment / virtual file parsing** — Support parsing a logical structure that spans non-contiguous byte ranges (e.g., fragmented NTFS $MFT records, SQLite overflow chains, multi-extent files). Could use `"segments": [{"offset": X, "size": Y}, ...]` to define the byte ranges.
 
@@ -41,8 +47,8 @@ PS! Remember to update Copilot instructions if necessary on new implementations.
 
 ### Color & Visual Improvements
 
-1. Current coloring behavior seem a little incosistent. The color precedence categories for antiforensics, forensic value etc are working really good - but i think that we should default to two varying colors (both background and text) for everything that is uncategorized. This makes it easy to see which fields are less important (per template definition) as well as the next sequence is differentiated by having the inverse of the previous sequences color. So if one field has Grey Background with white text, the next field would have white background with grey text. This makes it easier to visually separate fields and also gives a better visual overview of the file structure. Then, the more important categories (antiforensics, forensic value, expected value, consistency violation) can have their own distinct colors that override the default alternating scheme which will make them pop more out and become MUCH more visible and attractive to the user. 
-2. The border of the parents of the selected field marked around the hex and ascii bytes should be more visible. It is currently looking like a thin line where it seem to mimick the engraved cells instead of an actual border around the cells. The selected sequwence has a very good black border around it, and that is exactly what i want for the parent but only with a different color. Currently it should be white - but green or blue might be better. 
+1. ~~Alternating default colors~~ (done — `DEFAULT_COLOR_A` #D6DAE0 / `DEFAULT_COLOR_B` #4A5568 two-tone alternation for uncategorized fields, resets on new file, categorized fields pop out visually)
+2. ~~Parent border visibility~~ (done — solid blue border `#3B82F6` with `borderwidth=2, relief='solid'` on sibling tags, matching the selected field's black border style; fg color properly restored on clear)
 
 ## Future Parser Enhancements
 

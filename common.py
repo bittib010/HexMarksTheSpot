@@ -109,13 +109,16 @@ class ColorGenerator:
     1. Deprecated: Muted gray - for deprecated fields
     2. Forensic: Red/warm tones - for forensically important fields
     3. Informational: Green/teal light tones - for descriptive/informational fields
-    4. Default: Neutral pastel tones (blue, purple, gray) - for everything else
+    4. Default: Alternating two-tone (light gray ↔ dark slate) - for everything else
     
     Anti-forensic has highest precedence and overrides all other categories.
+    Default fields use a simple two-color alternation so that categorized
+    fields (red forensic, green info, black anti-forensic) pop out visually.
     """
     
     _last_hue = 0.0
     _last_color = ""
+    _default_toggle = 0  # Alternates between 0 and 1 for default color pairs
     
     # Hue ranges for each category (0-1 scale, maps to 0-360 degrees)
     # Red/warm range for forensic: ~330-30 degrees (wraps around)
@@ -130,11 +133,13 @@ class ColorGenerator:
     _INFO_SAT = (0.30, 0.50)
     _INFO_LIT = (0.75, 0.88)
     
-    # Blue/purple/neutral range for default: ~190-310 degrees
-    _DEFAULT_HUE_MIN = 0.53    # ~190 degrees
-    _DEFAULT_HUE_MAX = 0.86    # ~310 degrees
-    _DEFAULT_SAT = (0.30, 0.50)
-    _DEFAULT_LIT = (0.75, 0.88)
+    # Alternating default color pair — uncategorized fields alternate between
+    # these two schemes so adjacent fields are visually distinct without
+    # competing with the important categories (forensic, anti-forensic, etc.).
+    # Pair A: light gray background, dark text
+    # Pair B: medium-dark background, light text (inverse)
+    DEFAULT_COLOR_A = "#D6DAE0"  # Light blue-gray
+    DEFAULT_COLOR_B = "#4A5568"  # Dark slate gray
     
     # Anti-forensics fixed color — black background with red text.
     # Highest precedence: overrides deprecated, forensic, and all other categories.
@@ -155,6 +160,7 @@ class ColorGenerator:
         """Reset the color generator for a new file."""
         cls._last_hue = random.random()
         cls._last_color = ""
+        cls._default_toggle = 0
     
     @classmethod
     def _random_hue_in_range(cls, hue_min: float, hue_max: float) -> float:
@@ -277,15 +283,15 @@ class ColorGenerator:
     @classmethod
     def get_next_color(cls) -> str:
         """
-        Generate the next default color (blue/purple/neutral pastel).
-        Uses golden ratio for hue spacing within the default range.
+        Generate the next default color using a two-tone alternation.
+        
+        Uncategorized fields alternate between DEFAULT_COLOR_A (light bg,
+        dark text) and DEFAULT_COLOR_B (dark bg, light text). This creates
+        a clear visual rhythm that makes categorized fields (forensic,
+        anti-forensic, informational) stand out much more prominently.
         """
-        h = cls._random_hue_in_range(cls._DEFAULT_HUE_MIN, cls._DEFAULT_HUE_MAX)
-        s = cls._DEFAULT_SAT[0] + random.random() * (cls._DEFAULT_SAT[1] - cls._DEFAULT_SAT[0])
-        l = cls._DEFAULT_LIT[0] + random.random() * (cls._DEFAULT_LIT[1] - cls._DEFAULT_LIT[0])
-        r, g, b = colorsys.hls_to_rgb(h, l, s)
-        color = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-        color = cls._ensure_distinct(color)
+        color = cls.DEFAULT_COLOR_A if cls._default_toggle == 0 else cls.DEFAULT_COLOR_B
+        cls._default_toggle = 1 - cls._default_toggle
         cls._last_color = color
         return color
     

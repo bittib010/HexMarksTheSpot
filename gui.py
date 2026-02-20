@@ -1402,7 +1402,7 @@ class Main:
         # Bind scroll/resize events to update treeview highlight border position
         # (both the selection border and the parent container border)
         self.sequence_treeview.bind('<Configure>', lambda e: self.master.after_idle(self._update_all_treeview_borders))
-        self.sequence_treeview.bind('<MouseWheel>', lambda e: self.master.after(10, self._update_all_treeview_borders))
+        self.sequence_treeview.bind('<MouseWheel>', self._on_treeview_mousewheel)
 
     def _create_menu_bar(self):
         """Create the application menu bar (File, Edit, View, Help).
@@ -1839,16 +1839,27 @@ class Main:
         self.sequence_vscrollbar.set(*args)
         self.master.after_idle(self._update_all_treeview_borders)
 
+    def _on_treeview_mousewheel(self, event):
+        """Handle mouse wheel scrolling on the parsed fields treeview.
+        
+        Explicitly scrolls the treeview and updates border positions.
+        On Windows, event.delta is ±120 per notch; we scroll 4 units per notch.
+        """
+        direction = -1 if event.delta > 0 else 1
+        self.sequence_treeview.yview("scroll", direction * 4, "units")
+        self.master.after(10, self._update_all_treeview_borders)
+        return "break"
+
     def _create_highlight_border(self):
-        """Create 4 thin Frame widgets to form a black border around treeview items."""
+        """Create 4 thin Frame widgets to form a green border around treeview items."""
         if self._border_frames:
             return
         for _ in range(4):  # top, bottom, left, right
-            f = Frame(self.sequence_treeview, bg='black')
+            f = Frame(self.sequence_treeview, bg='#22C55E')
             self._border_frames.append(f)
 
     def _show_treeview_border(self, item_id):
-        """Show a black border around the specified treeview item."""
+        """Show a green border around the specified treeview item."""
         self._create_highlight_border()
         self._highlight_item_id = item_id
         # Use after_idle so bbox reflects the current layout
@@ -1887,10 +1898,10 @@ class Main:
         self._update_treeview_border_position()
         self._update_parent_treeview_border_position()
 
-    def _create_parent_highlight_border(self, color='#FFFFFF'):
-        """Create 4 thin Frame widgets for a white parent border in the treeview.
+    def _create_parent_highlight_border(self, color='#000000'):
+        """Create 4 thin Frame widgets for a black parent border in the treeview.
         
-        Uses white to contrast with the black selection border, making it
+        Uses black to contrast with the green selection border, making it
         immediately clear which treeview row is the parent container.
         """
         # Destroy old frames if they exist
@@ -1901,10 +1912,10 @@ class Main:
             f = Frame(self.sequence_treeview, bg=color)
             self._parent_border_frames.append(f)
 
-    def _show_parent_treeview_border(self, item_id, color='#FFFFFF'):
-        """Show a white border around the parent container's treeview item.
+    def _show_parent_treeview_border(self, item_id, color='#000000'):
+        """Show a black border around the parent container's treeview item.
         
-        White contrasts with the black selection border, making the parent
+        Black contrasts with the green selection border, making the parent
         container immediately visible alongside the selected child.
         """
         self._create_parent_highlight_border(color)
@@ -3331,21 +3342,77 @@ class Main:
             hex_str = gap_data.hex(' ') + ' '
             ascii_str = ''.join(ascii_table[b] for b in gap_data)
             
+            # Analyze content for zero-byte sequences to improve readability.
+            # Only applies to unparsed/unallocated data — parsed fields always
+            # show their real representation via the parser template.
+            all_zero = all(b == 0 for b in gap_data)
+            
+            if all_zero:
+                # Entirely zeroed out — show a concise summary instead of
+                # dumping a long string of "00 00 00 ..." hex values
+                table_val_str = f"Nulled out ({gap_len} bytes)"
+                gap_description = (
+                    f"**Nulled Out Data** — {gap_len} bytes of 0x00 at offset "
+                    f"0x{gap_start:X}.\n\n"
+                    "This region contains only null bytes. This may indicate:\n"
+                    "- Uninitialized or zeroed-out data\n"
+                    "- Wiped/sanitized content\n"
+                    "- Padding or alignment space\n"
+                    "- Potential anti-forensic data destruction"
+                )
+                gap_name = "Nulled Data"
+            else:
+                # Check if the data is mostly zeros with some non-zero content
+                non_zero_indices = [i for i, b in enumerate(gap_data) if b != 0]
+                zero_ratio = 1 - len(non_zero_indices) / gap_len
+                
+                if gap_len >= 16 and zero_ratio >= 0.85:
+                    # Mostly zeros — report the non-zero byte range for focus
+                    first_nz = non_zero_indices[0]
+                    last_nz = non_zero_indices[-1]
+                    nz_count = len(non_zero_indices)
+                    nz_offset = gap_start + first_nz
+                    # Extract the interesting (non-zero) region with a small
+                    # context margin for readability
+                    ctx = 2  # bytes of zero context on each side
+                    show_start = max(0, first_nz - ctx)
+                    show_end = min(gap_len, last_nz + 1 + ctx)
+                    interesting = gap_data[show_start:show_end]
+                    interesting_hex = interesting.hex(' ').upper()
+                    
+                    table_val_str = (
+                        f"Mostly null ({nz_count} non-zero of {gap_len} bytes)"
+                    )
+                    gap_description = (
+                        f"**Mostly Null Data** — {gap_len} bytes at offset "
+                        f"0x{gap_start:X}, {zero_ratio:.0%} zeroes.\n\n"
+                        f"Non-zero content ({nz_count} bytes) found at "
+                        f"offset 0x{nz_offset:X}–0x{gap_start + last_nz:X}:\n\n"
+                        f"`{interesting_hex}`\n\n"
+                        "The surrounding null bytes may be padding or wiped content."
+                    )
+                    gap_name = "Mostly Null Data"
+                else:
+                    # Normal unparsed data — standard description
+                    table_val_str = f"{gap_len} bytes"
+                    gap_description = (
+                        f"**Unparsed Data** — {gap_len} bytes at offset "
+                        f"0x{gap_start:X} not covered by any parser field.\n\n"
+                        "These bytes exist in the file but are not recognized by "
+                        "the current parser template. This may indicate:\n"
+                        "- Incomplete parser coverage\n"
+                        "- Padding or reserved bytes not accounted for\n"
+                        "- Data structures not yet implemented in the template"
+                    )
+                    gap_name = "Unparsed Data"
+            
             # Create a placeholder Node for the gap
             gap_node = Node(
                 data=gap_data,
-                info=markdown_to_html(
-                    f"**Unparsed Data** — {gap_len} bytes at offset "
-                    f"0x{gap_start:X} not covered by any parser field.\n\n"
-                    "These bytes exist in the file but are not recognized by "
-                    "the current parser template. This may indicate:\n"
-                    "- Incomplete parser coverage\n"
-                    "- Padding or reserved bytes not accounted for\n"
-                    "- Data structures not yet implemented in the template"
-                ),
-                name="Unparsed Data",
+                info=markdown_to_html(gap_description),
+                name=gap_name,
                 color=unparsed_color,
-                table_value=f"{gap_len} bytes"
+                table_value=table_val_str
             )
             
             table_val = gap_node.table_value
@@ -3357,7 +3424,7 @@ class Main:
                 'tag': tag,
                 'color': unparsed_color,
                 'fg_color': fg_color,
-                'name': "Unparsed Data",
+                'name': gap_name,
                 'data_len': gap_len,
                 'hex_str': hex_str,
                 'ascii_str': ascii_str,
@@ -4276,13 +4343,13 @@ class Main:
         # so the selection border draws on top of the parent border.
         self._apply_parent_highlight(tag)
         
-        # Apply a black border highlight with bright background for clear visibility.
+        # Apply a green border highlight for the selected field.
         # relief='solid' draws the border using the foreground color, so we set
-        # foreground to black temporarily to get a visible black outline.
+        # foreground to green temporarily to get a visible green outline.
         self.text_widget.textWidget.tag_configure(
-            tag, foreground='#000000', borderwidth=2, relief='solid')
+            tag, foreground='#22C55E', borderwidth=2, relief='solid')
         self.text_widget.asciiText.tag_configure(
-            tag, foreground='#000000', borderwidth=2, relief='solid')
+            tag, foreground='#22C55E', borderwidth=2, relief='solid')
         
         self.current_highlight_tag = tag
 
@@ -4326,27 +4393,33 @@ class Main:
             self._hide_parent_treeview_border()
             return
         
-        # Get the parent container's color (still used for context, but border is white)
+        # Get the parent container's color (still used for context, but border is black)
         parent_color = '#888888'
         if parent_tag in self.tag_to_child:
             parent_node = self.tag_to_child[parent_tag]
             parent_color = parent_node.color or '#888888'
         
-        # Use white for the parent border — contrasts with the black selection border
-        parent_border_color = '#FFFFFF'
+        # Use black for the parent border — contrasts with the green selection
+        # border and stands out against both light and dark default fields
+        parent_border_color = '#000000'
         
-        # Apply a subtle colored border (groove relief) to all sibling tags
-        # in the hex viewer — this visually groups them as 'same parent'
+        # Apply a solid colored border to all sibling tags in the hex viewer
+        # so they visually group as 'same parent'. Uses solid relief + foreground
+        # override to color the border itself (Tkinter draws solid borders
+        # using the tag's foreground color).
         sibling_tags = self._parent_tag_to_children.get(parent_tag, [])
         self._current_parent_sibling_tags = []
         for sibling_tag in sibling_tags:
             if sibling_tag == selected_tag:
                 continue  # Skip selected — it gets the black border instead
-            # Only apply border to leaf nodes that have hex data
+            # Save original fg color so we can restore it when clearing
+            # (relief='solid' draws the border in the foreground color)
             self.text_widget.textWidget.tag_configure(
-                sibling_tag, borderwidth=1, relief='groove')
+                sibling_tag, borderwidth=2, relief='solid',
+                foreground=parent_border_color)
             self.text_widget.asciiText.tag_configure(
-                sibling_tag, borderwidth=1, relief='groove')
+                sibling_tag, borderwidth=2, relief='solid',
+                foreground=parent_border_color)
             self._current_parent_sibling_tags.append(sibling_tag)
         
         # Also store the parent tag itself for tracking
@@ -4360,14 +4433,25 @@ class Main:
             self._hide_parent_treeview_border()
 
     def _clear_parent_hex_highlight(self):
-        """Remove the parent highlight (groove borders) from all sibling tags."""
+        """Remove the parent highlight (solid borders) from all sibling tags.
+        
+        Also restores the original foreground color which was overridden
+        to draw the blue border (relief='solid' uses fg for border color).
+        """
         for sibling_tag in self._current_parent_sibling_tags:
-            # Restore each sibling to flat border (original color stays)
             try:
+                # Look up original color to restore foreground
+                fg = None
+                for nd in self.collected_nodes:
+                    if nd['tag'] == sibling_tag:
+                        fg = nd.get('fg_color') or ColorGenerator.get_contrast_text_color(nd['color'] or '#ffffff')
+                        break
+                if fg is None:
+                    fg = '#f0f0f0'
                 self.text_widget.textWidget.tag_configure(
-                    sibling_tag, borderwidth=0, relief='flat')
+                    sibling_tag, borderwidth=0, relief='flat', foreground=fg)
                 self.text_widget.asciiText.tag_configure(
-                    sibling_tag, borderwidth=0, relief='flat')
+                    sibling_tag, borderwidth=0, relief='flat', foreground=fg)
             except Exception:
                 pass
         self._current_parent_sibling_tags = []
